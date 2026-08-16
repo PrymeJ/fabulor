@@ -1,3 +1,208 @@
+## 2026-08-16 (Session 4) — Issue 1's real mechanism found and confirmed PRE-EXISTING, not caused by the manual-paint work: the frost is deliberately stale for the whole duration of a theme hover-preview by an existing `hover_active_gate`, catching up in one atomic grab on unhover. Settled by direct A/B test against the pre-WIP commit, not by argument.
+
+Fourth session, same day. Session 3 (immediately below) ended with the reframed Issue 1 — the frost's
+own grabbed-rect background not updating live during a swatch hover-preview, and a sequenced/streaked
+repaint on commit — identified but not investigated. This session investigated it, found the exact
+mechanism, and settled a live disagreement between two independent Claude sessions about whether it
+was a manual-paint regression or a pre-existing bug, using a direct, isolated comparison rather than
+continued argument.
+
+### The mechanism, found by reading and one gated probe
+
+`_DirtyRectTracker.eventFilter` already has a `[DIRTY-TRACE]` log line, but it sits AFTER an
+`_is_suppressed()` early-return — it only ever shows Paint events that survive suppression, which
+cannot answer "are Paint events arriving at all during a hover-preview." A temporary, unconditional
+`[PAINT-RAW]` line was added directly at the top of the `Paint` branch (before any suppression check),
+confirmed live: all 12 tracked widgets DO fire genuine Paint events the instant a hover-preview restyle
+lands. So the widgets are repainting correctly — the gap is downstream, in `refresh_dirty` itself.
+
+`refresh_dirty` has an existing, documented gate: `if getattr(theme_manager, '_is_hover_active',
+False): ... return` (declared to prevent the previewed theme's colors from baking into the frost —
+a previously-fixed 2026-07-20 bug, "hover pulsates into the blurred area"). Confirmed live via the
+existing `[TIMER-TRACE] refresh_dirty tick=N EARLY-RETURN reason=hover_active_gate` line: EVERY tick
+for the full duration of a hover-preview hits this gate and returns without ever reaching a grab — 64
+consecutive declines in one captured 5-second window, on a real swatch hover. Once the hover ends,
+`_on_theme_unhovered()`'s snapback restyle runs, which sets `_last_apply_stylesheets_at`, arming a
+SECOND gate — `_POST_RESTYLE_COOLDOWN_S` cooldown ("reason=cooldown_gate" in the same log) — for a
+short window afterward. Only once BOTH gates clear does one real `COMPOSITED` grab land, atomically,
+of the full bounding rect. This is deliberate, existing, documented design — not a bug this session
+introduced — and it fully explains Issue 1's reported symptom: the frost cannot show the previewed
+theme's style AT ALL while the hover is live (by design), and what commits visibly as a "streaked" or
+"sequenced" repaint is that one atomic catch-up composite landing after a genuine unhover.
+
+### The disagreement, and how it was settled
+
+A parallel Claude session (via a different conversation) argued this was a PRE-EXISTING issue, while
+this session's working assumption (and Pryme's own strong suspicion) was that it was NEW behavior
+introduced by the manual-paint WIP work. Rather than continue arguing from re-reads of the same code,
+Pryme called for a direct empirical resolution and gave the choice of method (soft-reset+stash vs.
+bisect) to Claude; a THIRD option — a git worktree — was chosen instead of either, specifically because
+it tests an old commit's code live without touching the current branch's history, working tree, or
+requiring any stash/reset that could be fumbled or need cleanup after.
+
+**Isolation flag test first** (same WIP commit, `30a19e3`): a temporary `FABULOR_SKIP_HOVER_FILTER=1`
+env flag was added to skip `installEventFilter(self._hover_filter)` entirely — testing whether
+`_HoverPaintFilter`'s mere presence (installed, but never firing Enter/Leave since no button was
+hovered) could itself interfere with the catch-up grab. Result: catch-up grab fires identically with
+the filter absent — `hover_active_gate` (ticks 357-382) → `cooldown_gate` (383-398) → one
+`COMPOSITED` (399) → panel closed. Then the SAME test with the filter installed normally (no isolation
+flag): identical shape — `hover_active_gate` (43-284, ~19.4s, spanning three real hover
+cycles) → `cooldown_gate` (285-301) → one `COMPOSITED` (302) → panel closed. `_HoverPaintFilter`'s
+presence made no observable difference in either run.
+
+**The decisive test**: a `git worktree add <scratch-dir> 4c4937f` checked out the commit immediately
+BEFORE the manual-paint WIP — zero button-paint code, `_HoverPaintFilter` doesn't exist, `main_window`
+grab with panel-hide is the only mechanism — into a fully separate directory sharing the same `.git`,
+so the actual branch/working tree was never touched (confirmed: `git status` on the real working tree
+showed the exact same seven modified files, none of them `transport_bar_blur.py`, before, during, and
+after). Launched from the worktree directory (reusing the existing `fabulorenv` venv — no separate
+venv needed), same `FABULOR_GRAB_TRACE=1` tracing, same live hover-preview test. **Identical result**:
+`hover_active_gate` (ticks 15-19+) → `cooldown_gate` (239-243) → one `COMPOSITED` (244, same full
+bounding rect `(10,300,260,198)`) → steady state resumes. The worktree was torn down immediately after
+(`git worktree remove`) — confirmed clean, `git worktree list` shows only the main working tree
+afterward.
+
+**Conclusion: confirmed pre-existing, not introduced by the manual-paint work, settled by direct
+evidence rather than continued disagreement.** The `hover_active_gate`/`cooldown_gate`/single-atomic-
+catch-up design exists identically in the pre-WIP commit, the WIP commit with the hover filter
+installed, and the WIP commit with the hover filter deliberately absent. Three independent live runs,
+same shape each time.
+
+### What this means for Issue 1 going forward
+
+The bug is real and reproducible, but it is NOT in anything the manual-paint session added — it's in
+the `_is_hover_active` gate's own design, which trades "never show the previewed theme's colors in
+the frost" for "the frost is completely frozen for the entire duration of any hover-preview,
+regardless of how long the user lingers." A real fix (not attempted this session — investigation
+only, per Pryme's framing of this as a single targeted check) would need to either allow SOME grab
+during a hover-preview without baking in the previewed theme's colors (the original 2026-07-20 bug
+this gate exists to prevent), or find another way to keep the frost visually coherent while a preview
+is live rather than freezing it outright. Both isolation-flag and worktree scratch artifacts were
+cleaned up; nothing from this investigation was committed to `transport_bar_blur.py`, which remains
+at the WIP commit (`30a19e3`) with zero diff.
+
+---
+
+## 2026-08-16 (Session 3) — manual-paint hover mechanism: three diagnosed issues, one fix caused a real regression (reverted), a second fix's symptom is worse and unexplained; Issue 2/3 code reverted to the last commit, Issue 1 never fixed
+
+Same day, third session. Session 2 (immediately below) ended with hide-children-not-panel reverted
+after a severe structural regression. This session picks up the manual-paint mechanism that was
+already committed as WIP (`30a19e3`, "wip: manual-paint transport button hover into the frost
+overlay") — real Enter/Leave interception on the 6 transport buttons, painting hover state directly
+into the overlay pixmap instead of grabbing it. That mechanism was confirmed structurally working
+(Enter/Leave correctly mapped, `_hover_buttons` correctly populated) at the end of the WIP commit.
+This session diagnosed three specific bugs in it, attempted fixes for two, and ended with a
+regression found, partially reverted, and then a WORSE unexplained symptom appearing — at which
+point the whole session's changes were reverted rather than continuing to patch forward blind.
+
+### The three issues, as diagnosed by reading (no live probe, per that investigation's own scope)
+
+**Issue 1 — "wrong color during theme hover-preview"**, as originally reported. Investigation (read
+`theme_manager.py`'s `get_displayed_theme`/`get_active_theme`/`get_current_theme`/`get_committed_theme`
+in full) found the suspected cause — `_paint_button_hover` calling the wrong theme getter — does NOT
+hold: `get_current_theme()` → `get_active_theme()` → `get_displayed_theme()` is explicitly documented
+as hover-INCLUSIVE ("what is genuinely painted right now, live preview included" — `get_committed_theme`'s
+own docstring, theme_manager.py:317-323), contradicting the suspected cause. One stale docstring was
+caught and corrected in the same pass: `get_displayed_theme()`'s own docstring still says "currently
+UNUSED... do not wire this in," dated from an earlier migration step, directly contradicted by
+`get_active_theme()`'s current body (`return self.get_displayed_theme()`) — a real instance of "never
+substitute a plausible explanation for a checked one" applied to reading documentation, not just
+writing it.
+
+**Issue 2 — "dirty-tracker grabs overwrite manual hover paint."** Confirmed via real chronological log
+data (three instrumentation blocks added: `[HOVER-PAINT]`, `[HOVER-RESTORE]`, `[DIRTY-GRAB]`, all gated
+behind `FABULOR_GRAB_TRACE=1`) that `refresh_dirty`'s full-region composite ticks — not just a
+button's own hover-triggered repaint — can and do land after a `[HOVER-PAINT]` and before its matching
+`[HOVER-RESTORE]`, and `refresh_dirty`'s `CompositionMode_Source` paste covers the WHOLE dirty rect,
+which routinely is the full 260×198 bounding rect containing every button. One extended, largely
+false trail preceded this finding: three rounds of "the instrumentation never fires" investigation
+(ruling out guard logic, exception swallowing, stale bytecode, duplicate method definitions) before
+the actual cause was found — the app's `RotatingFileHandler` (2MB × 3 backups) had rotated mid-session,
+and every missing line was sitting in `fabulor.log.1`, not the live `fabulor.log`. This is the SAME
+class of mistake as an earlier session's timestamp-search miss, now specifically located in log
+*rotation* rather than log *content* — worth remembering as a standing habit: `grep` `fabulor.log*`
+(the wildcard), not the bare filename, on any session running long enough to rotate.
+
+**Issue 3 — "`_panel_open_snapshot` stale after theme change."** Confirmed clean and scoped by reading:
+`theme_applied = Signal(dict)` (theme_manager.py:119) fires only on genuine commits (`if not hover:`
+gate at both emit sites, lines ~927 and ~2172) and is already connected by three real panels (Stats,
+Tags, Book Detail) via the identical `mw.theme_manager.theme_applied.connect(mw.<panel>.on_theme_changed)`
+pattern. `force_refresh_now()` already does the same grab-then-setPixmap `show_for_panel` uses; it was
+simply never given the one extra line (`self._panel_open_snapshot = QPixmap(blurred)`) `show_for_panel`
+has, and nothing wired it to theme changes at all (confirmed: its three real call sites — tab-switch,
+book-removal reconcile, slider-drag-end — are all unrelated to theme).
+
+### Issue 2/3 implementation and the regression it caused
+
+Issue 2 was split into two fixes per the diagnosis: Fix A (exclude the 6 buttons from
+`self._tracker` while a panel is open, so their own hover-triggered QSS repaint can't schedule a grab
+that overwrites the manual paint) and Fix B (track currently-hovered buttons in a new
+`self._hovered_buttons` set; after any `refresh_dirty` composite, re-invoke `_paint_button_hover` for
+any hovered button whose overlay rect intersects that tick's dirty region — reusing the exact `local`
+rect the composite itself just used, confirmed in scope before reuse, not recomputed). Issue 3 was
+implemented as specified: the missing snapshot line in `force_refresh_now`, plus a new
+`_on_theme_applied` method connected to `theme_applied` in `__init__`, guarded by the existing
+`self._active` check.
+
+**Fix A shipped a real, confirmed, live-reported regression**: "the depressed style of the speed and
+next buttons are not either caught at all or fast... feels like the pre-fix state." Root-caused
+immediately, not guessed: `_HoverPaintFilter`/`_paint_button_hover` only ever handle `Enter`/`Leave`
+(`:hover`) — they were never built to handle Press/Release (`:pressed`), which is a real, separate QSS
+rule (`QPushButton:pressed`, themes.py, `background-color: accent_dark`) distinct from `:hover`. The
+dirty tracker was the ONLY mechanism that had ever captured `:pressed` state in the frost for these
+buttons — Fix A's exclusion removed that mechanism entirely for a state manual-paint never covered,
+with nothing filling the gap. **Fix A was reverted** (both `show_for_panel` and `unpark_for_panel`'s
+exclusion loops removed, buttons left in `self._tracker`); Fix B and Issue 3 were kept in place for a
+clean re-test.
+
+### The re-test surfaced something worse and unexplained, and the session stopped rather than continue patching
+
+A live screenshot after the Fix A revert (Waknuk theme, cover-art-based-theme pool visible, panel
+opacity dropped for testing) showed the frost's lower two-thirds as a solid bright orange-to-red
+gradient with button glyphs barely visible through it — **not a wrong theme color, not the earlier
+"sequenced paint" streaking, and not matching any hypothesis this session had tested.** Pryme's own
+assessment, unprompted: this reads like uninitialized/garbage pixel data, not a color-lookup or
+compositing-order bug of the kind investigated so far. Given three independent things were now true at
+once — Issue 1's real symptom (established this session to be about the frost's grabbed-rect content
+during a swatch hover-preview and a sequenced repaint on commit, NOT a button's own hover color — see
+below) still completely unexplained; the pressed-state regression only partially resolved (Fix A
+reverted, but Fix B/Issue 3's interaction with the still-open Issue 1 never re-verified clean); and now
+a THIRD, worse, unrecognized visual failure — the session stopped here rather than propose a fourth
+patch. Pryme's own instruction: revert to the last commit, write up, take issues one at a time next
+session, starting with the preview issue.
+
+**Issue 1's real symptom, corrected from the original report** (found via direct conversation, not
+inferred): the original "wrong color during theme hover-preview" framing was a wrong guess at the
+mechanism from the start — Pryme's actual observation, described directly with reference to
+screenshots, is that the FROST'S OWN GRABBED-RECT BACKGROUND does not update to a hovered theme's
+style during a live swatch preview at all (screenshot: Waknuk hovered with panel opacity dropped for
+visibility — the grabbed rect stays visually unstyled/unchanged), and when a theme IS committed
+(right-click), the grabbed rect's repaint visibly happens in a SEQUENCE rather than atomically
+(three consecutive screenshots showing a partial, streaking repaint mid-transition). This has nothing
+to do with `_paint_button_hover`'s theme-getter choice — that was the wrong target for the whole
+investigation from the start, confirmed by a probe that never caught a real discrepancy because the
+premise (compare `active_theme` vs `committed_theme` at the moment a BUTTON is hovered) can't occur
+in the reported scenario at all: leaving a swatch immediately calls `_on_theme_unhovered()`
+(theme_manager.py), which snaps the preview back to committed BEFORE a separately-hovered button
+could ever see a different value — the two hovers can't coexist for one cursor, a physical
+impossibility the investigation initially failed to notice before Pryme pointed it out directly
+("How can I hover on two things at the same time with one mouse?"). The real bug is in the frost's
+OWN repaint-on-theme-change behavior (partially, ironically, what Issue 3's fix was ALSO trying to
+address, from a different angle) — not investigated further this session; explicitly the first thing
+to take up next.
+
+### Outcome
+
+`transport_bar_blur.py` reverted to the last commit (`30a19e3`) — Issue 2/3's implementation is fully
+gone; the manual-paint WIP mechanism itself (Enter/Leave interception, `_panel_open_snapshot`,
+`_button_overlay_rect`'s straddling-button clip) remains committed and untouched, exactly as it was
+before this session started. **All three issues remain open.** Per Pryme's explicit instruction, the
+next session takes them one at a time, starting with the reframed Issue 1 (frost grabbed-rect content
+not updating live during a hover-preview, and a sequenced/streaked repaint on commit) — not the
+original "wrong theme getter" framing, which is now confirmed wrong and should not be re-investigated.
+
+---
+
 ## 2026-08-16 (Session 2) — hide-children-not-panel investigated as a second hide/show-free replacement; premise confirmed real by direct measurement, implementation shipped a severe live regression, approach reverted; hover/tooltip bug still open
 
 Same day as the render() investigation immediately below, later session. That session ended with

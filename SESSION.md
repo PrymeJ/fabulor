@@ -1,3 +1,100 @@
+## Session Summary — 2026-08-16 Session 4 — Issue 1's frost-freeze-during-hover-preview root-caused (an existing `hover_active_gate`/cooldown gate, not a bug) and CONFIRMED PRE-EXISTING via a git-worktree A/B test against the pre-WIP commit — settles a live disagreement between two Claude sessions with direct evidence. `fix/book-detail-blur-park`
+
+Full trace in NOTES.md (top entry, same title). This is the pointer.
+
+**Picked up exactly where Session 3 left off**: the reframed Issue 1 (frost grabbed-rect background
+not updating during a live theme hover-preview, streaking in on commit). A `[PAINT-RAW]` probe
+(temporary, unconditional, before any suppression check in `_DirtyRectTracker.eventFilter`) confirmed
+all 12 tracked widgets genuinely repaint the instant a hover-preview lands — the widgets aren't the
+problem. The real mechanism was already visible in existing logging once looked at directly:
+`refresh_dirty`'s `_is_hover_active` gate (2026-07-20, built to stop a previewed theme's colors from
+baking into the frost) suppresses EVERY grab for the ENTIRE duration of any hover-preview — 64+
+consecutive declines in one real hover — then a second cooldown gate extends the freeze briefly after
+unhover, before exactly one atomic catch-up grab lands. This fully explains the reported symptom: the
+frost genuinely cannot show a previewed theme at all while hovering (by design), and the "streak" on
+commit is that one catch-up composite finally landing.
+
+**A live disagreement needed settling: is this new behavior from the manual-paint WIP, or pre-existing?**
+A parallel Claude session argued pre-existing; this session's own working assumption (and Pryme's
+strong suspicion) was that it was new. Rather than keep arguing from re-reads of the same code, Pryme
+asked for a direct empirical resolution and let Claude choose the method. A `git worktree` (a third
+option, not either of the two offered) was used instead of a stash/reset or bisect — it tests an old
+commit's code live without touching the current branch's history or working tree at all, and needs no
+cleanup beyond `git worktree remove`.
+
+**Two isolation tests, both showing the identical pattern**: a temporary env flag
+(`FABULOR_SKIP_HOVER_FILTER=1`) skipped installing `_HoverPaintFilter` on the buttons entirely —
+same `hover_active_gate` → `cooldown_gate` → one `COMPOSITED` catch-up shape, with the filter present
+or absent. Then a `git worktree add <scratch> 4c4937f` (the commit immediately before the manual-paint
+WIP — zero button-paint code exists there) ran the identical live hover-preview test from a fully
+separate checkout: **identical result** — same three-phase pattern, same full-bounding-rect catch-up
+grab. The main working tree was confirmed untouched throughout (`git status` showed the same
+pre-existing modified files, `transport_bar_blur.py` never among them) and the worktree was torn down
+cleanly afterward.
+
+**Conclusion: confirmed pre-existing, settled by direct evidence across three independent live runs,
+not by further argument.** The freeze is a real, reproducible, deliberate design tradeoff in the
+`_is_hover_active`/cooldown gates — trading "no color-bleed during preview" for "frost fully frozen for
+the whole preview" — and it predates the manual-paint work entirely. A real fix (not attempted this
+session) needs either a way to grab safely during a hover-preview without re-opening the 2026-07-20
+color-bleed bug, or a different mechanism for keeping the frost coherent during a live preview.
+
+**Nothing was committed to `transport_bar_blur.py`** — it remains at the WIP commit (`30a19e3`) with
+zero diff; all temporary probes and the isolation-flag/worktree scratch artifacts were removed.
+
+---
+
+## Session Summary — 2026-08-16 Session 3 — manual-paint hover: Issue 1 misdiagnosed then correctly reframed (frost background, not button color), Issue 2's Fix A caused a real :pressed-state regression (reverted), re-test surfaced a worse unexplained garbled-frost symptom. Session stopped and reverted rather than patch further. `fix/book-detail-blur-park`
+
+Full trace in NOTES.md (top entry, same title). This is the pointer.
+
+**Picked up the manual-paint mechanism already committed as WIP** (`30a19e3`, from earlier today):
+real Enter/Leave interception on the 6 transport buttons, painting hover state directly into the
+overlay pixmap instead of grabbing it. Three specific bugs were diagnosed by reading and live
+instrumentation, in the shape the prior session's investigation left them.
+
+**Issue 1 was wrong from the start, and Pryme caught it directly.** The suspected cause — a wrong
+theme-getter call — was disproven by reading `theme_manager.py` (`get_current_theme()` is already
+documented and confirmed hover-inclusive). A probe was built anyway to test it live, but the test
+sequence asked for something physically impossible: hovering a theme swatch AND a transport button
+at the same instant with one cursor. Pryme's correction, verbatim: *"How can I hover on two things at
+the same time with one mouse?"* Once he described the actual original observation directly (with
+screenshots), the real bug was completely different: the frost's own grabbed-rect background doesn't
+update to a hovered theme's style during a live preview at all, and a committed theme's repaint
+visibly streaks in rather than landing atomically. Nothing to do with any button's hover color.
+**Not investigated further this session** — explicitly the first thing to take up next, per Pryme's
+own instruction to work through these one at a time.
+
+**Issue 2's Fix A (exclude buttons from the dirty tracker while a panel is open) shipped a real,
+confirmed regression.** Root-caused immediately once reported: manual paint only ever handles
+`Enter`/`Leave` (`:hover`) — never Press/Release (`:pressed`), a real, separate QSS rule the dirty
+tracker was the ONLY mechanism ever capturing for these buttons. Excluding them broke pressed-state
+feedback entirely; Pryme's report: *"the depressed style... not caught at all or fast... feels like
+the pre-fix state."* Fix A was reverted (buttons restored to the dirty tracker in both
+`show_for_panel` and `unpark_for_panel`); Fix B (re-apply hover paint after any dirty composite that
+overlaps a hovered button) and Issue 3 (refresh `_panel_open_snapshot` on genuine theme commits, via
+the already-existing `theme_applied` signal) were left in place for a clean re-test.
+
+**The re-test surfaced something worse than anything diagnosed, and the session stopped rather than
+guess at a fourth patch.** A screenshot (Waknuk theme, cover-art-pool hover-preview active) showed
+the frost's lower two-thirds as a solid bright orange-to-red gradient, button glyphs barely visible
+through it — not a wrong color, not the earlier streaking, not matching any hypothesis this session
+tested. Pryme's own read: looks like uninitialized/garbage pixel data. With Issue 1 still completely
+open, Fix B/Issue 3 never isolated from each other or re-verified clean, and now a third,
+unrecognized failure mode all true at once, continuing to patch forward was judged not the
+responsible move — Pryme's own instruction: stop, revert, write up, take issues one at a time next
+session starting with the reframed Issue 1.
+
+**`transport_bar_blur.py` reverted to `30a19e3`** (the manual-paint WIP commit) — all of this
+session's Issue 2/3 code is gone (`git diff` against that commit confirmed empty); the underlying
+manual-paint mechanism from the WIP commit itself is untouched.
+
+**All three issues remain open. Next session starts with the reframed Issue 1** (frost grabbed-rect
+content not updating during a hover-preview, and streaking on commit) — not the original, now-
+disproven "wrong theme getter" framing.
+
+---
+
 ## Session Summary — 2026-08-16 Session 2 — hide-children-not-panel investigated as a second hide/show-free replacement; premise confirmed real by direct measurement, implementation shipped a severe structural regression, approach judged dead and reverted. Hover/tooltip bug still open. `fix/book-detail-blur-park`
 
 Full trace in NOTES.md (top entry, same title). This is the pointer.
