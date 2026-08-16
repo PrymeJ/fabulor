@@ -1,3 +1,382 @@
+## 2026-08-16 (Session 2) — hide-children-not-panel investigated as a second hide/show-free replacement; premise confirmed real by direct measurement, implementation shipped a severe live regression, approach reverted; hover/tooltip bug still open
+
+Same day as the render() investigation immediately below, later session. That session ended with
+render() reverted and the hover/tooltip bug still open. This session investigated a structurally
+different fix for the same root cause, working purely from things already established: `_grab_and_blur`
+hides the PANEL before each grab, which flips `QApplication.widgetAt()` and clears real hover state on
+the transport buttons before the grab captures it (this exact mechanism, and that it is synchronous
+within `hide()` itself with no event-loop-turn window to exploit, was confirmed by direct measurement
+earlier the same day — see the render()-session entry below).
+
+### The premise: hide only the panel's children, not the panel
+
+If hiding the PANEL is what flips `widgetAt()`, hiding only its CHILDREN — leaving the panel widget
+itself visible — should keep `widgetAt()` resolving to the panel throughout, since the panel never
+disappears from the hit-test tree. Confirmed true by a direct scratch-harness measurement before any
+implementation: a test panel with a small nested child tree (button, label, nested container) had its
+children hidden while itself staying visible; `QApplication.widgetAt()` at a point under the panel
+returned the SAME panel object, unchanged, both before and after — no flip. A parallel `underMouse()`
+check on a button underneath also stayed unperturbed throughout (a real `grab()` call included in the
+sequence, zero `app.processEvents()` calls anywhere, matching `_grab_and_blur`'s real structure
+exactly). A real `grab()` of the panel's rect with children hidden also came back correctly opaque and
+panel-colored where the hidden children had been — not a hole, because the panel's own background paint
+was never hidden, only its children's. This is a genuinely better starting position than the render()
+approach: no hole-fill mechanism is needed at all, sidestepping both of that approach's regressions by
+construction.
+
+### hideEvent audit — exhaustive, no hard-stop found
+
+Before implementing, every custom `hideEvent` across the six in-scope panels (Settings, Sleep, Speed,
+Sprint, Library, Stats, Tags — Book Detail explicitly out of scope, it uses a separate one-shot frost
+path, not this per-tick path) was read in full via a whole-tree `grep`. Seven hits total: four are
+panel-LEVEL overrides (`SprintPanel`, `TagManagerWidget`, `StatsPanel`, `LibraryPanel`), all doing the
+same `QApplication.instance().removeEventFilter(self)` pattern — structurally irrelevant to
+hide-children, since the panel widget itself is never in the hidden set under this scheme. One real
+child-widget override was found: `TasselOverlay.hideEvent` (Stats panel's Timeline-tab bookmark icon)
+stops its sway timer — and its own docstring already documents that this exact hideEvent fires today,
+every ~64ms, as a direct consequence of the CURRENT panel-hide-cycle bug, and is self-healing by design
+(`showEvent` restarts it; kick state decays independently and is deliberately not reset on hide). No
+`QMovie`, no `visibilityChanged` connections, no widget-hide silently stopping a `QPropertyAnimation`
+(confirmed empirically: `QWidget.hide()` does not pause/stop a running `QPropertyAnimation` on its own —
+it stays `Running` and keeps advancing while hidden). `ScrollingLabel.hideEvent` (stops its own marquee
+timer) is real but lives outside the six panels' scope (only used for the transport bar's own chapter
+label) — flagged anyway since it directly contradicts the general "QTimer does not stop on hide" Qt
+default, as a deliberate Fabulor override, worth remembering if a `ScrollingLabel` is ever used inside a
+panel later.
+
+**Conclusion at the time, correct as far as it went: no hard-stop-triggering side effect found — no
+state mutation reaching player/theme/DB code, no signal emission reaching such code, the one real timer
+stop already proven safe under a more aggressive version of the same mechanism.** This conclusion was
+right on its own terms. It answered the wrong question.
+
+### The `chapter_preview_label` reframing that motivated this direction
+
+A parallel investigation (button-hover-and-tooltip QSS/theme-dict audit) found that the thing this
+whole multi-session investigation had been calling "the next-button tooltip" is not a `QToolTip` at
+all — every `setToolTip()` call on `prev_button`/`next_button` in the codebase sets it to `""`, clearing
+not populating. The real mechanism is `chapter_preview_label`, a genuine `QLabel` sibling of the
+transport buttons in `content_container`, shown via a `QGraphicsOpacityEffect` fade, driven entirely by
+`HoverButton.hovered`/`unhovered` signals on the buttons. This reframing is what motivated hide-children
+in the first place: since `chapter_preview_label` and the buttons are real widgets, not a native
+tooltip, a `grab()` should be able to capture them correctly if the panel-hide mechanism weren't
+disturbing their hover/fade state — which is exactly what hide-children was built to fix.
+
+### Additional pre-implementation verification
+
+Two more things were checked directly before writing code, both confirming pieces of the plan:
+- **`QApplication.sendEvent(widget, QEvent(QEvent.Type.Leave))` reliably clears `underMouse()`** on a
+  plain `QPushButton` (`True` → `False`, confirmed live) — the mechanism chosen for re-deriving button
+  hover state after restoring children. `QStyle.unpolish()`/`polish()` was checked as a possible
+  alternative and confirmed NOT to work for this: it forces QSS re-evaluation of whatever state already
+  exists, it does not change the underlying hover state, so it cannot correct a wrong one.
+- `chapter_preview_label` is confirmed NOT present in `TransportBarBlurOverlay._widgets`/
+  `_all_tracked_widgets()` at all — it needs no direct handling from that class; its content already
+  follows the buttons' real hover signals automatically once those signals fire correctly.
+
+### Implementation
+
+`_grab_and_blur`'s panel hide/show pair was replaced with a `panel.findChildren(QWidget)` hide/show pair
+(fresh every call, not cached, matching the panel's own dynamic tree). The two compensation mechanisms
+that existed solely because the PANEL becoming hit-test-invisible was the problem
+(`WA_TransparentForMouseEvents` on tracked widgets, the `setOverrideCursor` cursor-pin bracket) were
+removed, since their precondition no longer occurred. A new `_rederive_button_hover()` method re-derives
+real Qt hover state on the six `QPushButton`-family tracked widgets from the live cursor position after
+restoring children, via genuine `QEnterEvent`/`QEvent(Leave)` sends — kept as cheap insurance even though
+the pre-implementation `underMouse()` probe found no disturbance from hide-children in the first place
+(that probe used synthetic, not platform, hover input, so the finding carried a stated caveat rather
+than being treated as conclusive). `[PERF-HIDE-CHILDREN]` timing was added alongside the existing
+`[PERF]` line. Syntax-verified, reviewed at Checkpoint B (including a genuine, correctly-flagged open
+question about whether the change also silently affected `frost_panel_backdrop`'s call site, since
+`_grab_and_blur`/`_grab_and_blur_for_frost` had already been collapsed into one function in an earlier
+session — flagged before running, not glossed over).
+
+### The regression — severe, different in kind from the render() failure, not diagnosed before revert
+
+Live test, panel open, Pryme's report verbatim: **"Psychedelic. Everything is everywhere on top of
+everything, they are jumping up and down, the copy paste menu slides down the screen and takes focus
+from my browser."** Screenshots showed every panel tab (Settings/Themes, Sprint, Stats/Month) rendering
+with heavily overlapping, ghosted, duplicated-looking content — text and controls from what should be
+sequential rows or tabs all visible simultaneously, misaligned. A context-menu-style popup was observed
+escaping the application window's bounds entirely and stealing OS-level focus from an unrelated
+application.
+
+**This is not the same class of failure as the flat-fill/feedback-loop bugs found in the render()
+session.** Those were compositing-correctness bugs — wrong pixels in a frost pixmap, diagnosable and
+fixable within the mechanism. This regression reads as **structural**: `findChildren(QWidget)` recurses
+into every descendant regardless of type, which includes structural/layout-relevant widgets the
+hideEvent audit never checked for, because the audit's question was "does hiding this have a
+BEHAVIORAL side effect" (state mutation, signal emission, timer/animation stop) — never "is hiding this
+widget AT ALL, independent of any hideEvent override, safe for Qt's own layout/stacking/window
+machinery." `QStackedWidget` pages, `QTabWidget` internals, `QMenu`/popup widgets (which are top-level
+windows in Qt even when logically nested), and scroll-area viewports were never specifically excluded
+or considered — a settings panel's tab machinery, repeatedly hidden and shown many times a second, is a
+plausible mechanism for simultaneous-tab-content bleed; a popup widget's parent-visibility being
+toggled mid-existence is a plausible mechanism for a menu escaping the window and stealing focus. **This
+is a hypothesis about the mechanism, not a diagnosed root cause** — the investigation stopped at
+Pryme's report and his decision to revert immediately (self-revert, "easier than you trying to match
+the diff"), before any probe confirmed which specific widget class or classes were responsible.
+
+### Outcome: reverted, approach judged dead
+
+Pryme reverted `transport_bar_blur.py` himself (confirmed: zero diff against `HEAD` afterward). Asked
+directly whether this was salvageable without huge work: assessed as dead, not a tunable parameter —
+the failure isn't "one wrong assumption in an otherwise sound mechanism" (the render() session's shape)
+but a category error in what `findChildren(QWidget)` sweeps up. A real fix would require hand-curating,
+per panel, which children are safe leaf-content to hide versus which are structural and must never be
+touched — ongoing per-panel maintenance, not a one-time correction, for every current and future widget
+any panel ever gains. Combined with the same-day render() dead end, that is two structurally different,
+independently-failed attempts at avoiding the panel-hide entirely.
+
+**One thread was raised and left open, deliberately not chased further this session**: is
+`chapter_preview_label` even tracked by `TransportBarBlurOverlay`'s dirty tracker at all? Checked
+directly: no — confirmed absent from `self._widgets`/`_all_tracked_widgets()`, and no reference to it
+exists anywhere in `transport_bar_blur.py`. This means the dirty tracker has no visibility into
+`chapter_preview_label`'s own paint events (its fade-in/out), independent of which grab mechanism sits
+underneath — a real, distinct gap from everything investigated this session (render()'s hole-fill,
+hide-children's structural breakage), not yet traced through to what it actually implies for whether the
+frost shows the label at all today. Flagged for whoever picks this up next, not resolved here.
+
+**Design doc for the render() session's own fix, `review/Design_260816_render_hole_fill_feedback_loop.md`,
+was deleted this session** (2026-08-16 Session 2) — the render() direction was independently confirmed
+dead by this session's own outcome (two failed approaches, not one), so the doc's content, while
+correct as far as it went, no longer has any near-term use as a living reference; its content is
+preserved in `review/INDEX.md`'s row for it, which is where anyone needing it should look. Nothing else
+in the repo depended on the file existing.
+
+**The hover/tooltip bug itself (TODO.md, "Blur grab hide/show side effects") remains open, unchanged.**
+Two independent hide/show-avoidance strategies have now failed for two different structural reasons.
+Whoever picks this up next should treat "avoid hiding anything" as a harder problem than either attempt
+assumed, and should specifically resolve the `chapter_preview_label` tracking question above before
+building on any grab-mechanism change, since an untracked widget's fade is invisible to the dirty
+tracker regardless of what the grab itself does.
+
+---
+
+## 2026-08-16 — render() investigated as a hide/show-free replacement for the transport-bar blur grab; two real bugs found and fixed in turn, a third found and NOT fixed; approach reverted entirely, hover/tooltip bug still open
+
+New session, continuing from the 2026-08-15 entry immediately below (that entry's revert to
+`main_window` + panel-hide is the baseline this session started from — confirmed unmodified on disk
+before this session's changes began). This entry covers the full arc: a genuinely promising
+investigation, two sequential real bugs each root-caused and fixed, a third bug found but not
+root-caused, and a full revert on Pryme's judgment call ("Introduces more issues than it solves").
+`transport_bar_blur.py` is back to the exact state committed in `4c4937f`/`5247177` — zero trace of
+this session's `_render_and_blur`/`_panel_open_snapshot` work remains in the file. Nothing here is
+committed; this entry exists so the investigation isn't silently lost and doesn't get re-attempted
+from scratch without knowing what already failed and why.
+
+### Why render() looked like the right direction
+
+The standing hypothesis for the hover/tooltip bug (open since 2026-08-01, see TODO.md's "Blur grab
+hide/show side effects") was that `_grab_and_blur`'s panel-hide/show cycle — run on every dirty
+tick, ~5-15x/sec while a panel is open and a book plays — causes Qt to re-hit-test on every cycle,
+flipping `QApplication.widgetAt()` from the panel to whatever transport widget sits underneath and
+delivering synthetic Enter/Leave events that clear real hover state before the grab captures it.
+
+A dedicated investigation (four questions, answered by direct measurement in a scratch harness, not
+theorized) confirmed `QWidget.render(target, targetOffset, sourceRegion)` as a structurally sound
+replacement:
+
+- **Q1/Q3 — does excluding the panel from `sourceRegion` produce usable output?** Measured: the
+  excluded region comes back `rgba=(0,0,0,0)` — genuinely transparent, not Qt's opaque
+  default-palette color. This is the load-bearing difference from the EARLIER, unrelated
+  `content_container.grab()` dead end (2026-08-14–15, see the entry below): that approach failed
+  because the unpainted region was opaque and wrong-colored, making any fill underneath it
+  structurally unreachable. render()'s transparent hole means a fill painted underneath it is
+  genuinely reachable — this is real, not the same trap wearing a new hat.
+- **Q2 — does render() avoid the synthetic-event problem?** Confirmed via a real `QEnterEvent` sent
+  directly to a button (platform `QCursor.setPos()` doesn't generate real motion under this Wayland
+  session, confirmed empty on warp — so hover was established by exercising Qt's own event-delivery
+  path directly, not by faking platform input). With real hover established: `render()` delivered
+  zero synthetic Enter/Leave and `QApplication.widgetAt()` did not flip during it. A parallel
+  `hide()`/`show()` test on an overlapping sibling DID flip `widgetAt()` (panel → button → panel,
+  across the hide/show), directly reproducing the mechanism the standing hypothesis described. This
+  is the single most load-bearing result of the whole investigation — it directly confirms the
+  premise the render() approach was built on.
+- **Q4 — DPR handling.** Allocating the target pixmap at device-pixel size and calling
+  `setDevicePixelRatio()` before `render()` produces a correctly-scaled fill at DPR=2 (simulated;
+  real display is DPR=1) with no quarter-size clipping. No new DPR handling needed beyond the
+  existing ledger `_blur_pad_crop` already carries.
+
+A follow-up cost investigation (synthetic harness, geometry matching the real transport-bar rects)
+found render()-only running ~4.6x cheaper than grab()+hide/show, and render()+composite ~4x cheaper
+— direction reliable (every one of 50 samples in each test showed the same ordering), magnitude
+explicitly flagged as untrustworthy from a shallow synthetic widget tree (the harness had ~20
+widgets vs. the real app's ~600+, and CLAUDE.md's own theme-cost investigation already established
+that this class of cost scales with tree DEPTH, not widget count, non-linearly) — the harness's own
+absolute numbers were ~10x lower than the real app's `[PERF]` reference figures, flagged as such at
+the time, not glossed over. The live `[PERF-RENDER]` log after landing (see below) confirmed the
+direction: full-region render()+blur measured 4.15ms median (n=4612) against a 12.77ms reference for
+the old grab path — a real, live-confirmed win on the one geometry with a large enough sample to
+trust.
+
+### Implementation and Problem 1: a flat bg_main hole-fill is visible at low panel opacity
+
+`_render_and_blur(rect)` was added as a per-tick sibling to `_grab_and_blur`, wired into
+`refresh_dirty` in place of the old call (one line: `_grab_and_blur(dirty)` →
+`_render_and_blur(dirty)`). `show_for_panel`'s mandatory one-time full-rect pass on panel-open was
+deliberately left on `_grab_and_blur` — only the per-tick incremental path changed. Coordinate
+mapping for both the dirty rect and the panel's own rect reused the exact same
+`mapFromGlobal`/`mapToGlobal` round-trip `_grab_and_blur` already used, and
+`_panel_rect_in_common_space` (an existing helper, already shared with the `visual_area` clipped
+blur) supplied the panel's settled geometry — no new coordinate scheme introduced.
+
+The panel's own pixels are excluded from `sourceRegion` by construction (`QRegion(padded_rect) -
+QRegion(panel_rect_mw)`), so `render()` genuinely cannot paint anything where the panel sits. The
+first implementation filled that hole with a flat, fully-opaque `bg_main` rect painted underneath
+the render() output, on the reasoning that the panel itself always covers that exact screen rect on
+screen, so the fill would never be directly visible.
+
+**This shipped a real, live-found regression.** `panel_opacity_hover` is a normal, themeable value
+(confirmed: `theme_manager.py`, the same key `frost_panel_backdrop`'s own wash-compositing already
+reads) — not a synthetic test case. Pryme tested at low opacity (Waknuk theme, opacity manually
+dropped to ~0.05) and reported directly: "Rect area almost fully opaque... The rect area doesn't
+follow it and is still opaque." Screenshots confirmed a large, flat, solid-colored block where
+blurred real content should have been faintly visible through the near-transparent panel. The
+"the panel covers it" reasoning was true for the panel's OPAQUE state and silently false for its
+translucent one — the flat fill was never equivalent to real content, it just happened not to be
+visible in whatever opacity the first live test used.
+
+**Root-cause confirmation before fixing:** rather than patch on the strength of the screenshots
+alone, the panel-exclusion geometry was independently verified correct first, via a live
+`[RENDER-REGION-TRACE]` probe and a direct area computation (not `QRegion` internals — this
+PySide6 binding has no `.rects()` accessor, confirmed via `dir(QRegion)`; `rectCount()` +
+`boundingRect()` + an independent Python-side area calc from the two known rects was used instead).
+Result: ~83% of `padded_rect` was genuinely excluded, matching the panel's real footprint almost
+exactly, with only a real right-edge sliver and bottom margin left over — the SAME shape visible in
+every screenshot (a visible sliver on the right, not the whole area). This ruled out a coordinate
+bug as the cause before any fix was attempted — worth recording because the natural first guess
+(re-check the panel-rect math) would have been the wrong direction entirely.
+
+**Fix:** the excluded region is filled with `self._overlay.pixmap()` — the previous tick's real,
+already-blurred composite — instead of a flat color. Real (if one-tick-stale) content, matching what
+`_grab_and_blur`'s hide-based approach always produced everywhere, including under the panel, since
+it grabbed the fully-painted `main_window` with the panel genuinely absent. This fixed the
+flat-block symptom. It introduced Problem 2.
+
+### Problem 2: the previous-frame fill was a compounding-blur feedback loop
+
+**Reported symptom:** "flickering like a candle flame" — two screenshots taken moments apart at the
+same panel/scroll position showed markedly different content in the same region (one a stable
+panel-colored area, one a black void).
+
+**Mechanism, confirmed by re-reading the actual code path, not re-theorized:**
+
+1. `refresh_dirty` typically computes a SMALL dirty sub-rect (one button, one label) — confirmed
+   live via `[PERF-RENDER]`: most ticks carried `rect=(230,300,40,107)` or similar small rects, not
+   the full `(10,300,260,198)` bounding rect.
+2. `_render_and_blur(dirty)` read `prev = self._overlay.pixmap()` — the ENTIRE current overlay frame
+   (260×198 in the observed trace, the full bounding rect, regardless of how small `dirty` was) —
+   and used the whole thing as the hole-fill base.
+3. It composited `target` (this tick's fresh render() output, transparent over the panel) on top of
+   the entire `prev`-filled canvas, then blurred the ENTIRE canvas.
+4. The result was cropped back down to just `rect`'s small size and returned.
+5. `refresh_dirty` pasted that small crop back into the overlay pixmap via `CompositionMode_Source`
+   — overwriting only the dirty sub-rect, leaving the rest of the overlay pixmap as whatever it
+   already was.
+
+Net effect: every tick re-blurred the ENTIRE hole-fill region (step 3) but only ever wrote back a
+SMALL sliver of the result (step 5). The next tick's `prev` (step 2) was therefore, for most of its
+area, an accumulation of every previous tick's fill-and-reblur, with no tick ever reading from a
+clean source. A genuine compounding feedback loop, not a one-time wrong-frame bug — consistent with
+a visible flicker once enough ticks (5-15/sec) accumulate. Confirmed structurally by comparing
+against the OLD `_grab_and_blur` path, which has no equivalent: `refresh_dirty`'s own composite step
+has always existed and reads the live overlay too, but the slice it pastes ALWAYS came from a fresh,
+unblurred `grab()` of the live screen — never from a pixmap that had itself been blurred on a
+previous tick. `_render_and_blur`'s NEW read, one level further down, was the only new self-derived
+read in the whole chain.
+
+**Design writeup:** `review/Design_260816_render_hole_fill_feedback_loop.md` — full requirements
+analysis (real content, no feedback, staleness acceptable) and the fix that satisfies all three: a
+DEDICATED, write-once-per-panel-open cache (`_panel_open_snapshot`), populated only by
+`show_for_panel`'s existing one-time clean grab (already correct, already has no feedback problem —
+it's a single `grab()` call, not a read of prior blurred output), read (never written) by
+`_render_and_blur`, cleared in `hide_for_panel`. Reviewer Claude (a second, independent review pass)
+confirmed the design was correct and specified the exact attribute shape; implementation matched the
+spec, including the coordinate-mapping confirmation requested before writing the composite step
+(`_panel_open_snapshot` is geometrically identical to what `self._overlay.pixmap()` was AT THE
+MOMENT `show_for_panel` wrote it — same source call, same size/origin convention — so the existing
+`offset` math, already verified live via `[RENDER-FILL-TRACE]` at a stable `(20,20)` across 420
+ticks, carried over unchanged).
+
+This fix was implemented, syntax-verified, and reviewed (Checkpoint B) — but the live re-test that
+should have confirmed it surfaced Problem 3 instead, before Problem 2's fix could be independently
+confirmed clean on its own.
+
+### Problem 3: tab switches jump between different stale frames — NOT root-caused
+
+**Reported symptom (after Problem 2's fix was live):** "Wrong state flashes on tab switches. Wrong
+color, wrong chapter slider position." Follow-up confirmed this happens on EVERY tab switch, and
+looks like "jumps from one stale image to another" — not the same frozen frame repeating, a
+DIFFERENT stale image each time.
+
+One initial framing was wrong and corrected live: the chapter slider being affected by a SETTINGS
+TAB switch was first treated as surprising ("shouldn't be affected by which settings tab is
+active"). Pryme corrected this immediately and correctly: the book is playing continuously, the
+slider is real content INSIDE the frozen region `_panel_open_snapshot` covers, so ANY stale part of
+that snapshot becoming visible — through a tab switch's dirty-tick, or through low panel opacity —
+will show the slider exactly where it was at panel-open time. Not a separate bug; a direct,
+predictable consequence of freezing the whole bounding rect once. Retracted the "shouldn't be
+affected" framing on the spot rather than let it stand.
+
+That correction explains why a stale slider position is VISIBLE, but not why it's a DIFFERENT stale
+image on each switch — `_panel_open_snapshot` is written exactly once per panel-open and never
+rewritten until close (confirmed live: the captured trace session, ~1650 real ticks across a full
+panel-open-to-close cycle, showed exactly one `hide_for_panel ENTRY` and ZERO `show_for_panel
+ENTRY` lines — meaning the snapshot was set before logging started and never touched again for the
+whole session). A single frozen snapshot cannot explain "jumps to a DIFFERENT stale image each
+switch" on its own. Two candidate theories were checked directly against the log and BOTH were
+ruled out, not confirmed:
+
+1. **Timing gap around the switch** — checked directly: tick cadence through the whole captured
+   window was consistently 6-20ms apart, no stall anywhere near a switch. Ruled out.
+2. **A tab switch re-triggering `show_for_panel`** (which would explain a genuinely different
+   snapshot each time) — checked directly via the same trace: zero `show_for_panel ENTRY` lines
+   after the initial one. Ruled out.
+
+The investigation stopped here — not because it was exhausted, but because Pryme made the call to
+revert rather than continue chasing a third bug in an approach that had already needed two rounds of
+live-found-and-fixed regressions. **The most likely remaining direction, never checked**: the LIVE
+overlay's own accumulated compositing (`self._overlay.pixmap()`, built by `refresh_dirty` pasting
+many small dirty-crop slices over time via `CompositionMode_Source`) may itself be internally
+patchy/inconsistent across regions that were dirtied at different times with different content — and
+a tab switch could plausibly trigger Qt to reveal a larger area than usual in one paint, exposing
+whatever patchwork happens to be sitting in the overlay at that instant before the next few ticks
+catch it up. This is a hypothesis, explicitly not verified — flagged as the next thing to check IF
+this approach is ever revisited, not as a diagnosis. One further open question, also unchecked: does
+this same symptom class exist on `main` (pre-render(), `_grab_and_blur`-only) at all — that would
+tell whether this is specific to the render() hole-fill mechanism or a pre-existing structural issue
+in the incremental compositing that render() merely made visible by removing the panel-hide's
+implicit full-repaint side effect.
+
+### Outcome: reverted entirely
+
+Pryme's call, verbatim: "I reverted the render() approach. Introduces more issues than it solves."
+`transport_bar_blur.py` is back to the exact committed state (`4c4937f`/`5247177`) —
+`_render_and_blur`, `_panel_open_snapshot`, and all four `[RENDER-*]` trace probes are gone from the
+file, confirmed via `grep -c` returning 0 for all of them. Nothing from this session was committed.
+
+**What this investigation did establish, and is worth keeping for any future attempt:**
+- render()'s core mechanism IS sound for the stated goal — Q2's `widgetAt()` result is real,
+  reproduced, and directly addresses the hover/tooltip bug's documented root cause. This was never
+  disproven; the approach failed on compositing correctness around it, not on the premise.
+- A flat-color hole-fill is wrong whenever the panel can be translucent (which is normal, themeable
+  behavior in this app, not an edge case).
+- A hole-fill sourced from the LIVE, continuously-updated overlay is a feedback loop the instant any
+  tick writes back a partial region of what it read — the fill source MUST be write-once and
+  read-only for the panel's whole open lifetime, never re-derived from the overlay's own ongoing
+  output.
+- Even with a structurally correct write-once snapshot, a third, unexplained inconsistency
+  surfaced under real interaction (tab switching) that pure code-reading and isolated live tests
+  before that point did not predict or catch. This is consistent with this file's established
+  pattern (see the CLAUDE.md rules on offscreen/synthetic verification): live interaction found real
+  bugs at every single stage of this investigation that log-reading and isolated testing did not
+  anticipate in advance.
+- The hover/tooltip bug itself (TODO.md, "Blur grab hide/show side effects") remains open,
+  unchanged by any of tonight's work — this investigation neither fixed it nor ruled out render() as
+  a viable eventual fix for it; it ruled out THIS specific hole-fill design as sufficient on its own.
+
+---
+
 ## 2026-08-15 (continued) — Pixel-probe found the real mechanism; grab source reverted to main_window; artifact fixed, hover/tooltip confirmed still open
 
 Direct continuation of the entry immediately below ("Grab-source switch shipped..."), same date,
