@@ -47,7 +47,10 @@ import time
 
 from PySide6.QtCore import QEasingCurve, QEvent, QObject, QPoint, QPropertyAnimation, QRect, Qt, QTimer
 from PySide6.QtGui import QColor, QPainter, QPixmap
-from PySide6.QtWidgets import QGraphicsBlurEffect, QGraphicsOpacityEffect, QGraphicsScene, QLabel
+from PySide6.QtWidgets import (
+    QGraphicsBlurEffect, QGraphicsOpacityEffect, QGraphicsScene, QLabel,
+    QPushButton, QWidget,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -377,6 +380,26 @@ class _DirtyRectTracker(QObject):
         return union
 
 
+class _HoverPaintFilter(QObject):
+    """QEvent.Enter/Leave filter for manual button-hover painting (2026-08-16).
+    Same shape as _DirtyRectTracker above — a small dedicated QObject, not the
+    owning TransportBarBlurOverlay itself, which is a plain class and cannot
+    be installEventFilter's target directly. Intercepts ONLY Enter/Leave on
+    the widgets it's installed on; every other event passes through
+    unconsumed, same contract as _DirtyRectTracker's own eventFilter."""
+
+    def __init__(self, overlay):
+        super().__init__()
+        self._overlay = overlay
+
+    def eventFilter(self, obj, event):
+        if event.type() == QEvent.Type.Enter:
+            self._overlay._paint_button_hover(obj)
+        elif event.type() == QEvent.Type.Leave:
+            self._overlay._restore_button_from_snapshot(obj)
+        return False  # never consume — must not affect real hover/click delivery
+
+
 class TransportBarBlurOverlay:
     """Owns the overlay widget, the bounding-rect computation, and the
     dirty-tracking lifecycle for one MainWindow's mini transport bar."""
@@ -496,6 +519,28 @@ class TransportBarBlurOverlay:
                                     # _panel_hides_everything, the drag gate and
                                     # frost_panel_backdrop (which passes its own
                                     # `panel` explicitly instead of this default).
+        self._panel_open_snapshot: QPixmap | None = None  # set once per
+            # panel-open in show_for_panel (a copy of the same clean grab
+            # self._overlay is shown with), read-only thereafter, cleared in
+            # hide_for_panel. Display/identity state, same category as
+            # _bounding_rect/_active_panel above — deliberately NOT cleared in
+            # _disarm_grabbing, so a parked frame (park_for_panel) keeps its
+            # snapshot intact exactly like it keeps everything else in this
+            # group intact; see park_for_panel's own docstring. Manual-paint
+            # hover fix (2026-08-16): the restore source for
+            # _restore_button_from_snapshot when a button's hover ends —
+            # painting the button's real appearance back rather than a flat
+            # placeholder, since it's a real clean grab, not a synthetic fill.
+        self._hover_buttons: list = []  # the QPushButton-family tracked
+            # widgets with self._hover_filter installed for manual hover
+            # painting. Populated in show_for_panel/unpark_for_panel, cleared
+            # in _disarm_grabbing (the "stop producing new frames" half, NOT
+            # hide_for_panel's display/identity half — mirrors _tracker/
+            # _tracker_widgets' own lifecycle exactly, not _bounding_rect's).
+        self._hover_filter = _HoverPaintFilter(self)  # constructed once,
+            # reused across every panel-open — it holds no per-open state of
+            # its own (unlike _tracker, which IS rebuilt fresh each open,
+            # since it accumulates a dirty union that must reset).
 
         # CACHED-FRAME REWORK (2026-07-20): no fixed-interval polling timer
         # anymore — see _DirtyRectTracker's class docstring for why. A real
@@ -685,6 +730,13 @@ class TransportBarBlurOverlay:
         blurred = self._grab_and_blur(self._bounding_rect)
         t_grab_blur_done = time.perf_counter()
         self._overlay.setPixmap(blurred)
+        # Manual-paint hover fix (2026-08-16): a copy of this same clean grab,
+        # kept as the restore source for _restore_button_from_snapshot. Must
+        # be a copy (QPixmap(blurred), not the same object) — self._overlay's
+        # own pixmap is mutated in place by _paint_button_hover/
+        # _restore_button_from_snapshot below, and a shared reference would
+        # let those mutations corrupt the "clean" restore source too.
+        self._panel_open_snapshot = QPixmap(blurred)
         self._overlay.setGeometry(self._bounding_rect)
         self._opacity_effect.setOpacity(0.0)
         self._overlay.show()
@@ -705,6 +757,19 @@ class TransportBarBlurOverlay:
         for widget in self._tracker_widgets:
             widget.installEventFilter(self._tracker)
         self._tracker.take_dirty_union()  # reset: the first pass already covers everything
+
+        # Manual-paint hover fix (2026-08-16): a SEPARATE filter (self, not
+        # self._tracker) on just the 6 QPushButton-family tracked widgets,
+        # intercepting only Enter/Leave — see _HoverPaintFilter.eventFilter.
+        # Kept as its own list (not derived from _tracker_widgets at use
+        # time) for the same reason _tracker_widgets itself is snapshotted
+        # rather than recomputed: removeEventFilter must target exactly what
+        # installEventFilter was called on.
+        self._hover_buttons = [
+            w for w in self._tracker_widgets if isinstance(w, QPushButton)
+        ]
+        for widget in self._hover_buttons:
+            widget.installEventFilter(self._hover_filter)
 
         self._active = True
         logger.warning("[TIMER-TRACE] show_for_panel: event-driven refresh armed (no polling timer)")
@@ -1149,6 +1214,16 @@ class TransportBarBlurOverlay:
                 widget.removeEventFilter(self._tracker)
             self._tracker = None
             self._tracker_widgets = []
+        # Manual-paint hover fix (2026-08-16): same "stop producing new
+        # frames" category as the tracker above, not the display/identity
+        # half — while parked (Book Detail over this panel), manual hover
+        # painting would mutate a pixmap park_for_panel is relying on staying
+        # static, and the buttons aren't even the visually relevant surface
+        # anymore (Book Detail occludes them). Removed from exactly
+        # self._hover_buttons for the same stale-filter reason as above.
+        for widget in self._hover_buttons:
+            widget.removeEventFilter(self._hover_filter)
+        self._hover_buttons = []
         self._active = False
         # Any in-flight decline-retry is left to fire once and no-op on its own
         # `if not self._active` guard (same safety property the coalescing
@@ -1178,6 +1253,7 @@ class TransportBarBlurOverlay:
         self._overlay.setPixmap(QPixmap())
         self._bounding_rect = None
         self._active_panel = None
+        self._panel_open_snapshot = None
         self._parked = False
         self._parked_panel = None
         self._parked_frame_invalid = False
@@ -1277,6 +1353,16 @@ class TransportBarBlurOverlay:
         for widget in self._tracker_widgets:
             widget.installEventFilter(self._tracker)
         self._tracker.take_dirty_union()  # discard pre-arm dirt; triggers nothing
+        # Manual-paint hover fix (2026-08-16): re-install exactly like
+        # show_for_panel does — park_for_panel's own _disarm_grabbing call
+        # removed this filter, so it needs re-arming here too.
+        # _panel_open_snapshot itself needs no action: _disarm_grabbing never
+        # touches it, so the one from before the park is still valid.
+        self._hover_buttons = [
+            w for w in self._tracker_widgets if isinstance(w, QPushButton)
+        ]
+        for widget in self._hover_buttons:
+            widget.installEventFilter(self._hover_filter)
         self._active = True
         self._parked = False
         self._parked_panel = None
@@ -1342,6 +1428,82 @@ class TransportBarBlurOverlay:
             widget_rect = QRect(top_left, widget.size())
             rect = widget_rect if rect is None else rect.united(widget_rect)
         return rect
+
+    def _button_overlay_rect(self, button: QWidget) -> QRect:
+        """`button`'s rect in overlay-local coordinates, clipped to the
+        overlay pixmap's own bounds.
+
+        The clip is load-bearing, not defensive polish: next_button and
+        speed_button straddle the panel's right edge (confirmed live,
+        2026-08-16 — 20 of their ~46-60px width sits in the live, unblurred
+        sliver past the panel, only the remainder is inside the frosted
+        _bounding_rect at all). An unclipped rect would ask _paint_button_hover
+        /_restore_button_from_snapshot to draw or copy pixels that don't exist
+        in the overlay pixmap. Qt would silently truncate the draw either way,
+        but computing the intersection explicitly here — once, in the one
+        place both callers share — is what makes that truncation something
+        both callers can reason about (an empty rect after clipping means
+        "nothing to paint," checked by both callers) rather than relying on
+        an implicit clip neither of them asked for. The live, unblurred
+        sliver these two buttons partly sit in is not touched by either
+        helper — it is already rendering its own correct, native :hover QSS,
+        since it was never part of the grab in the first place."""
+        top_left = button.mapTo(self._common_ancestor, QPoint(0, 0))
+        overlay_rect = QRect(top_left - self._bounding_rect.topLeft(), button.size())
+        overlay_bounds = QRect(QPoint(0, 0), self._bounding_rect.size())
+        return overlay_rect.intersected(overlay_bounds)
+
+    def _paint_button_hover(self, button: QWidget) -> None:
+        """Paint `button`'s hovered appearance (flat accent_light fill,
+        border-radius 4px — the ONLY thing that changes on hover per the QSS
+        investigation; the icon is unaffected by hover and untouched here)
+        directly into self._overlay's pixmap, in place of a grab.
+
+        This is the manual-paint replacement for the grab-based approaches
+        that failed structurally (see NOTES.md, 2026-08-16 sessions): no
+        panel hide, no children hide, no hit-test disturbance — this method
+        never touches panel or button visibility at all, it only mutates the
+        already-shown overlay pixmap directly, driven by a real Enter event
+        (see _HoverPaintFilter.eventFilter, near _DirtyRectTracker above)."""
+        theme = self.main_window.theme_manager.get_current_theme()
+        color = QColor(theme['accent_light'])
+        rect = self._button_overlay_rect(button)
+        if rect.isEmpty():
+            return
+        pixmap = QPixmap(self._overlay.pixmap())
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(color)
+        painter.drawRoundedRect(rect, 4, 4)
+        painter.end()
+        self._overlay.setPixmap(pixmap)
+
+    def _restore_button_from_snapshot(self, button: QWidget) -> None:
+        """Restore `button`'s overlay-local rect from self._panel_open_snapshot
+        — the clean, unhovered frame captured once in show_for_panel — in
+        place of a grab, on hover leave.
+
+        Real content, not a flat placeholder: this is the same clean grab
+        self._overlay was originally shown with, so the restored region shows
+        whatever was actually there (the button's real unhovered QSS state,
+        its icon, anything else in that rect) rather than a guessed fill."""
+        if self._panel_open_snapshot is None:
+            logger.warning(
+                "[HOVER-RESTORE] _panel_open_snapshot is None — skipping "
+                "restore. Should be unreachable while a panel is open; see "
+                "show_for_panel/hide_for_panel for where it is set/cleared."
+            )
+            return
+        rect = self._button_overlay_rect(button)
+        if rect.isEmpty():
+            return
+        pixmap = QPixmap(self._overlay.pixmap())
+        painter = QPainter(pixmap)
+        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Source)
+        painter.drawPixmap(rect.topLeft(), self._panel_open_snapshot, rect)
+        painter.end()
+        self._overlay.setPixmap(pixmap)
 
     def _grab_and_blur(self, rect: QRect, panel=None) -> QPixmap:
         """Grabs main_window with `panel` hidden. `panel` defaults to
