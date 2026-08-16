@@ -205,6 +205,40 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
     untouched. **Per Pryme's explicit instruction, take these one at a time next session, starting with
     the reframed Issue 1** (frost grabbed-rect content, not button hover color) — not the original,
     now-disproven "wrong theme getter" framing.
+  - **Issue 1 — FIXED (2026-08-16, Session 5, `5d7d7e6`), scoped to the Themes tab only.** Reasoned
+    through live with Pryme rather than re-derived: park/unpark (the mechanism used for Book Detail
+    parking a panel's frost) does NOT apply here, because Book Detail's underlay is fully occluded
+    (nothing changes, safe to freeze) while Settings/Themes's underlay is genuinely live (ticking time
+    labels, the progressing chapter slider, and during a hover, the theme colors themselves) — parking
+    would freeze a visibly moving scene, which is worse than the original staleness, not a fix for it.
+    The shipped fix is narrower than either "make the frost track the preview live" (would mean
+    reopening `hover_active_gate`) or "freeze a good-enough frame" (still wrong for a live underlay):
+    **suppress the frost entirely while the Themes tab is active**, since `transport_bar_blur`
+    (the strip) and `visual_area_blur` (the cover art) are already two independent calls at every
+    panel-open site — skipping one while keeping the other required no changes to either blur
+    mechanism itself. Wired via `PanelManager._sync_transport_bar_blur_for_settings_tab()`
+    (`panels.py`), called from three sites: `QTabWidget.currentChanged` (real tab switches),
+    `_start_settings_entry`'s slide-finished handler (panel OPEN — needed separately because
+    reopening Settings already on Themes fires no `currentChanged`), and `apply_blur_live` (the live
+    Settings > Blur toggle). Live-confirmed working by Pryme, including the reopen-on-Themes and
+    toggle-while-on-Themes edge cases. **Does not touch `hover_active_gate`,
+    `_POST_RESTYLE_COOLDOWN_S`, park/unpark, or the theme-preview/commit lifecycle at all** — the
+    parts of this file with the worst regression track record are untouched by this fix.
+  - **Three issues remain open, restated in Pryme's own framing (2026-08-16, Session 5) — all live in
+    the separate manual-paint mechanism (`_HoverPaintFilter`/`_paint_button_hover`/
+    `_restore_button_from_snapshot`), untouched by the Issue 1 fix above:**
+    1. **Hover state inconsistent** — "sometimes blurred, sometimes crisp." Matches this entry's
+       original Issue 2 (dirty-tracker grabs racing/overwriting manual paint) — Fix A regressed
+       `:pressed` and was reverted; Fix B was never isolated/re-verified clean.
+    2. **Tooltip not shown under an open panel.** Matches the `chapter_preview_label` tracking gap
+       flagged in Session 2 above (not present in `_all_tracked_widgets()` at all) — still unresolved
+       and still the recommended starting point per that entry's own note.
+    3. **Pressed state not properly showing.** The confirmed Fix-A regression: manual paint has no
+       `:pressed` handling at all; the dirty tracker was the only mechanism ever capturing it, and
+       excluding buttons from that tracker (Fix A) broke it. A real fix needs its own
+       `_paint_button_pressed` + Press/Release interception, not yet designed.
+    Take one at a time, per Pryme's standing instruction — start wherever seems most tractable next
+    session; no priority order given among the three.
 
 - [2026-08-14] **Re-measure `_GRAB_FEEDBACK_SUPPRESS_S`.** Live again as of the 2026-08-15 revert
   above — the panel hide/show cycle this guard was sized against is back (it was briefly absent

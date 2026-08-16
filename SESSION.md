@@ -1,3 +1,57 @@
+## Session Summary — 2026-08-16 Session 5 — Issue 1 FIXED: transport-bar frost suppressed on Settings' Themes tab specifically, since its underlay is genuinely live (not occluded) and neither "track the preview live" nor "freeze a parked frame" fit. `fix/book-detail-blur-park` (`5d7d7e6`)
+
+Full detail in NOTES.md (top entry, same title). This is the pointer.
+
+**Picked up from Session 4's root cause**: `hover_active_gate` correctly withholds grabs during a
+theme hover-preview (a real, necessary fix for a worse, previously-shipped bug), but its cost is a
+frost frozen on the pre-preview frame for the whole preview, snapping to the new colors in one
+atomic jump on unhover/commit — the seam Pryme was seeing. Two candidate fixes were discussed and
+both rejected before landing on the one that shipped:
+
+- **Let the grab track the preview live** — rejected: would mean reopening `hover_active_gate`,
+  the one gate in this file with the clearest prior justification for existing.
+- **Park a frozen frame** (the mechanism Book Detail already uses over Stats/Tags/etc.) — Pryme
+  caught this was the wrong model before any code was written: Book Detail's underlay is fully
+  occluded (nothing behind it is visibly changing, so freezing it is free), while Settings' underlay
+  is genuinely live — ticking time labels, the progressing chapter slider, and during a hover, the
+  theme colors themselves. Parking there would freeze a visibly moving scene, which reads as worse
+  than the original staleness, not a fix for it.
+
+**What actually shipped**: don't show a frost over the Themes tab's content at all. Pryme's own
+framing: "Don't blur rect area, keep it transparent except for the top part with the cover art."
+`transport_bar_blur` (the transport strip) and `visual_area_blur` (the cover art) were already two
+independent calls at every panel-open site, so skipping one while leaving the other untouched
+required no changes to either blur mechanism itself — confirmed by reading `_start_settings_entry`
+before writing anything.
+
+**Implementation** (`panels.py`): `PanelManager._sync_transport_bar_blur_for_settings_tab()` checks
+`main_window.tabs.currentIndex() == 0` (Themes, same identification `_BLUR_IN_THEMES_TAB_MS` and
+`ThemeManager`'s own `themes_tab_active` check already use) and either `hide_for_panel()`s the frost
+or restores it via the existing `_apply_transport_bar_blur`. Three call sites needed it, not one:
+`QTabWidget.currentChanged` (real tab switches — the obvious case); `_start_settings_entry`'s
+slide-finished handler (panel OPEN — found only by reasoning through the reopen-on-Themes case: if
+Settings was last closed on Themes and reopens still on Themes, `currentChanged` never fires, so an
+unconditional `_apply_transport_bar_blur` call there would have silently reintroduced the bug on
+every reopen); and `apply_blur_live` (the live Settings > Blur toggle, same reopen-style gap if
+toggled on while already sitting on Themes). All three found by tracing every existing call site of
+`_apply_transport_bar_blur(self.settings_panel)`, not assumed from the first one found.
+
+Live-confirmed working by Pryme, including both edge cases above. Committed as `fix`, not `wip` —
+self-contained and complete for the problem it targets, independent of the three still-open issues
+below. Four pre-existing leftover diagnostic-probe files (`app.py`, `themes.py`, `controls.py`,
+gated/inert) were committed alongside it per Pryme's call — cleanup deferred to before merge.
+
+**Three issues remain open**, restated in Pryme's own words this session — all live in the separate
+manual-paint hover mechanism (`_HoverPaintFilter`/`_paint_button_hover`), untouched by this fix:
+hover state inconsistent ("sometimes blurred, sometimes crisp" — this entry's Issue 2, dirty-tracker
+race), the next-chapter tooltip not shown under an open panel (the `chapter_preview_label`
+tracking gap flagged in Session 2), and pressed state not properly showing (`:pressed` has no
+manual-paint coverage at all — the confirmed Fix-A regression). See TODO.md for the full restated
+detail. No priority order given among the three; Pryme's standing instruction is to take them one at
+a time.
+
+---
+
 ## Session Summary — 2026-08-16 Session 4 — Issue 1's frost-freeze-during-hover-preview root-caused (an existing `hover_active_gate`/cooldown gate, not a bug) and CONFIRMED PRE-EXISTING via a git-worktree A/B test against the pre-WIP commit — settles a live disagreement between two Claude sessions with direct evidence. `fix/book-detail-blur-park`
 
 Full trace in NOTES.md (top entry, same title). This is the pointer.

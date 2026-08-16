@@ -1,3 +1,101 @@
+## 2026-08-16 (Session 5) — Issue 1 FIXED: transport-bar frost suppressed on the Themes tab specifically. Neither of the two obvious fixes (track the preview live; park a frozen frame) fit, because Settings' underlay is genuinely live, not occluded like Book Detail's.
+
+Fifth session, same day. Session 4 (immediately below) root-caused Issue 1 to `hover_active_gate`
+and confirmed it pre-existing. This session asked what to actually do about it.
+
+### Why the two obvious fixes don't apply here
+
+Claude's first proposal was to reuse `park_for_panel`/`unpark_for_panel` — the mechanism already
+shipped for Book Detail opening over a panel — by parking on Themes-tab-entry and unparking on exit,
+by analogy: same "stop grabbing, freeze the last good frame" shape.
+
+Pryme caught the flawed premise directly, without needing to see it fail live first: *"Stats panel
+is static under Book Details. Under Settings, there is the main window with time labels ticking,
+chapter slider progressing. And with theme previews, colors are changing. I don't see parking any
+view working there."* Book Detail's frost covers a region that is **fully occluded** by Book Detail
+itself — nothing behind it is visibly changing, so freezing it costs nothing perceptible. Settings'
+transport-strip sliver sits in front of a **genuinely live** main window. Parking there wouldn't
+freeze "nothing visible changed" — it would freeze a visibly moving scene and hold it static while
+the real one kept moving, which is a worse artifact than the one being fixed, continuously, not just
+during a preview.
+
+That left two options on the table, both rejected: letting the grab track the preview live (reopens
+`hover_active_gate` — the one gate in this file with the clearest documented justification), or
+suppressing blur entirely while any hover-preview is active (Pryme's own objection: "that would be
+jarring to switch back and forth each time the user previews a theme").
+
+### The actual fix, in Pryme's own words
+
+*"I was thinking of not blurring the grab area in Themes at all. The problem with that is when I
+switch to another tab. It would need to blur it again. That might look jarring too."* Then, after
+Claude mis-scoped this as parking again: *"You are showing a stale view of what? ... Don't blur rect
+area, keep it transparent except for the top part with the cover art."*
+
+This is a genuinely different shape from both rejected options: no grab is ever taken for that
+region while Themes is active, so there's no staleness to manage at all — not a frozen frame, just
+no frost. Checking `_start_settings_entry` confirmed `_apply_transport_bar_blur` (the transport
+strip) and `_start_visual_area_blur` (the cover art) were already two independent calls at every
+panel-open site, so "keep the cover-art blur, drop the strip frost, only on this one tab" required
+touching neither blur mechanism's internals — just gating one of the two existing calls.
+
+### Implementation
+
+`PanelManager._sync_transport_bar_blur_for_settings_tab()` (`panels.py`): `hide_for_panel()` when
+`main_window.tabs.currentIndex() == 0` (Themes — same identification `_BLUR_IN_THEMES_TAB_MS` and
+`ThemeManager`'s `themes_tab_active` check already use elsewhere in this file), else the existing
+`_apply_transport_bar_blur(self.settings_panel)`. Both underlying calls are already
+idempotent/self-guarding (`hide_for_panel` unconditionally tears down and resets state;
+`show_for_panel` early-returns if already active or the bounding rect is empty), so calling this on
+every tab change is safe regardless of prior state.
+
+Three call sites, found by grepping every existing caller of `_apply_transport_bar_blur(self.settings_panel)`
+rather than stopping at the first one:
+1. **`main_window.tabs.currentChanged`** — connected once, permanently, in `PanelManager.__init__`,
+   next to the existing `currentChanged` → `force_refresh_now()` connection it now sits beside.
+   Guarded on `settings_panel.isVisible()` since `mw.tabs` only exists inside `settings_panel` and
+   nothing else should react to it.
+2. **`_start_settings_entry`'s slide-finished handler** — required separately, not redundant: if
+   Settings was last closed on Themes and reopens still on Themes, the tab index never changes, so
+   `currentChanged` never fires. An unconditional `_apply_transport_bar_blur` call here (the
+   pre-existing code) would have shown the frost on every Themes-tab reopen with no signal to correct
+   it. Found by reasoning through the reopen case before testing, not by hitting it live first.
+3. **`apply_blur_live`** — the live Settings > Blur toggle. Same reopen-shaped gap: toggling Blur on
+   while already sitting on the Themes tab would otherwise call `_apply_transport_bar_blur`
+   unconditionally too.
+
+Checked against `_ThemesTabBarInterceptor` (the existing tab-bar click interceptor that can delay a
+tab switch until a hover/fade settles) before assuming no interaction: it always eventually calls the
+real `tabs.setCurrentIndex()`, which fires `currentChanged` normally — so the new handler only cares
+about the end state, not how the switch was gated, and needed no changes to account for it.
+
+Live-confirmed working by Pryme: transport strip stays live/unblurred on Themes, frost reappears on
+switching to another Settings tab, both edge cases (reopen-on-Themes, toggle-while-on-Themes) hold.
+Committed as `fix` (`5d7d7e6`), not `wip` — self-contained for the problem it targets. Does not touch
+`hover_active_gate`, `_POST_RESTYLE_COOLDOWN_S`, park/unpark, or the theme-preview/commit lifecycle
+at all.
+
+### Three issues remain open — restated in Pryme's own words this session
+
+All three live in the separate manual-paint hover mechanism (`_HoverPaintFilter`/
+`_paint_button_hover`/`_restore_button_from_snapshot`, WIP `30a19e3`), untouched by the fix above:
+
+1. **"the hover state sometimes being blurred and sometimes crisp"** — matches this investigation's
+   Issue 2 (Session 3): dirty-tracker grabs racing manual paint. Fix A (exclude buttons from the
+   tracker) regressed `:pressed` and was reverted; Fix B (re-apply paint after an overlapping
+   composite) was implemented but never isolated/re-verified clean before the session that tried it
+   ended on an unrelated, unexplained garbled-frost symptom.
+2. **"the tooltip not being shown under the panel"** — matches the `chapter_preview_label` tracking
+   gap flagged in Session 2: that widget is confirmed absent from `_all_tracked_widgets()` entirely,
+   so the dirty tracker has zero visibility into its fade in/out regardless of grab mechanism. Still
+   the recommended starting point per that entry.
+3. **"pressed state not properly showing"** — the confirmed Fix-A regression: manual paint has no
+   `:pressed` handling built at all; the dirty tracker was the only thing ever capturing it. A real
+   fix needs its own `_paint_button_pressed` + Press/Release interception — discussed, never built.
+
+Per Pryme's standing instruction, these go one at a time next session; no priority given among them.
+
+---
+
 ## 2026-08-16 (Session 4) — Issue 1's real mechanism found and confirmed PRE-EXISTING, not caused by the manual-paint work: the frost is deliberately stale for the whole duration of a theme hover-preview by an existing `hover_active_gate`, catching up in one atomic grab on unhover. Settled by direct A/B test against the pre-WIP commit, not by argument.
 
 Fourth session, same day. Session 3 (immediately below) ended with the reframed Issue 1 — the frost's
