@@ -46,7 +46,7 @@ import os
 import time
 
 from PySide6.QtCore import QEasingCurve, QEvent, QObject, QPoint, QPropertyAnimation, QRect, Qt, QTimer
-from PySide6.QtGui import QColor, QPainter, QPixmap
+from PySide6.QtGui import QColor, QFontMetrics, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QGraphicsBlurEffect, QGraphicsOpacityEffect, QGraphicsScene, QLabel,
     QPushButton, QWidget,
@@ -86,6 +86,19 @@ _GRAB_TRACE_ENABLED = os.environ.get("FABULOR_GRAB_TRACE") == "1"
 _DUMP_OVERLAY_ENABLED = os.environ.get("FABULOR_DUMP_OVERLAY") == "1"
 
 _BLUR_RADIUS = 5.0
+# Manual-paint content redraw (2026-08-17): next_button's icon and
+# speed_button's text are the only two pieces of button CONTENT the frost
+# needs to redraw on top of the manual hover/pressed fill — they're the two
+# buttons that straddle the panel edge into the live sliver (see
+# _button_overlay_rect's own comment), the other four sit fully under an
+# opaque panel and are never redrawn. _BLUR_RADIUS (5.0) is tuned for the
+# whole grabbed BACKGROUND region with a large padding margin
+# (_grab_and_blur's pad = radius*4); applied directly to a small icon/text
+# pixmap with no comparable padding it would smear past legibility. This is
+# a separate, smaller radius for icon/text-scale content — tuned live
+# against how the rest of the frost actually looks (1.5 read too crisp
+# against the surrounding blur, 2026-08-17).
+_CONTENT_BLUR_RADIUS = 6.0
 # Fade-IN only, on appear — dismiss stays instant (see hide_for_panel) so the
 # transport bar snaps back to live view the moment the panel starts closing.
 _FADE_IN_MS = 1500
@@ -395,8 +408,10 @@ class _HoverPaintFilter(QObject):
     def eventFilter(self, obj, event):
         if event.type() == QEvent.Type.Enter:
             self._overlay._paint_button_hover(obj)
+            self._overlay._hovered_buttons.add(obj)
         elif event.type() == QEvent.Type.Leave:
             self._overlay._restore_button_from_snapshot(obj)
+            self._overlay._hovered_buttons.discard(obj)
         return False  # never consume — must not affect real hover/click delivery
 
 
@@ -537,6 +552,15 @@ class TransportBarBlurOverlay:
             # in _disarm_grabbing (the "stop producing new frames" half, NOT
             # hide_for_panel's display/identity half — mirrors _tracker/
             # _tracker_widgets' own lifecycle exactly, not _bounding_rect's).
+        self._hovered_buttons: set = set()  # WHICH of _hover_buttons currently
+            # has manual hover paint showing right now (2026-08-17, dirty-composite
+            # overwrite fix) — distinct from _hover_buttons itself, which is the
+            # fixed list of buttons the filter is installed ON, not which of them
+            # are hovered at this instant. Populated in _HoverPaintFilter.eventFilter
+            # on Enter, discarded on Leave. Same "active-state, not display/identity"
+            # category as _hover_buttons — cleared in _disarm_grabbing, not
+            # hide_for_panel: while parked, nothing should be re-painting hover
+            # state into a pixmap park_for_panel needs to stay static.
         self._hover_filter = _HoverPaintFilter(self)  # constructed once,
             # reused across every panel-open — it holds no per-open state of
             # its own (unlike _tracker, which IS rebuilt fresh each open,
@@ -1074,6 +1098,16 @@ class TransportBarBlurOverlay:
         painter.drawPixmap(local.topLeft(), blurred_slice)
         painter.end()
         self._overlay.setPixmap(combined)
+
+        # Re-apply manual hover paint for any currently-hovered button whose
+        # overlay rect intersects the just-composited region — the composite
+        # above may have overwritten the crisp manual paint with a blurred
+        # grab result (2026-08-17).
+        for btn in self._hovered_buttons:
+            btn_rect = self._button_overlay_rect(btn)
+            if btn_rect.intersects(local):
+                self._paint_button_hover(btn)
+
         logger.warning(f"[TIMER-TRACE] refresh_dirty tick={_tick} COMPOSITED dirty={dirty}")
 
         # [OVERLAY-DUMP] one-shot (2026-08-15) — fires on the first real
@@ -1224,6 +1258,7 @@ class TransportBarBlurOverlay:
         for widget in self._hover_buttons:
             widget.removeEventFilter(self._hover_filter)
         self._hover_buttons = []
+        self._hovered_buttons = set()
         self._active = False
         # Any in-flight decline-retry is left to fire once and no-op on its own
         # `if not self._active` guard (same safety property the coalescing
@@ -1453,11 +1488,72 @@ class TransportBarBlurOverlay:
         overlay_bounds = QRect(QPoint(0, 0), self._bounding_rect.size())
         return overlay_rect.intersected(overlay_bounds)
 
+    def _paint_button_content(self, painter: QPainter, button: QWidget, rect: QRect) -> None:
+        """Redraw `button`'s real CONTENT (icon or text) on top of a manual
+        fill already painted into `rect`, blurred at _CONTENT_BLUR_RADIUS to
+        stay visually consistent with the rest of the (blurred) frost.
+
+        Scoped to next_button and speed_button ONLY (2026-08-17) — the two
+        buttons that straddle the panel edge into the live sliver (see
+        _button_overlay_rect's own comment) and are therefore the only two
+        whose manual fill is ever actually seen. The other four sit fully
+        under an opaque panel and are never redrawn — a flat fill with no
+        content is invisible there, so there is nothing to fix.
+
+        Reads the button's CURRENT displayed content live (icon()/text())
+        rather than re-deriving which icon/value should be showing — that
+        selection logic already lives elsewhere (_set_play_icon,
+        _update_skip_icons, the speed-change handler) and duplicating it here
+        would be a second, driftable copy of the same decision."""
+        mw = self.main_window
+        # Per-button vertical trim against the font metrics' own centering —
+        # the ▶ glyph reads visually low relative to its font-metrics bounding
+        # box (confirmed live, 2026-08-17); speed_button's plain digits/period
+        # need no correction.
+        y_offset = 0
+        if button is getattr(mw, 'next_button', None):
+            # Unicode glyph, not the SVG icon pixmap — simpler, and this is
+            # an approximation drawn on a manual fill, not the real icon.
+            text = "▶"  # ▶
+            font = button.font()
+            y_offset = -1  # tuned live, 2026-08-17
+        elif button is getattr(mw, 'speed_button', None):
+            # Numeric value only — button.text() is "1.90x"; drop the "x".
+            text = button.text().rstrip('xX')
+            if not text:
+                return
+            font = button.font()
+        else:
+            return
+        metrics = QFontMetrics(font)
+        text_size = metrics.size(Qt.TextFlag.TextSingleLine, text)
+        content = QPixmap(text_size)
+        content.fill(Qt.GlobalColor.transparent)
+        text_painter = QPainter(content)
+        text_painter.setFont(font)
+        text_painter.setPen(button.palette().buttonText().color())
+        text_painter.drawText(content.rect(), Qt.AlignmentFlag.AlignCenter, text)
+        text_painter.end()
+        blurred_content = _blur_pixmap(content, _CONTENT_BLUR_RADIUS)
+        # Hug the RIGHT edge of `rect`, not centered — `rect` is clipped to
+        # the frosted region only (the button's left portion sits under the
+        # panel, per _button_overlay_rect's own comment), so the visible
+        # frosted sliver is left of the panel's edge and the content must
+        # anchor toward that edge, matching where the real button's content
+        # actually sits (confirmed live, 2026-08-17 — centering left the
+        # glyph/text looking left-aligned within the visible strip).
+        target = QRect(0, 0, blurred_content.width(), blurred_content.height())
+        target.moveRight(rect.right())
+        target.moveTop(rect.center().y() - target.height() // 2 + y_offset)
+        painter.drawPixmap(target.topLeft(), blurred_content)
+
     def _paint_button_hover(self, button: QWidget) -> None:
         """Paint `button`'s hovered appearance (flat accent_light fill,
         border-radius 4px — the ONLY thing that changes on hover per the QSS
-        investigation; the icon is unaffected by hover and untouched here)
-        directly into self._overlay's pixmap, in place of a grab.
+        investigation) directly into self._overlay's pixmap, in place of a
+        grab. next_button/speed_button additionally get their real content
+        (icon/text) redrawn on top — see _paint_button_content — since an
+        opaque fill alone hides it entirely and its absence is noticeable.
 
         This is the manual-paint replacement for the grab-based approaches
         that failed structurally (see NOTES.md, 2026-08-16 sessions): no
@@ -1476,6 +1572,7 @@ class TransportBarBlurOverlay:
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(color)
         painter.drawRoundedRect(rect, 4, 4)
+        self._paint_button_content(painter, button, rect)
         painter.end()
         self._overlay.setPixmap(pixmap)
 
