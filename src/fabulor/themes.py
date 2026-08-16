@@ -2764,7 +2764,7 @@ THEMES = {
         "bg_main":                       "#2E343E",
         "bg_sidebar":                    "#1E2229",
         "bg_dropdown":                   "#464E5C",
-        "panel_opacity_hover":           0.92,
+        "panel_opacity_hover":           0.05,
         "undo_hover":                    "#777777",
         "text":                          "#A4AFC1",
         "accent":                        "#7E8DA8",

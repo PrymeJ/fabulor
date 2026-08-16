@@ -55,6 +55,11 @@ from .ui.cover_placeholder import CoverPlaceholder
 
 logger = logging.getLogger(__name__)
 
+# Same gate as transport_bar_blur.py/panels.py's grab/blur/clip trace probes —
+# reused here for [SEAM-TRACE] on the carousel's own clip (2026-08-15,
+# temporary). One env var covers the whole investigation.
+_GRAB_TRACE_ENABLED = os.environ.get("FABULOR_GRAB_TRACE") == "1"
+
 # Chapter-slider "sliver" suppression (paused-only display fix).
 # A chapter-nav seek lands at `_seek_target = nominal + offset`, where for VT/CUE the
 # offset is `_CHAPTER_BOUNDARY_EPSILON` (0.35). So at a freshly-landed chapter start,
@@ -1272,7 +1277,13 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         panel_rect = panel_rect_in_common_space(panel, self.content_container)
         car_tl = car.mapTo(self.content_container, QPoint(0, 0))
         local = panel_rect.translated(-car_tl.x(), -car_tl.y())
-        return local.intersected(car.rect())
+        result = local.intersected(car.rect())
+        if _GRAB_TRACE_ENABLED:
+            logger.warning(
+                f"[SEAM-TRACE] _carousel_clip_rect car_size={car.size()} "
+                f"car_tl={car_tl} panel={panel.objectName()!r} clip={result}"
+            )
+        return result
 
     def _sync_carousel_radius(self, radius):
         """Per-frame radius follower for the carousel's own effect, driven by
@@ -2339,6 +2350,23 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         QTimer.singleShot(0, lambda: self.chapter_list_widget.scroll_to_active(active_idx))
 
     def _update_ui_sync(self):
+        # [SETTINGS-DUMP] probe (2026-08-15, bisect harness) — env-gated,
+        # independent of playback state and of the transport-bar blur overlay
+        # entirely, so this same probe works unmodified on `main` (needed to
+        # bisect a regression against it). Piggybacks on the existing 200ms
+        # ui_timer rather than adding a new timer. Saves settings_panel's own
+        # grab() to PNG every tick while both the env var is set and the panel
+        # is visible — re-saves each tick (not one-shot) so a manual bisect
+        # session can just re-run and re-check the same file without
+        # restarting the app between commits.
+        if os.environ.get("FABULOR_DUMP_SETTINGS") == "1":
+            sp = getattr(self, 'settings_panel', None)
+            if sp is not None and sp.isVisible():
+                # Whole WINDOW, not just the panel — sample coordinates given
+                # for this bisect are in window space (they include the right
+                # sliver past the panel's 90%-width edge), so grabbing only
+                # settings_panel would put those x-coords out of bounds.
+                self.grab().save("/tmp/fabulor_settings_dump.png", "PNG")
         try:
             # Guard against accessing player before a file is loaded
             mpv_pos = self.player.time_pos if self.current_file else None
@@ -3885,6 +3913,38 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
     def eventFilter(self, obj, event):
         """Global event filter to handle dismissing popups on clicks outside."""
+        # [PLAYBTN-PAINT] probe (2026-08-15) — env-gated, off by default.
+        # Answers "what repaints play_pause_button every ~200ms with nothing
+        # moving", the same shape of bug as [CHAPTER-LABEL-PAINT]
+        # (current_chapter_label's marquee). play_pause_button is a bare
+        # QPushButton with no paintEvent override in Fabulor code, so an
+        # event filter is the only way to see its Paint events — installed
+        # here because MainWindow already filters QApplication-wide and this
+        # class already branches eventFilter on obj identity for other
+        # widgets (eof_revert_btn, below), so no new filter object or
+        # install call is needed.
+        if (_GRAB_TRACE_ENABLED and event.type() == QEvent.Type.Paint
+                and hasattr(self, 'play_pause_button') and obj is self.play_pause_button):
+            import traceback
+            logger.debug(
+                "[PLAYBTN-PAINT] rect=%s obj=%s text=%r icon_null=%s\n%s",
+                event.rect(), obj.objectName(), obj.text(), obj.icon().isNull(),
+                "".join(traceback.format_stack(limit=8)),
+            )
+        # [MUTEDICON-PAINT] probe (2026-08-15) — env-gated, off by default.
+        # Same question as [PLAYBTN-PAINT], different widget: a second
+        # rectangular blur artifact was reported live over the vol_stack
+        # region while muted (main does not show it). muted_icon_label is a
+        # bare QLabel with no paintEvent override, same shape as
+        # play_pause_button, so the same event-filter approach applies.
+        if (_GRAB_TRACE_ENABLED and event.type() == QEvent.Type.Paint
+                and hasattr(self, 'muted_icon_label') and obj is self.muted_icon_label):
+            import traceback
+            logger.debug(
+                "[MUTEDICON-PAINT] rect=%s obj=%s\n%s",
+                event.rect(), obj.objectName(),
+                "".join(traceback.format_stack(limit=8)),
+            )
         # RIGHT-CLICK DELIVERY PROBE (restored 2026-07-28). Removed once when the
         # input-level question looked settled; the panel-CLOSE case was never
         # covered by that conclusion, and clicks are still going missing there.

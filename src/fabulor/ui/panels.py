@@ -20,6 +20,11 @@ logger = logging.getLogger(__name__)
 # stutter's root cause is found. See NOTES.md / TODO.md 2026-07-16/17 entry.
 _STUTTER_PROFILE_ENABLED = os.environ.get("FABULOR_STUTTER_PROFILE") == "1"
 
+# Same gate as transport_bar_blur.py's [DIRTY-TRACE]/[GRAB-ENTRY]/[GRAB-DPR] —
+# reused here for [SEAM-TRACE] so one env var covers the whole grab/blur/clip
+# investigation without a second switch to remember.
+_GRAB_TRACE_ENABLED = os.environ.get("FABULOR_GRAB_TRACE") == "1"
+
 # visual_area blur-in / blur-out durations. Deliberately ASYMMETRIC:
 # blurring IN is a slow build matched to TransportBarBlurOverlay._FADE_IN_MS
 # (1500) so both halves of the window blur together; clearing OUT stays snappy
@@ -299,6 +304,32 @@ class PanelManager:
             lambda _index: self._transport_bar_blur.force_refresh_now()
         )
 
+        # Themes-tab frost suppression (2026-08-16): the transport-bar frost is a
+        # STATIC grab, re-blurred only on real Paint events from the tracked
+        # widgets themselves (see _DirtyRectTracker above) or this file's own
+        # force_refresh_now() calls — it has no live-tracking of a theme
+        # hover-preview repainting content_container underneath it, and
+        # ThemeManager deliberately WITHHOLDS grabs during a preview anyway
+        # (hover_active_gate, transport_bar_blur.py ~:1023 — a real, necessary
+        # fix for a worse bug: the previewed colors baking permanently into the
+        # frost). Net effect on the Themes tab specifically: the frost shows a
+        # stale pre-preview frame for the whole preview, snapping to the new
+        # colors only in one atomic jump on unhover/commit — visible as a seam
+        # (confirmed live, 2026-08-16 session, screenshot). Every other Settings
+        # tab (Look/Library/Audio/Controls) has no comparable live-recoloring
+        # surface, so the existing static-frost behavior is correct there.
+        # Fix is narrower than fixing the staleness: don't show a frost over the
+        # Themes tab's content at all, since it's the one tab where "static" is
+        # actively misleading. hide_for_panel()/_apply_transport_bar_blur() are
+        # both idempotent/self-guarding (see their own docstrings), so toggling
+        # on every tab change is safe even if the previous state already
+        # matched. Guarded on settings_panel.isVisible() because mw.tabs only
+        # exists inside settings_panel and currentChanged should never act while
+        # Settings itself isn't the open panel (nothing programmatically calls
+        # tabs.setCurrentIndex today, but this keeps the handler inert if that
+        # ever changes, rather than relying on that absence).
+        main_window.tabs.currentChanged.connect(self._on_settings_tab_changed)
+
         # Tab-switch snapback interception (2026-08-05) — see
         # _ThemesTabBarInterceptor's own docstring for the full mechanism and why
         # an event filter is required (no Qt "veto this tab change" signal exists).
@@ -307,6 +338,31 @@ class PanelManager:
         # delivered to `mw.tabs.tabBar()` specifically.
         self._themes_tab_bar_interceptor = _ThemesTabBarInterceptor(self)
         main_window.tabs.tabBar().installEventFilter(self._themes_tab_bar_interceptor)
+
+    def _on_settings_tab_changed(self, index: int):
+        """Suppress the transport-bar frost on the Themes tab specifically —
+        see the connection site's own comment (PanelManager.__init__) for why.
+        Only reachable while Settings is the visible panel (mw.tabs lives
+        inside settings_panel; nothing else drives its currentChanged)."""
+        if not self.settings_panel.isVisible():
+            return
+        self._sync_transport_bar_blur_for_settings_tab()
+
+    def _sync_transport_bar_blur_for_settings_tab(self):
+        """Show or suppress the transport-bar frost for whichever Settings tab
+        is CURRENTLY active, right now. Shared by _on_settings_tab_changed
+        (fires on an actual tab switch) and _start_settings_entry's
+        slide-finished handler (fires on panel OPEN, where the tab index may
+        be unchanged from last time — e.g. Settings was last closed on Themes
+        and is reopened still on Themes, so no currentChanged signal will ever
+        fire to correct an unconditional show). index == 0 is Themes — same
+        identification the rest of this file already uses
+        (tabs.currentIndex() == 0, e.g. _BLUR_IN_THEMES_TAB_MS's use site, and
+        ThemeManager's own themes_tab_active check)."""
+        if self.main_window.tabs.currentIndex() == 0:
+            self._transport_bar_blur.hide_for_panel()
+        else:
+            self._apply_transport_bar_blur(self.settings_panel)
 
     def _apply_transport_bar_blur(self, panel):
         # Clip to `panel`'s own geometry — nothing renders blurred outside what
@@ -680,7 +736,18 @@ class PanelManager:
         # visual_area-LOCAL space.
         va_top_left = va.mapTo(common, QPoint(0, 0))
         local = panel_rect.translated(-va_top_left.x(), -va_top_left.y())
-        effect.set_clip_rect(local.intersected(va.rect()))
+        clip = local.intersected(va.rect())
+        effect.set_clip_rect(clip)
+        # [SEAM-TRACE] temporary, env-gated (2026-08-15) — chasing a horizontal
+        # seam under the cover art in the no-book/carousel state, panel open, no
+        # Book Detail involved. Logs the clip actually applied and va's own
+        # geometry so it can be checked against what's visually seen. Remove
+        # once the seam is found.
+        if _GRAB_TRACE_ENABLED:
+            logger.warning(
+                f"[SEAM-TRACE] _apply_visual_area_clip panel={panel.objectName()!r} "
+                f"va_size={va.size()} va_top_left={va_top_left} clip={clip}"
+            )
 
     def _clear_visual_area_clip(self):
         effect = getattr(self.main_window, 'blur_effect', None)
@@ -751,7 +818,11 @@ class PanelManager:
         if self.is_any_panel_animating():
             return
         if enabled:
-            self._apply_transport_bar_blur(self.settings_panel)
+            # Themes-tab frost suppression (2026-08-16) — see
+            # _sync_transport_bar_blur_for_settings_tab's own docstring. Toggling
+            # Blur On while sitting on the Themes tab must not show the frost
+            # there either.
+            self._sync_transport_bar_blur_for_settings_tab()
             # Immediate (not deferred to a slide-finished callback) is correct
             # here: the panel is already open and settled — this is the live
             # Settings > Blur toggle, not a panel-open transition.
@@ -1106,7 +1177,10 @@ class PanelManager:
                 self.settings_panel_animation.finished.disconnect(_on_settings_slide_finished)
             except (TypeError, RuntimeError):
                 pass
-            self._apply_transport_bar_blur(self.settings_panel)
+            # Themes-tab frost suppression (2026-08-16) — see
+            # _sync_transport_bar_blur_for_settings_tab's own docstring for why
+            # this can't be an unconditional _apply_transport_bar_blur call.
+            self._sync_transport_bar_blur_for_settings_tab()
             # visual_area blur starts HERE (not at panel-open) so it matches the
             # transport bar's timing — see _start_visual_area_blur.
             self._start_visual_area_blur(self.settings_panel)

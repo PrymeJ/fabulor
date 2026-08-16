@@ -1,8 +1,14 @@
 from PySide6.QtWidgets import QWidget, QLabel, QPushButton
 from PySide6.QtCore import Qt, Signal, Property, QTimer, QPropertyAnimation, QEasingCurve, QPointF
 from PySide6.QtGui import QColor, QPainter, QLinearGradient, QPainterPath, QPolygonF, QPixmap
-import time, logging  # [STUTTER-PROBE] temporary — remove when the narrowing change is verified
+import os, time, logging  # [STUTTER-PROBE] temporary — remove when the narrowing change is verified
 _stutter_log = logging.getLogger("fabulor.ui.controls")  # [STUTTER-PROBE]
+
+# [CHAPTER-LABEL-PAINT] gate — same FABULOR_GRAB_TRACE env var as
+# transport_bar_blur.py's [DIRTY-TRACE]/[GRAB-ENTRY] probes, so one switch
+# turns on the whole grab-loop investigation. One bool comparison per paint
+# when disabled.
+_PAINT_TRACE_ENABLED = os.environ.get("FABULOR_GRAB_TRACE") == "1"
 
 class ClickSlider(QWidget):
     valueChanged = Signal(int)
@@ -408,6 +414,19 @@ class ScrollingLabel(FreezableLabel):
         self.update()
 
     def paintEvent(self, event):
+        # [CHAPTER-LABEL-PAINT] probe (2026-08-15) — env-gated, off by default.
+        # Answers "what repaints current_chapter_label every ~200ms with the
+        # book paused", after _sync_chapter_ui was wrongly blamed (it writes
+        # chap_elapsed/chap_duration, never this label). Scoped to the chapter
+        # label by object name: this class is shared with the title/author
+        # marquees, which would otherwise flood the log.
+        if _PAINT_TRACE_ENABLED and self.objectName() == "chapter_selector":
+            import traceback
+            _stutter_log.debug(
+                "[CHAPTER-LABEL-PAINT] rect=%s timer_active=%s text=%r\n%s",
+                event.rect(), self._timer.isActive(), self.text(),
+                "".join(traceback.format_stack(limit=8)),
+            )
         p = QPainter(self)
         text = self.text()
         metrics = self.fontMetrics()
