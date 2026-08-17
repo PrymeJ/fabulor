@@ -110,26 +110,16 @@ _CONTENT_BLUR_RADIUS = 6.0
 # composite work. (Originally read isDown() instead — see _pressed_poll_tick's
 # docstring for why that signal was replaced the same day.)
 _PRESSED_POLL_MS = 50
-# Release debounce (2026-08-17) — kept when the poll's signal was changed from
-# isDown() to cursor-vs-rect containment (see _pressed_poll_tick's docstring).
-# Originally sized against a confirmed isDown() defect: QPushButton.isDown()
-# could read a single transient False mid-hold, correlated with
-# _grab_and_blur's panel hide/show cycle (a [GRAB-ENTRY] landed 22-30ms before
-# a spurious isDown() False on speed_btn during an otherwise-continuous 4.7s
-# hold, cursor never moved) — the same underlying hide/show-perturbs-Qt's-
-# live-pointer-state hazard as the tassel hand-cursor flicker (_grab_and_blur's
-# own CURSOR-FLICKER-FIX comments). That specific hazard does not apply to a
-# geometric containment check (it depends only on the button's own geometry
-# and the live cursor position, neither of which the grab cycle perturbs), but
-# the debounce is retained regardless — it also absorbs an ordinary one-tick
-# boundary flicker right at the rect edge, which is a real (if much smaller)
-# source of noise for any poll-based containment test. A tick-count debounce
-# was considered and rejected: grabs fire every ~5-15ms (the documented
-# grab-feedback-loop cadence elsewhere in this file), frequently enough that a
-# fixed N-tick debounce could still get unlucky within a multi-second hold. A
-# WALL-CLOCK duration is more robust than a tick count because it doesn't
-# assume ticks land evenly spaced.
-_RELEASE_DEBOUNCE_S = 0.15
+# HISTORY — a release debounce (_RELEASE_DEBOUNCE_S) used to gate the poll's
+# OUTSIDE transition here: first 0.15s (sized against a confirmed isDown()
+# defect — see _pressed_poll_tick's docstring for the original mechanism),
+# then shrunk to one poll interval when 0.15s was reported as a visible lag
+# (Pryme, 2026-08-17: "the problem is the lag. It catches a couple hundred ms
+# later"), then removed entirely on request ("Can we test it without it?")
+# and live-tested with no misses — the geometric containment signal does not
+# have the "brief false positive mid-hold" failure mode isDown() had, so
+# there was nothing left for a grace period to usefully absorb. See
+# _pressed_poll_tick's docstring for the full trail if this needs revisiting.
 # Fade-IN only, on appear — dismiss stays instant (see hide_for_panel) so the
 # transport bar snaps back to live view the moment the panel starts closing.
 _FADE_IN_MS = 1500
@@ -667,18 +657,6 @@ class TransportBarBlurOverlay:
             # (which the poll never mutates) lets the poll freely call
             # _set_pressed(True) on re-entry and _set_pressed(False) on exit,
             # any number of times, for as long as the real session stays open.
-        self._pressed_false_since: dict = {}  # button -> perf_counter() of the
-            # FIRST poll tick that read the cursor as OUTSIDE the button's rect
-            # since the last inside read (2026-08-17, release debounce — see
-            # _RELEASE_DEBOUNCE_S; originally keyed off isDown()==False, revised
-            # same day to cursor-vs-rect containment, see _pressed_poll_tick's
-            # docstring). A button is only actually released by the poll once
-            # "outside" has persisted for that long; entry is removed the
-            # instant the cursor reads inside again. Keyed only by buttons
-            # currently being polled — _set_pressed(True) via a fresh Press
-            # always starts a button with no entry here. A real
-            # MouseButtonRelease bypasses this entirely (see _set_pressed) —
-            # this dict only debounces the POLL's own decision.
         self._pressed_poll_timer = QTimer(main_window)  # polls cursor-vs-rect
             # containment (originally isDown(), revised 2026-08-17 same day —
             # see _pressed_poll_tick's own docstring) while any button is
@@ -1398,7 +1376,6 @@ class TransportBarBlurOverlay:
         self._hovered_buttons = set()
         self._pressed_buttons = set()
         self._mouse_down_buttons = set()
-        self._pressed_false_since = {}
         self._pressed_poll_timer.stop()
         self._active = False
         # Any in-flight decline-retry is left to fire once and no-op on its own
@@ -1760,7 +1737,6 @@ class TransportBarBlurOverlay:
             if was_in_set:
                 self._pressed_buttons.discard(button)
                 self._restore_button_from_snapshot(button)
-            self._pressed_false_since.pop(button, None)
 
     def _arm_pressed_poll(self) -> None:
         """Start the poll timer if it isn't already running — called once per
@@ -1827,19 +1803,28 @@ class TransportBarBlurOverlay:
         every single tick for as long as the session stays open, in either
         direction, any number of times.
 
-        _RELEASE_DEBOUNCE_S / _pressed_false_since tracking is retained: a
-        genuine micro-jitter at the exact rect boundary could still flip the
-        containment test for a single poll tick, and the debounce absorbs
-        that the same way it absorbed isDown()'s noise, just against a signal
-        that is not independently known to go wrong for multi-second
-        stretches. It debounces only the OUTSIDE direction (matching its
-        original design) — a re-entry (outside->inside) is applied
-        immediately, no debounce, since there is no equivalent "brief false
-        positive" hazard on that side to guard against.
+        RELEASE DEBOUNCE — tried, then removed same day. A wall-clock grace
+        period on the OUTSIDE transition (_RELEASE_DEBOUNCE_S) was added
+        first, sized to absorb single-tick boundary jitter the same way it
+        had absorbed isDown()'s noise. Live-tested at 0.15s (matching the old
+        isDown()-era value) and reported laggy: Pryme, 2026-08-17 — "the
+        problem is the lag. It catches a couple hundred ms later" (confirmed
+        in trace: cursor clearly outside the rect at 22:00:01,761,
+        _set_pressed(False) not firing until 22:00:01,911). Shrunk to one
+        poll interval (~50ms) — still reported as "a bit weird." Removed
+        entirely on request ("Can we test it without it?") and live-tested
+        with no misses: the geometric signal does not need debouncing the way
+        isDown() did — a rect containment test against a live cursor position
+        does not have a "brief false positive mid-hold" failure mode, only an
+        ordinary single-tick read of wherever the cursor actually is, so
+        there is nothing here for a grace period to usefully absorb. If a
+        real boundary-flicker artifact ever turns up, reintroduce a SHORT
+        (<=1 poll interval) debounce on the outside transition only, matching
+        this method's git history rather than restoring the old 0.15s value.
 
         Iterates a snapshot (list(...)) since a future _set_pressed caller
         could in principle mutate _pressed_buttons mid-iteration; this method
-        no longer mutates _mouse_down_buttons itself, so no iteration hazard
+        does not mutate _mouse_down_buttons itself, so no iteration hazard
         exists there, but the snapshot pattern is kept for consistency."""
         cursor_pos = QCursor.pos()
         if _GRAB_TRACE_ENABLED:
@@ -1848,19 +1833,9 @@ class TransportBarBlurOverlay:
                 f"{[b.objectName() for b in self._mouse_down_buttons]} "
                 f"cursor_pos=({cursor_pos.x()}, {cursor_pos.y()})"
             )
-        now = time.perf_counter()
         for button in list(self._mouse_down_buttons):
             inside = button.rect().contains(button.mapFromGlobal(cursor_pos))
-            if inside:
-                self._pressed_false_since.pop(button, None)
-                self._set_pressed(button, True)
-                continue
-            since = self._pressed_false_since.get(button)
-            if since is None:
-                self._pressed_false_since[button] = now
-            elif now - since >= _RELEASE_DEBOUNCE_S:
-                self._pressed_false_since.pop(button, None)
-                self._set_pressed(button, False)
+            self._set_pressed(button, inside)
 
     def _restore_button_from_snapshot(self, button: QWidget) -> None:
         """Restore `button`'s overlay-local rect from self._panel_open_snapshot
