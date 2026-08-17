@@ -186,6 +186,29 @@ _SUPPRESS_IMMEDIATE_S = 0.0
 _SUPPRESS_MARQUEE_S = 0.100
 _SUPPRESS_TIME_S = 0.500
 _SUPPRESS_SLIDER_S = 0.200
+# chapter_preview_label was wrongly placed in "immediate" (0.0 — no
+# throttling) when it was first tracked (2026-08-17). That's correct for a
+# discrete state change (hover/press), but chapter_preview_label's opacity
+# ticks continuously for the full ~600ms of preview_anim's fade — every one
+# of those ticks fires a real Paint event, and each Paint event was
+# triggering its own fresh refresh_dirty() call, each paying
+# _grab_and_blur's real ~4-8ms cost (confirmed live via
+# [REFRESH-DIRTY-COST], 2026-08-18) regardless of what's actually dirty —
+# that cost is NOT specific to this widget's own paint work (confirmed
+# separately cheap, ~0.2ms, via [PAINT-PREVIEW-COST]), it's paid by every
+# tracked widget's Paint event alike. During an active fade this produced
+# far more refresh_dirty() calls per second than any other tracked widget
+# generates, competing for the same single Qt-main-thread event loop as
+# current_chapter_label's own independent marquee timer — confirmed live as
+# the reported "scrolling chapter label pause and skip." Tuned live, 2026-08-18
+# (Pryme): 0.150 fixed the marquee but was reported as visible left-side lag
+# on the frost's own redraw; 0.080 was tried next and confirmed as the
+# sweet spot — no marquee stall, and the chapter progress slider (the more
+# sensitive case: only visibly affected on chapters short enough, ~1 minute,
+# for the slider to progress fast enough to notice a pause) shows at most a
+# brief pause, not a stall. This is a REAL calibration, not a placeholder —
+# unlike _SUPPRESS_MARQUEE_S above, do not treat this value as untested.
+_SUPPRESS_PREVIEW_S = 0.080
 
 # Retry delay for a tick turned away by one of refresh_dirty()'s two DECLINING
 # gates (hover-active, post-restyle cooldown) — see _rearm_after_decline() for
@@ -538,7 +561,6 @@ class TransportBarBlurOverlay:
                 main_window.forward_button,
                 main_window.next_button,
                 main_window.speed_button,
-                main_window.chapter_preview_label,
                 main_window.sleep_timer_label,   # vol_stack page 0
                 main_window.volume_slider,       # vol_stack page 1's real content
                 main_window.muted_icon_label,    # vol_stack page 2
@@ -550,6 +572,10 @@ class TransportBarBlurOverlay:
                   main_window.current_time_label, main_window.total_time_label):
             self._category_by_widget[id(w)] = "time"
         self._category_by_widget[id(main_window.chapter_progress_slider)] = "slider"
+        # See _SUPPRESS_PREVIEW_S's own comment for why this is its own
+        # category, not "immediate" (2026-08-18 — moved out after being
+        # confirmed live as the marquee-stall cause).
+        self._category_by_widget[id(main_window.chapter_preview_label)] = "preview"
 
         self._suppress_window_by_category = {
             "immediate": _SUPPRESS_IMMEDIATE_S,
@@ -557,6 +583,7 @@ class TransportBarBlurOverlay:
             "marquee": _SUPPRESS_MARQUEE_S,
             "time": _SUPPRESS_TIME_S,
             "slider": _SUPPRESS_SLIDER_S,
+            "preview": _SUPPRESS_PREVIEW_S,
         }
 
         # Parented to content_container (the SAME coordinate space _bounding_rect
@@ -610,6 +637,37 @@ class TransportBarBlurOverlay:
             # _restore_button_from_snapshot when a button's hover ends —
             # painting the button's real appearance back rather than a flat
             # placeholder, since it's a real clean grab, not a synthetic fill.
+        self._preview_paint_memo: tuple | None = None  # (text, rounded
+            # opacity) last actually painted/composited by
+            # _paint_preview_label (2026-08-17). Skips repeating IDENTICAL
+            # work when refresh_dirty's re-apply loop reaches this method on
+            # a tick driven entirely by an UNRELATED widget's own Paint event
+            # coalescing into the same singleShot(0) tick — this alone does
+            # NOT fix the animation-tick cost (opacity changes every tick of
+            # a real fade, so this memo cannot skip those), see
+            # _preview_content_cache below for that half of the fix.
+        self._preview_content_cache: QPixmap | None = None  # the BLURRED
+            # box+text pixmap, cached across opacity ticks (2026-08-17,
+            # marquee-stall fix, second pass). _preview_paint_memo alone was
+            # confirmed insufficient live (Pryme, 2026-08-18: "it is still
+            # expensive and affects the marquee badly") — a real 600ms
+            # opacity fade genuinely changes `opacity` every tick, so
+            # _preview_paint_memo's (text, opacity) key differs on nearly
+            # every call during the animation, defeating that guard for
+            # exactly the window when cost matters most. The fix: opacity is
+            # a pure post-composite multiplier (QGraphicsOpacityEffect),
+            # unrelated to what gets rendered/blurred — only TEXT (see
+            # _preview_content_cache_key) changes that. Render+blur once per
+            # distinct content, cache it, apply opacity only at the final
+            # blit via painter.setOpacity() — see _paint_preview_label's
+            # cache-key check for where this is populated/reused.
+        self._preview_content_cache_key: tuple | None = None  # the
+            # (text, bg_deep, accent_dark, alignment, w, h) key
+            # _preview_content_cache was rendered for — see that attribute's
+            # comment. Reset to None on every panel-open/close transition
+            # (see _disarm_grabbing) alongside _preview_paint_memo, so a
+            # fresh session never reuses a stale cache across an intervening
+            # theme change or geometry change.
         self._hover_buttons: list = []  # the QPushButton-family tracked
             # widgets with self._hover_filter installed for manual hover
             # painting. Populated in show_for_panel/unpark_for_panel, cleared
@@ -1200,7 +1258,13 @@ class TransportBarBlurOverlay:
             logger.warning(f"[TIMER-TRACE] refresh_dirty tick={_tick} EARLY-RETURN reason=dirty_empty_after_intersect")
             return
 
+        _t_grab0 = time.perf_counter()
         blurred_slice = self._grab_and_blur(dirty)
+        if _GRAB_TRACE_ENABLED:
+            logger.warning(
+                f"[REFRESH-DIRTY-COST] tick={_tick} grab_and_blur_ms="
+                f"{(time.perf_counter() - _t_grab0) * 1000:.2f} dirty={dirty}"
+            )
         current = self._overlay.pixmap()
         if current is None or current.isNull():
             logger.warning(f"[TIMER-TRACE] refresh_dirty tick={_tick} EARLY-RETURN reason=overlay_pixmap_null")
@@ -1237,7 +1301,13 @@ class TransportBarBlurOverlay:
         # either loop above; checked independently against its own rect.
         preview_rect = self._button_overlay_rect(self.main_window.chapter_preview_label)
         if preview_rect.intersects(local):
+            _t0 = time.perf_counter()
             self._paint_preview_label()
+            if _GRAB_TRACE_ENABLED:
+                logger.warning(
+                    f"[PAINT-PREVIEW-COST] {(time.perf_counter() - _t0) * 1000:.2f}ms "
+                    f"tick={_tick}"
+                )
 
         logger.warning(f"[TIMER-TRACE] refresh_dirty tick={_tick} COMPOSITED dirty={dirty}")
 
@@ -1392,6 +1462,9 @@ class TransportBarBlurOverlay:
         self._hovered_buttons = set()
         self._pressed_buttons = set()
         self._mouse_down_buttons = set()
+        self._preview_paint_memo = None
+        self._preview_content_cache = None
+        self._preview_content_cache_key = None
         self._pressed_poll_timer.stop()
         self._active = False
         # Any in-flight decline-retry is left to fire once and no-op on its own
@@ -1766,56 +1839,140 @@ class TransportBarBlurOverlay:
         label = self.main_window.chapter_preview_label
         opacity = self.main_window.preview_opacity.opacity()
         text = label.text()
-        if opacity <= 0.0 or not text:
-            return
         full_rect = self._button_overlay_rect(label)  # already clipped to
             # _bounding_rect — i.e. exactly the panel-covered portion, since
             # _button_overlay_rect intersects with overlay_bounds (== the
             # frosted region only). Despite the name, this helper is generic
             # to any tracked widget's overlay-local rect, not button-specific.
+        if opacity <= 0.001 or not text:
+            # EPSILON, not an exact <= 0.0 check (2026-08-18 fix): the fade
+            # animation's OutCubic easing can leave the LAST tick the dirty
+            # tracker actually observes at some tiny-but-nonzero value (e.g.
+            # 0.0003) that .3f-formats as "0.000" in logs but is genuinely
+            # > 0.0 — confirmed live via [PAINT-PREVIEW-TRACE]: the exact
+            # `<= 0.0` guard let that tick fall through to the "still
+            # showing" branch below, painting an all-but-invisible box that
+            # nonetheless never triggered the clear path below, so the box
+            # stayed baked into the overlay indefinitely.
+            #
+            # FRESH GRAB, NOT _restore_button_from_snapshot (2026-08-18,
+            # second fix for this same symptom). The first fix used
+            # _restore_button_from_snapshot(label) — correct in SHAPE
+            # (buttons already do exactly this on Leave) but wrong for this
+            # widget specifically: _panel_open_snapshot is captured ONCE, at
+            # panel-open time, and this panel can stay open across many hover
+            # cycles (confirmed live, 2026-08-18 — Pryme: closing/reopening
+            # the panel cleared the lingering border, proving the restore WAS
+            # firing correctly every time, just faithfully reproducing
+            # whatever the snapshot itself froze in). If the label happened
+            # to have any nonzero opacity at the exact instant the panel
+            # opened, that partial box got baked into the "clean" snapshot
+            # permanently — every later restore just re-painted that same
+            # stale partial box forever, not genuine emptiness. Buttons never
+            # hit this because their restored state (unhovered QSS) IS
+            # correctly static across a whole panel-open session; this
+            # widget's "empty" state is not a fixed pixel pattern, it's
+            # whatever the LIVE background happens to be right now — so it
+            # needs a fresh _grab_and_blur of just this rect, same mechanism
+            # refresh_dirty's own composite step already uses, not a replay
+            # of a possibly-stale snapshot.
+            memo = (text, 0.0)
+            if memo != self._preview_paint_memo:
+                self._preview_paint_memo = memo
+                if not full_rect.isEmpty():
+                    common_rect = full_rect.translated(self._bounding_rect.topLeft())
+                    fresh = self._grab_and_blur(common_rect)
+                    pixmap = QPixmap(self._overlay.pixmap())
+                    painter = QPainter(pixmap)
+                    painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Source)
+                    painter.drawPixmap(full_rect.topLeft(), fresh)
+                    painter.end()
+                    self._overlay.setPixmap(pixmap)
+            return
         if full_rect.isEmpty():
             return  # label sits entirely in the live sliver — nothing to redraw
+        align = label.alignment()
+        memo = (text, round(opacity, 3))
+        if memo == self._preview_paint_memo:
+            # Nothing about the preview actually changed since the last real
+            # paint — this call was reached only because some UNRELATED
+            # widget's Paint event shared this tick's coalesced dirty union
+            # (see _preview_paint_memo's own comment). Skip repeating
+            # identical work entirely.
+            return
+        self._preview_paint_memo = memo
         if _GRAB_TRACE_ENABLED:
             logger.warning(
                 f"[PAINT-PREVIEW-TRACE] rect={full_rect} empty=False "
                 f"text={text!r} opacity={opacity:.3f} "
-                f"align={'right' if label.alignment() & Qt.AlignmentFlag.AlignRight else 'left'}"
+                f"align={'right' if align & Qt.AlignmentFlag.AlignRight else 'left'}"
             )
+
+        # CONTENT CACHE (2026-08-17, marquee-stall fix, second pass): the memo
+        # guard above still called the full blur pipeline on EVERY animation
+        # tick of a real 600ms opacity fade, since `opacity` genuinely changes
+        # every tick — that IS the animation, so the memo above cannot (and
+        # should not) skip those ticks. Confirmed still costly live (Pryme,
+        # 2026-08-18): "it is still expensive and affects the marquee badly."
+        # The insight: opacity does NOT affect what gets rendered or blurred
+        # — a QGraphicsOpacityEffect's alpha is a pure post-composite
+        # multiplier, unrelated to the box/border/text pixels themselves or
+        # to _blur_pixmap's (expensive, QGraphicsScene-based) work. Only TEXT
+        # (and, in principle, theme/alignment, included in the cache key for
+        # correctness) changes what needs to be re-rendered and re-blurred.
+        # So: render+blur ONCE per distinct (text, theme, alignment, size)
+        # combination, cache the result, and apply the CURRENT opacity only
+        # at the final blit via painter.setOpacity() — a cheap compositing
+        # step, not a re-render. This is the same shape as
+        # next_button/speed_button's content redraw, which pays the blur
+        # cost once per Enter/Press (a discrete state transition) rather than
+        # once per animation tick — chapter_preview_label's bug was that its
+        # underlying VALUE (opacity) ticks continuously where the buttons'
+        # (hovered/pressed booleans) do not.
         theme = self.main_window.theme_manager.get_current_theme()
-        bg = QColor(theme['bg_deep'])
-        bg.setAlphaF(0.5)  # matches the QSS rule's rgba(bg_deep, 0.5)
-        border = QColor(theme['accent_dark'])
-
-        # Render at the label's OWN full size (not just the panel-covered
-        # slice) so the box/border/text lay out identically to the live
-        # widget, then only the panel-covered sub-rect gets copied out below
-        # — same reasoning as letting Qt's elidedText do the layout work
-        # upstream, applied one step further to the box/border too.
         label_size = label.size()
-        content = QPixmap(label_size)
-        content.fill(Qt.GlobalColor.transparent)
-        cp = QPainter(content)
-        cp.setRenderHint(QPainter.RenderHint.Antialiasing)
-        cp.setPen(QPen(border, 1))
-        cp.setBrush(bg)
-        box_rect = content.rect().adjusted(0, 0, -1, -1)  # 1px pen inset,
-            # matching QSS border-radius box painting convention elsewhere
-            # in this file (_paint_button_fill's drawRoundedRect)
-        cp.drawRoundedRect(box_rect, 3, 3)  # QSS: border-radius: 3px
-        cp.setFont(label.font())
-        cp.setPen(label.palette().windowText().color())
-        cp.setOpacity(opacity)
-        # Vertical nudge (tuned live, 2026-08-17, same shape as
-        # _paint_button_content's next_button y_offset) — the manually
-        # rendered text sits 1px too high relative to the real QSS-painted
-        # label's `padding: 1px 0px 0px 0px` rule, which QPainter.drawText
-        # does not itself account for.
-        _PREVIEW_TEXT_Y_NUDGE = 2
-        text_rect = content.rect().translated(0, _PREVIEW_TEXT_Y_NUDGE)
-        cp.drawText(text_rect, int(label.alignment()), text)
-        cp.end()
+        cache_key = (text, theme['bg_deep'], theme['accent_dark'], int(align), label_size.width(), label_size.height())
+        if self._preview_content_cache_key != cache_key:
+            if _GRAB_TRACE_ENABLED:
+                logger.warning(
+                    f"[PAINT-PREVIEW-CACHE-MISS] rebuilding blur, "
+                    f"old_key={self._preview_content_cache_key!r} new_key={cache_key!r}"
+                )
+            bg = QColor(theme['bg_deep'])
+            bg.setAlphaF(0.5)  # matches the QSS rule's rgba(bg_deep, 0.5)
+            border = QColor(theme['accent_dark'])
 
-        blurred_content = _blur_pixmap(content, _CONTENT_BLUR_RADIUS)
+            # Render at the label's OWN full size (not just the panel-covered
+            # slice) so the box/border/text lay out identically to the live
+            # widget, then only the panel-covered sub-rect gets copied out
+            # below — same reasoning as letting Qt's elidedText do the
+            # layout work upstream, applied one step further to the box/
+            # border too. Rendered at FULL opacity — see the cache comment
+            # above for why opacity is applied later, at blit time, instead.
+            content = QPixmap(label_size)
+            content.fill(Qt.GlobalColor.transparent)
+            cp = QPainter(content)
+            cp.setRenderHint(QPainter.RenderHint.Antialiasing)
+            cp.setPen(QPen(border, 1))
+            cp.setBrush(bg)
+            box_rect = content.rect().adjusted(0, 0, -1, -1)  # 1px pen inset,
+                # matching QSS border-radius box painting convention elsewhere
+                # in this file (_paint_button_fill's drawRoundedRect)
+            cp.drawRoundedRect(box_rect, 3, 3)  # QSS: border-radius: 3px
+            cp.setFont(label.font())
+            cp.setPen(label.palette().windowText().color())
+            # Vertical nudge (tuned live, 2026-08-17/18, same shape as
+            # _paint_button_content's next_button y_offset) — the manually
+            # rendered text sits too high relative to the real QSS-painted
+            # label's `padding: 1px 0px 0px 0px` rule, which QPainter.drawText
+            # does not itself account for.
+            _PREVIEW_TEXT_Y_NUDGE = 2
+            text_rect = content.rect().translated(0, _PREVIEW_TEXT_Y_NUDGE)
+            cp.drawText(text_rect, int(align), text)
+            cp.end()
+            self._preview_content_cache = _blur_pixmap(content, _CONTENT_BLUR_RADIUS)
+            self._preview_content_cache_key = cache_key
+        blurred_content = self._preview_content_cache
 
         # full_rect is already in overlay-local space AND already the
         # panel-covered portion (see _button_overlay_rect above) — but it is
@@ -1828,6 +1985,11 @@ class TransportBarBlurOverlay:
 
         pixmap = QPixmap(self._overlay.pixmap())
         painter = QPainter(pixmap)
+        # Opacity applied HERE, at blit time — not baked into the cached
+        # blurred_content (see the cache comment above). This is what makes
+        # the fade animation cheap: every tick reuses the same cached pixmap,
+        # only this compositing multiplier changes.
+        painter.setOpacity(opacity)
         painter.drawPixmap(full_rect.topLeft(), blurred_content, source_rect)
         painter.end()
         self._overlay.setPixmap(pixmap)
