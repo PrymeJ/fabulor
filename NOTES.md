@@ -1,3 +1,142 @@
+## 2026-08-17 (Session 6) — Hover-flicker fixed, next_button/speed_button content redraw fixed, pressed-state chased through three failed iterations before finding `isDown()` itself unreliable under `_grab_and_blur`'s hide/show. Next session opens on `QCursor.pos()` geometric tracking, per Pryme's own framing. Nothing committed.
+
+Sixth session. Picked up the three still-open issues from Session 5 (hover blurred/crisp, tooltip
+under panel, pressed state) — worked hover and pressed-state; tooltip untouched.
+
+### Hover flicker (Issue 1) — fixed cleanly, first attempt
+
+`refresh_dirty`'s per-tick composite (an unrelated dirty widget, or the hovered button's own QSS
+repaint) was overwriting crisp manual hover paint with a blurred grab result. Fixed by tracking
+which buttons are currently hovered (`_hovered_buttons`, populated in `_HoverPaintFilter`'s Enter
+branch, discarded on Leave) and re-applying `_paint_button_hover` in `refresh_dirty` for any hovered
+button whose overlay rect intersects the just-composited region. Live-confirmed working, no
+iteration needed.
+
+### Content redraw for next_button/speed_button — the opaque-fill problem
+
+Live screenshots showed the manual hover fill hiding the button's real content entirely — Pryme:
+*"the absence of something is noticeable... Matching the color is more important."* The real QSS
+hover keeps content visible over its background fill; manual paint, being a flat rect with nothing
+drawn on top, could not. Scoped to `next_button`/`speed_button` only, per Pryme: *"I only need Next
+button"* then *"I mean, next and the speed. The rest of the buttons are under the panel already. We
+are not redrawing them"* — confirmed via `_button_overlay_rect`'s own comment that these two
+straddle the panel's right edge into the live sliver, the only two whose manual fill is ever
+actually seen.
+
+`next_button` draws a Unicode `▶` glyph (Pryme: *"You can just try that unicode character ▶ instead
+of the svg itself"*) rather than the real icon pixmap — simpler, and this is already an
+approximation on a manual fill. `speed_button` draws its numeric value with the trailing "x"
+stripped (`button.text().rstrip('xX')` — Pryme: *"x needs to be dropped from the speed... I said the
+number part"*). Both blurred at a new, separate radius (`_CONTENT_BLUR_RADIUS`) from the background
+grab's — Pryme flagged this up front: *"apply QGraphicsBlurEffect, which might cause a mismatch"* —
+correctly anticipating that the background grab's radius (tuned for a large padded region) would
+smear a small icon/text pixmap past legibility. Started at 1.5, tuned live through several rounds
+(Pryme: "needs more blur") to 6.0.
+
+Position needed two live-tuned corrections, both from direct screenshot feedback: content must hug
+the RIGHT edge of the clipped overlay rect, not be centered — the visible frosted strip sits left of
+the panel's cutoff edge, and centering within it read as left-aligned relative to where the real
+button's content sits (Pryme, with a screenshot showing the panel edge as a vertical line: *"The
+left of the vertical line, the darker side, is where the 1.90 and ▶ are"*). `next_button`'s glyph
+additionally needed a small vertical nudge — Pryme tried `-3` directly in the file, found it
+overshot, landed on `-1` by hand.
+
+### Pressed state — three iterations, the real signal turned out unreliable
+
+Pryme, opening the ask: *"This is more important for when the user presses for a longer time.
+That's when the discrepancy is more visible. Pretty much the same thing as hover. Same text, same
+triangle character."* Straightforward in shape — `_HoverPaintFilter` gained `MouseButtonPress`/
+`MouseButtonRelease` branches, `_paint_button_hover`/`_paint_button_pressed` were unified into a
+shared `_paint_button_fill(button, theme_key)`, `refresh_dirty`'s re-apply loop extended to prefer
+pressed over hover for a button in both sets. This much worked immediately.
+
+**The hard part was a drag-off/drag-back-in while held.** Confirmed empirically before writing
+anything: Qt does not fire Enter/Leave to a widget during an active mouse grab (a QPushButton grabs
+the mouse for the duration of a press) — dragging outside a pressed button's rect delivers ONLY
+MouseMove, never Leave; dragging back inside while still held delivers ONLY MouseMove, never Enter.
+
+**Iteration 1 — react to MouseMove, read isDown() each time.** Sound in principle (`isDown()` flips
+exactly in sync with Qt's own rect hit-test, confirmed by direct scripted probe both directions
+before use). Shipped, then Pryme reported: *"It's about the border geometry. If I move well into the
+button and move clear out of it, it's always a hit... slow moves are problematic. I creep out of the
+button, right side is depressed, left side can't catch it... I continue to go further away... the
+left side catches up."* A `[PRESS-BORDER-TRACE]` probe (temporary) found the actual mechanism: a
+real slow-drag repro showed a **1.6-second gap with zero MouseMove events** while the cursor was
+slowly leaving the pressed rect — MouseMove delivery itself is sparse during slow motion, not
+continuous, so a reactive sync lags however long the next event takes to arrive.
+
+**Iteration 2 — replace with a 50ms polling timer reading isDown() directly, independent of event
+delivery.** Pryme confirmed the mechanism analysis and greenlit the change. Shipped — Pryme's
+report: *"Nope. Much worse. I am going in and out with the left side not changing at all."* A
+`[SET-PRESSED-TRACE]`/`[POLL-TICK-TRACE]` pair, plus a screen recording converted to frames via
+`ffmpeg` (a title-bar debug clock added to `title_bar.py` for correlating frames against log
+timestamps), traced this down: a single poll tick read `isDown()==False` **504ms into an otherwise
+continuous, cursor-never-moved 4.7-second hold** — the false reading landed 22-30ms after a
+`[GRAB-ENTRY]` for that exact button's rect. `_grab_and_blur`'s panel hide/show cycle is the
+strongly-suspected cause — Pryme asked directly: *"Can it be related to grab hide and show?"* — and
+it lines up with the SAME underlying hazard already documented for the tassel hand-cursor flicker
+(`_grab_and_blur`'s own CURSOR-FLICKER-FIX comments: hiding/showing a widget mid-interaction
+perturbs Qt's live pointer/press-tracking state), just corrupting a different piece of Qt-internal
+state (`isDown()`'s press-tracking, not the resolved cursor shape). One false reading discarded the
+button from `_pressed_buttons` and stopped the poll timer entirely, stranding the frost on the hover
+fill for the remaining ~4 seconds of the hold with nothing left polling to correct it.
+
+Before landing on this explanation, a genuine false alarm consumed significant time: `MouseButtonPress`
+appeared to never reach the filter at all in several captures (`[ALL-EVENTS-TRACE]`, unconditional,
+every event type — added specifically to rule out event consumption/reinstallation/widget-replacement
+theories, all of which were checked directly against code and ruled out). A fresh process reproduced
+the same "zero Press events" result, appearing to rule out session-accumulated state too. Pryme
+eventually corrected the premise: *"Clicks work all the time. It was the window issue. I must have
+given you the timestamp after I clicked."* — the button genuinely worked the whole time; the
+timestamps used to search the log were simply offset from the real click. A confirmed-good capture
+at `05:30:11` showed Press/Release firing correctly, which is what actually surfaced the real
+`isDown()` glitch above.
+
+**Iteration 3 — wall-clock release debounce.** Pryme's own skepticism up front: *"am I wrong to
+think that it will not work if it getting flooded all the time?"* — right to doubt it. Implemented
+anyway per his own "we can try": `_pressed_false_since` (dict, button → first-False timestamp) plus
+`_RELEASE_DEBOUNCE_S = 0.15`, requiring `isDown()==False` to persist 150ms (not a fixed tick count,
+since grabs fire every ~5-15ms — a tick-count debounce could still get unlucky within a multi-second
+hold) before treating it as real. **Did not fix it.** Re-tested live twice at 5-second holds: both
+times `isDown()` went `False` roughly 700ms into the hold and **stayed** `False` for the rest of the
+hold — not a transient blip recoverable by any debounce duration, a sustained wrong value
+indistinguishable from a genuine release once it starts. No debounce, wall-clock or tick-count, can
+tell those two apart from the poller's vantage point alone.
+
+### Where it stopped, and the agreed next direction
+
+Pryme's explicit boundaries: *"we are not touching grab for this"* (the hide/show cycle itself is
+out of scope — a large, separately-documented investigation elsewhere in this file/TODO.md) and
+*"First find out why press is being missed. Adding MouseMove could be a fallback later if we can't
+succeed with that"* (don't paper over a signal problem without understanding it — though this
+particular thread turned out to be the timestamp false-alarm above, not a real signal-loss bug).
+
+The agreed next direction, not implemented: stop trusting `isDown()` as the polled signal entirely,
+and instead poll `QCursor.pos()` against the button's rect — a geometric containment check has no
+dependency on whatever Qt-internal state the grab hide/show is perturbing. Pryme's own state-machine
+framing for it: *"Hover > Mouse pressed (painting pressed already here) > Outside the button coords,
+paint regular. Back inside button coords, paint pressed. Simple hover with no mouse, highlight."*
+This is the explicit opener for next session.
+
+**Nothing from this session is committed.** `transport_bar_blur.py` and `title_bar.py` both carry a
+large uncommitted diff. The hover-flicker fix and the next/speed content-redraw are both working and
+live-confirmed — they could be committed separately if picked apart from the still-broken
+pressed-state code — but the session ended mid-investigation with everything left together,
+uncommitted, at Pryme's direction ("Update the docs and commit them please" — docs only).
+
+**Diagnostic tooling worth keeping for the next attempt, all gated behind `FABULOR_GRAB_TRACE=1`
+(inert by default):** `[ALL-EVENTS-TRACE]` (unconditional dump of every event type reaching
+`_HoverPaintFilter`, including `event.spontaneous()`); `[POLL-TICK-TRACE]`; `[SET-PRESSED-TRACE]`;
+`[PAINT-FILL-TRACE]`/`[PAINT-RESTORE-TRACE]` (the computed rect and whether it came back empty —
+this is what ruled out an empty-rect theory directly rather than by inference). The `title_bar.py`
+debug clock (`_debug_clock_timer`, `HH:MM:SS.mmm`, 50ms update) plus extracting video frames with
+`ffmpeg -vf fps=N` and reading the burned-in clock proved far more reliable than manually-timed
+screenshots for correlating what's on screen against log timestamps — worth reaching for again if
+a future investigation needs the same kind of precise visual/log correlation. Both the clock and all
+four trace blocks are left in place in the uncommitted diff.
+
+---
+
 ## 2026-08-16 (Session 5) — Issue 1 FIXED: transport-bar frost suppressed on the Themes tab specifically. Neither of the two obvious fixes (track the preview live; park a frozen frame) fit, because Settings' underlay is genuinely live, not occluded like Book Detail's.
 
 Fifth session, same day. Session 4 (immediately below) root-caused Issue 1 to `hover_active_gate`

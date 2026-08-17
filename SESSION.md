@@ -1,3 +1,54 @@
+## Session Summary — 2026-08-17 Session 6 — Hover flicker fixed and committed; next_button/speed_button content redraw fixed and committed; pressed-state (`:pressed`) chased through three iterations, all failed for the same underlying reason (`isDown()` unreliable under `_grab_and_blur`'s hide/show), and left UNCOMMITTED with a concrete next direction (`QCursor.pos()` geometric tracking) for next session. `fix/book-detail-blur-park`
+
+Full detail in NOTES.md (top entry, same title). This is the pointer.
+
+**Hover flicker and content redraw** (both committed, `7cc8ab6`): the dirty-composite re-apply fix
+and the `next_button`/`speed_button` `▶`/speed-text redraw both worked on the first design — see the
+previous SESSION.md entry (still below) for the flicker mechanism and TODO.md for the full
+content-redraw tuning trail (blur radius, right-alignment, the `-1px` glyph nudge).
+
+**Pressed state — the harder half of this session, and where it stopped.** Straightforward in
+shape: `MouseButtonPress`/`MouseButtonRelease` on `_HoverPaintFilter`, a shared
+`_paint_button_fill(button, theme_key)` for both hover and pressed, `refresh_dirty`'s re-apply loop
+extended to prefer pressed over hover. Confirmed working immediately for a plain click.
+
+The hard part — a drag-off/drag-back-in while still held — went through three failed iterations:
+1. React to `MouseMove`, read `isDown()` each time. Sound in principle, but Qt's actual `MouseMove`
+   delivery during a slow drag can gap 1.6+ seconds with zero events (confirmed live via a temporary
+   trace probe) — the frost visibly lagged the real button, matching Pryme's report exactly ("left
+   side catches up" only once the cursor moved far enough to generate another event).
+2. Replace with a 50ms polling timer reading `isDown()` directly. Regressed WORSE per Pryme's live
+   report ("left side not changing at all"). Traced to a real, confirmed glitch: `isDown()` read a
+   single false `False` 504ms into an otherwise-continuous 4.7s hold, landing 22-30ms after a grab —
+   the same underlying hazard as the documented tassel hand-cursor flicker (`_grab_and_blur`'s panel
+   hide/show perturbing Qt's live pointer-tracking state), just corrupting `isDown()` instead of
+   cursor shape. A significant side-quest here was a false alarm: several captures appeared to show
+   `MouseButtonPress` never reaching the filter at all, which turned out to be a timestamp-reporting
+   mismatch on Pryme's end ("Clicks work all the time... I must have given you the timestamp after I
+   clicked"), not a real bug — resolved once a correctly-timestamped capture showed Press/Release
+   firing cleanly.
+3. Add a 150ms wall-clock release debounce. Pryme doubted this up front ("will it not work if it's
+   getting flooded all the time?") and was right: re-tested live twice, `isDown()` went `False`
+   ~700ms into a 5-second hold and STAYED `False` for the rest of it — not a transient blip any
+   debounce duration can filter, a sustained wrong value indistinguishable from a real release.
+
+**Stopped here, by Pryme's explicit direction**: don't touch the grab cycle itself to fix this (out
+of scope), and the `isDown()`-polling direction is dead as a sole signal. Agreed next direction, not
+implemented: poll `QCursor.pos()` against the button's rect instead of trusting `isDown()` — a
+geometric check with no dependency on whatever Qt-internal state the grab hide/show perturbs.
+Pryme's own framing for the state machine: *"Hover > Mouse pressed (painting pressed already here) >
+Outside the button coords, paint regular. Back inside button coords, paint pressed. Simple hover
+with no mouse, highlight."* Explicit session opener for next time.
+
+**Nothing from the pressed-state work is committed** — `transport_bar_blur.py`/`title_bar.py` (the
+latter carries a temporary debug clock, added for correlating screen-recorded frames against log
+timestamps via `ffmpeg` frame extraction — far more reliable than manually-timed screenshots) both
+carry a large uncommitted diff, left in place along with four gated trace probes
+(`[ALL-EVENTS-TRACE]`, `[POLL-TICK-TRACE]`, `[SET-PRESSED-TRACE]`, `[PAINT-FILL-TRACE]`/
+`[PAINT-RESTORE-TRACE]`) that are worth keeping for the next attempt.
+
+---
+
 ## Session Summary — 2026-08-16 Session 5 — Issue 1 FIXED: transport-bar frost suppressed on Settings' Themes tab specifically, since its underlay is genuinely live (not occluded) and neither "track the preview live" nor "freeze a parked frame" fit. `fix/book-detail-blur-park` (`5d7d7e6`)
 
 Full detail in NOTES.md (top entry, same title). This is the pointer.
