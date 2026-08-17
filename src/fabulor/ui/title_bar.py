@@ -1,8 +1,9 @@
 import logging
 import time
+from datetime import datetime
 
 from PySide6.QtWidgets import QWidget, QLabel, QPushButton, QHBoxLayout
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtGui import QPixmap, QCursor
 
 logger = logging.getLogger(__name__)
@@ -21,6 +22,15 @@ class TitleBar(QWidget):
         layout.addWidget(self.title_label)
         layout.addStretch()
 
+        # TEMP (2026-08-17, press-border-lag investigation) — live clock in
+        # the title bar for correlating screen-recorded frames against the
+        # [PRESS-BORDER-TRACE]/[TIMER-TRACE] log timestamps. Remove once the
+        # investigation is done.
+        self._debug_clock_timer = QTimer(self)
+        self._debug_clock_timer.setInterval(50)
+        self._debug_clock_timer.timeout.connect(self._update_debug_clock)
+        self._debug_clock_timer.start()
+
         for symbol, slot in [("─", self._minimize), ("✕", self._close)]:
             btn = QPushButton(symbol)
             btn.setFixedSize(32, 32)
@@ -30,6 +40,9 @@ class TitleBar(QWidget):
             btn.setFocusPolicy(Qt.NoFocus)
             btn.clicked.connect(slot)
             layout.addWidget(btn)
+
+    def _update_debug_clock(self):
+        self.title_label.setText(datetime.now().strftime("%H:%M:%S.%f")[:-3])
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:

@@ -46,7 +46,7 @@ import os
 import time
 
 from PySide6.QtCore import QEasingCurve, QEvent, QObject, QPoint, QPropertyAnimation, QRect, Qt, QTimer
-from PySide6.QtGui import QColor, QFontMetrics, QPainter, QPixmap
+from PySide6.QtGui import QColor, QCursor, QFontMetrics, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QGraphicsBlurEffect, QGraphicsOpacityEffect, QGraphicsScene, QLabel,
     QPushButton, QWidget,
@@ -99,6 +99,37 @@ _BLUR_RADIUS = 5.0
 # against how the rest of the frost actually looks (1.5 read too crisp
 # against the surrounding blur, 2026-08-17).
 _CONTENT_BLUR_RADIUS = 6.0
+# Pressed-state poll (2026-08-17) — see _pressed_poll_tick's docstring. Qt's
+# MouseMove delivery during a mouse grab (an active button press) can gap by
+# 1.5s+ during a slow drag (measured live via [PRESS-BORDER-TRACE] — a real
+# repro showed zero MouseMove events for 1.6s while the cursor was slowly
+# leaving a pressed button's rect), so a MouseMove-reactive sync visibly
+# lagged the real widget. 50ms keeps the lag imperceptible for a press/
+# release without meaningfully adding to refresh_dirty's own per-tick cost —
+# this only reads QCursor.pos() + a rect containment test, no grab/blur/
+# composite work. (Originally read isDown() instead — see _pressed_poll_tick's
+# docstring for why that signal was replaced the same day.)
+_PRESSED_POLL_MS = 50
+# Release debounce (2026-08-17) — kept when the poll's signal was changed from
+# isDown() to cursor-vs-rect containment (see _pressed_poll_tick's docstring).
+# Originally sized against a confirmed isDown() defect: QPushButton.isDown()
+# could read a single transient False mid-hold, correlated with
+# _grab_and_blur's panel hide/show cycle (a [GRAB-ENTRY] landed 22-30ms before
+# a spurious isDown() False on speed_btn during an otherwise-continuous 4.7s
+# hold, cursor never moved) — the same underlying hide/show-perturbs-Qt's-
+# live-pointer-state hazard as the tassel hand-cursor flicker (_grab_and_blur's
+# own CURSOR-FLICKER-FIX comments). That specific hazard does not apply to a
+# geometric containment check (it depends only on the button's own geometry
+# and the live cursor position, neither of which the grab cycle perturbs), but
+# the debounce is retained regardless — it also absorbs an ordinary one-tick
+# boundary flicker right at the rect edge, which is a real (if much smaller)
+# source of noise for any poll-based containment test. A tick-count debounce
+# was considered and rejected: grabs fire every ~5-15ms (the documented
+# grab-feedback-loop cadence elsewhere in this file), frequently enough that a
+# fixed N-tick debounce could still get unlucky within a multi-second hold. A
+# WALL-CLOCK duration is more robust than a tick count because it doesn't
+# assume ticks land evenly spaced.
+_RELEASE_DEBOUNCE_S = 0.15
 # Fade-IN only, on appear — dismiss stays instant (see hide_for_panel) so the
 # transport bar snaps back to live view the moment the panel starts closing.
 _FADE_IN_MS = 1500
@@ -406,12 +437,53 @@ class _HoverPaintFilter(QObject):
         self._overlay = overlay
 
     def eventFilter(self, obj, event):
+        # TEMP TRACE (2026-08-17, missing-Press investigation) — unconditional,
+        # every event type, no branching. Remove once the cause is found.
+        if _GRAB_TRACE_ENABLED:
+            logger.warning(
+                f"[ALL-EVENTS-TRACE] obj={obj.objectName()!r} "
+                f"type={event.type()!r} spontaneous={event.spontaneous()}"
+            )
         if event.type() == QEvent.Type.Enter:
             self._overlay._paint_button_hover(obj)
             self._overlay._hovered_buttons.add(obj)
         elif event.type() == QEvent.Type.Leave:
             self._overlay._restore_button_from_snapshot(obj)
             self._overlay._hovered_buttons.discard(obj)
+            self._overlay._set_pressed(obj, False)
+        elif event.type() == QEvent.Type.MouseButtonPress:
+            # Pressed SESSION (2026-08-17, revised same day — see
+            # _mouse_down_buttons' own comment). A press always arrives with
+            # the cursor already inside (Qt only delivers MouseButtonPress to
+            # the widget under the cursor), so _hovered_buttons already has
+            # obj — no separate add needed there. This opens the session; the
+            # poll paints/repaints within it based on live cursor geometry.
+            self._overlay._mouse_down_buttons.add(obj)
+            self._overlay._set_pressed(obj, True)
+            self._overlay._arm_pressed_poll()
+        elif event.type() == QEvent.Type.MouseButtonRelease:
+            # Unconditional session close — the ONE authoritative signal that
+            # ends a pressed session, regardless of what the poll's geometric
+            # check currently believes (drag-off-then-release, drag-back-in-
+            # then-release, release exactly at the boundary — all the same
+            # instruction: stop tracking this button now).
+            self._overlay._mouse_down_buttons.discard(obj)
+            self._overlay._set_pressed(obj, False)
+            self._overlay._disarm_pressed_poll_if_idle()
+            # Release-while-still-over reverts to :hover, not the unhovered
+            # base state — matches real QSS button behavior, and obj is still
+            # in _hovered_buttons (no Leave fired) so this is just repainting
+            # what should already be showing. A release after the cursor left
+            # the button (drag-off-then-release) is already handled: Leave
+            # already ran _restore_button_from_snapshot and discarded obj from
+            # _hovered_buttons, so repainting hover here would be wrong for
+            # that case — guard on membership.
+            if obj in self._overlay._hovered_buttons:
+                self._overlay._paint_button_hover(obj)
+        # NOTE: no MouseMove branch. An earlier version tried tracking
+        # press/leave/re-entry during a grab off MouseMove + isDown() — see
+        # _pressed_poll_tick's own docstring for why that was replaced with a
+        # poll instead of extended further.
         return False  # never consume — must not affect real hover/click delivery
 
 
@@ -561,6 +633,61 @@ class TransportBarBlurOverlay:
             # category as _hover_buttons — cleared in _disarm_grabbing, not
             # hide_for_panel: while parked, nothing should be re-painting hover
             # state into a pixmap park_for_panel needs to stay static.
+        self._pressed_buttons: set = set()  # WHICH of _hover_buttons currently
+            # has manual PRESSED paint showing (2026-08-17). Same shape/lifecycle
+            # as _hovered_buttons — see that attribute's own comment; the two are
+            # deliberately separate sets (a button is exactly one of unhovered/
+            # hovered/pressed at a time, never both hovered- and pressed-painted
+            # simultaneously — MouseButtonRelease repaints hover, not both).
+            # PAINT STATE ONLY — see _mouse_down_buttons below for the session
+            # boundary. Do NOT use membership here to decide whether the real
+            # mouse button is still down; a button can be down (a live
+            # session) while NOT in this set (cursor currently outside the
+            # rect, painted as hover/idle instead).
+        self._mouse_down_buttons: set = set()  # WHICH buttons have a real,
+            # currently-open MouseButtonPress/Release session (2026-08-17,
+            # multi-crossing fix). This is the SOLE authority for "is the
+            # mouse physically down on this button right now" — opened only by
+            # a real MouseButtonPress, closed only by a real
+            # MouseButtonRelease, NEVER by the poll. _pressed_buttons above is
+            # a separate, PAINT-state set the poll toggles freely in both
+            # directions while a button is in this set.
+            #
+            # Root cause this fixes (found live, 2026-08-17): the poll used to
+            # iterate _pressed_buttons directly and only ever discover exits
+            # (inside->outside), calling _set_pressed(False) — which both
+            # repaints AND removes the button from _pressed_buttons. Once
+            # removed, the SAME poll loop (`for button in
+            # self._pressed_buttons`) can never see that button again, so a
+            # later re-entry (outside->inside) during the SAME held press was
+            # silently never detected — confirmed live: "right side clears,
+            # then left side catches up... I continue to press and cross the
+            # button multiple times... left side never changes" after the
+            # first exit. Iterating this SEPARATE, session-scoped set instead
+            # (which the poll never mutates) lets the poll freely call
+            # _set_pressed(True) on re-entry and _set_pressed(False) on exit,
+            # any number of times, for as long as the real session stays open.
+        self._pressed_false_since: dict = {}  # button -> perf_counter() of the
+            # FIRST poll tick that read the cursor as OUTSIDE the button's rect
+            # since the last inside read (2026-08-17, release debounce — see
+            # _RELEASE_DEBOUNCE_S; originally keyed off isDown()==False, revised
+            # same day to cursor-vs-rect containment, see _pressed_poll_tick's
+            # docstring). A button is only actually released by the poll once
+            # "outside" has persisted for that long; entry is removed the
+            # instant the cursor reads inside again. Keyed only by buttons
+            # currently being polled — _set_pressed(True) via a fresh Press
+            # always starts a button with no entry here. A real
+            # MouseButtonRelease bypasses this entirely (see _set_pressed) —
+            # this dict only debounces the POLL's own decision.
+        self._pressed_poll_timer = QTimer(main_window)  # polls cursor-vs-rect
+            # containment (originally isDown(), revised 2026-08-17 same day —
+            # see _pressed_poll_tick's own docstring) while any button is
+            # pressed. Armed/disarmed only by _set_pressed, on _pressed_buttons'
+            # empty<->non-empty transitions — mirrors _sidebar_idle_poll_timer's
+            # convention (panels.py): a repeating QTimer started/stopped only on
+            # one condition's transition edges, never scattered start/stop calls.
+        self._pressed_poll_timer.setInterval(_PRESSED_POLL_MS)
+        self._pressed_poll_timer.timeout.connect(self._pressed_poll_tick)
         self._hover_filter = _HoverPaintFilter(self)  # constructed once,
             # reused across every panel-open — it holds no per-open state of
             # its own (unlike _tracker, which IS rebuilt fresh each open,
@@ -1099,14 +1226,24 @@ class TransportBarBlurOverlay:
         painter.end()
         self._overlay.setPixmap(combined)
 
-        # Re-apply manual hover paint for any currently-hovered button whose
-        # overlay rect intersects the just-composited region — the composite
-        # above may have overwritten the crisp manual paint with a blurred
-        # grab result (2026-08-17).
+        # Re-apply manual hover/pressed paint for any currently-hovered/
+        # pressed button whose overlay rect intersects the just-composited
+        # region — the composite above may have overwritten the crisp manual
+        # paint with a blurred grab result (2026-08-17). Pressed wins over
+        # hover for a button that is both (Enter always fires before Press,
+        # so a pressed button is in both sets) — matches real QSS specificity
+        # (:pressed overrides :hover) and avoids painting hover then
+        # immediately overpainting it with pressed for the same button.
         for btn in self._hovered_buttons:
+            if btn in self._pressed_buttons:
+                continue
             btn_rect = self._button_overlay_rect(btn)
             if btn_rect.intersects(local):
                 self._paint_button_hover(btn)
+        for btn in self._pressed_buttons:
+            btn_rect = self._button_overlay_rect(btn)
+            if btn_rect.intersects(local):
+                self._paint_button_pressed(btn)
 
         logger.warning(f"[TIMER-TRACE] refresh_dirty tick={_tick} COMPOSITED dirty={dirty}")
 
@@ -1259,6 +1396,10 @@ class TransportBarBlurOverlay:
             widget.removeEventFilter(self._hover_filter)
         self._hover_buttons = []
         self._hovered_buttons = set()
+        self._pressed_buttons = set()
+        self._mouse_down_buttons = set()
+        self._pressed_false_since = {}
+        self._pressed_poll_timer.stop()
         self._active = False
         # Any in-flight decline-retry is left to fire once and no-op on its own
         # `if not self._active` guard (same safety property the coalescing
@@ -1547,23 +1688,31 @@ class TransportBarBlurOverlay:
         target.moveTop(rect.center().y() - target.height() // 2 + y_offset)
         painter.drawPixmap(target.topLeft(), blurred_content)
 
-    def _paint_button_hover(self, button: QWidget) -> None:
-        """Paint `button`'s hovered appearance (flat accent_light fill,
-        border-radius 4px — the ONLY thing that changes on hover per the QSS
-        investigation) directly into self._overlay's pixmap, in place of a
-        grab. next_button/speed_button additionally get their real content
-        (icon/text) redrawn on top — see _paint_button_content — since an
-        opaque fill alone hides it entirely and its absence is noticeable.
+    def _paint_button_fill(self, button: QWidget, theme_key: str) -> None:
+        """Shared implementation for _paint_button_hover/_paint_button_pressed
+        — paint `button`'s state fill (flat color, border-radius 4px — the
+        ONLY thing that changes per the QSS investigation) directly into
+        self._overlay's pixmap, in place of a grab. next_button/speed_button
+        additionally get their real content (icon/text) redrawn on top — see
+        _paint_button_content — since an opaque fill alone hides it entirely
+        and its absence is noticeable.
 
         This is the manual-paint replacement for the grab-based approaches
         that failed structurally (see NOTES.md, 2026-08-16 sessions): no
         panel hide, no children hide, no hit-test disturbance — this method
         never touches panel or button visibility at all, it only mutates the
-        already-shown overlay pixmap directly, driven by a real Enter event
-        (see _HoverPaintFilter.eventFilter, near _DirtyRectTracker above)."""
+        already-shown overlay pixmap directly, driven by a real Enter/Press
+        event (see _HoverPaintFilter.eventFilter, near _DirtyRectTracker
+        above)."""
         theme = self.main_window.theme_manager.get_current_theme()
-        color = QColor(theme['accent_light'])
+        color = QColor(theme[theme_key])
         rect = self._button_overlay_rect(button)
+        if _GRAB_TRACE_ENABLED:
+            logger.warning(
+                f"[PAINT-FILL-TRACE] button={button.objectName()!r} "
+                f"theme_key={theme_key!r} rect={rect} empty={rect.isEmpty()} "
+                f"bounding_rect={self._bounding_rect}"
+            )
         if rect.isEmpty():
             return
         pixmap = QPixmap(self._overlay.pixmap())
@@ -1575,6 +1724,143 @@ class TransportBarBlurOverlay:
         self._paint_button_content(painter, button, rect)
         painter.end()
         self._overlay.setPixmap(pixmap)
+
+    def _paint_button_hover(self, button: QWidget) -> None:
+        """Hover fill — see _paint_button_fill. QSS: accent_light."""
+        self._paint_button_fill(button, 'accent_light')
+
+    def _paint_button_pressed(self, button: QWidget) -> None:
+        """Pressed fill (2026-08-17) — see _paint_button_fill. QSS:
+        accent_dark. Matters more than hover in practice, per Pryme: a longer
+        press makes the opaque-fill-hides-content discrepancy visible for
+        longer than a quick hover would."""
+        self._paint_button_fill(button, 'accent_dark')
+
+    def _set_pressed(self, button: QWidget, pressed: bool) -> None:
+        """Single mutation point for _pressed_buttons — the PAINT-state set
+        only. Paints/restores the manual fill on a real transition; does NOT
+        touch the poll timer or _mouse_down_buttons (the SESSION set) — see
+        _arm_pressed_poll/_disarm_pressed_poll_if_idle for that, called
+        separately by Press/Release. This split (2026-08-17, multi-crossing
+        fix) is what lets the poll call this repeatedly, in both directions,
+        for as long as a session stays open — see _mouse_down_buttons' own
+        comment for the bug this replaced."""
+        was_in_set = button in self._pressed_buttons
+        if _GRAB_TRACE_ENABLED:
+            logger.warning(
+                f"[SET-PRESSED-TRACE] button={button.objectName()!r} "
+                f"pressed={pressed} currently_in_set={was_in_set} "
+                f"timer_active={self._pressed_poll_timer.isActive()}"
+            )
+        if pressed:
+            if not was_in_set:
+                self._paint_button_pressed(button)
+                self._pressed_buttons.add(button)
+        else:
+            if was_in_set:
+                self._pressed_buttons.discard(button)
+                self._restore_button_from_snapshot(button)
+            self._pressed_false_since.pop(button, None)
+
+    def _arm_pressed_poll(self) -> None:
+        """Start the poll timer if it isn't already running — called once per
+        button on MouseButtonPress (session open), never by the poll itself.
+        Idempotent: safe to call while other buttons already have the timer
+        running (a second button pressed while the first is still held)."""
+        if not self._pressed_poll_timer.isActive():
+            self._pressed_poll_timer.start()
+
+    def _disarm_pressed_poll_if_idle(self) -> None:
+        """Stop the poll timer once no button has an open session — called on
+        MouseButtonRelease (session close), never by the poll itself. Keyed
+        off _mouse_down_buttons (the session set), NOT _pressed_buttons (the
+        paint-state set) — a button can be mid-session with no paint showing
+        (cursor currently outside the rect) and the poll must keep running
+        for it regardless."""
+        if not self._mouse_down_buttons and self._pressed_poll_timer.isActive():
+            self._pressed_poll_timer.stop()
+
+    def _pressed_poll_tick(self) -> None:
+        """Poll cursor-vs-rect containment for every button with an open
+        press SESSION (_mouse_down_buttons), independent of MouseMove event
+        delivery (2026-08-17, revised twice same day).
+
+        Qt does not fire Enter/Leave to a widget during an active mouse grab
+        (a QPushButton grabs the mouse for the duration of a press) — a
+        drag-off/drag-back-in only generates MouseMove, and Qt's actual
+        MouseMove delivery during a SLOW drag can gap by 1.5+ seconds with no
+        events at all (confirmed live via [PRESS-BORDER-TRACE]: a real
+        slow-drag repro showed a 1.6s gap with zero MouseMove events while the
+        cursor was leaving a pressed button's rect). Polling removes the
+        dependency on event delivery entirely — the frost updates within one
+        poll interval of the real state regardless of how sparse mouse events
+        are.
+
+        SIGNAL: originally polled QPushButton.isDown() directly. isDown() was
+        found NOT reliable as a live signal — confirmed via
+        [POLL-TICK-TRACE]: a single tick read isDown()==False 504ms into an
+        otherwise-continuous 4.7s hold (cursor never moved, real release only
+        ~4.2s later), correlated with _grab_and_blur's panel hide/show cycle
+        landing 22-30ms earlier for that same button's rect (same underlying
+        hazard as the tassel hand-cursor flicker — hide/show perturbs
+        Qt-internal pointer/press state). Replaced with a direct geometric
+        check instead — button.rect().contains(button.mapFromGlobal(
+        QCursor.pos())) — which does not depend on any Qt-internal
+        press-tracking state the grab cycle can perturb, only on the button's
+        own (always-correct) geometry and the live global cursor position.
+
+        ITERATION TARGET (2026-08-17, second revision, the multi-crossing
+        fix): this originally iterated self._pressed_buttons directly and
+        only ever discovered EXITS (inside->outside), via _set_pressed(False)
+        — which both repaints AND removes the button from _pressed_buttons.
+        Once removed, the same `for button in self._pressed_buttons` loop
+        could never see that button again, so a later re-entry
+        (outside->inside) during the SAME held press was silently never
+        detected. Confirmed live (Pryme, 2026-08-17): "right side clears,
+        then left side catches up... I continue to press and cross the
+        button multiple times... left side never changes" after the first
+        exit — a one-way door, not a timing lag. Fixed by iterating
+        self._mouse_down_buttons instead — a SEPARATE set this method never
+        mutates (only Press/Release do, via _arm_pressed_poll/
+        _disarm_pressed_poll_if_idle) — so a button that exits and later
+        re-enters during the same session is checked, and re-checked, on
+        every single tick for as long as the session stays open, in either
+        direction, any number of times.
+
+        _RELEASE_DEBOUNCE_S / _pressed_false_since tracking is retained: a
+        genuine micro-jitter at the exact rect boundary could still flip the
+        containment test for a single poll tick, and the debounce absorbs
+        that the same way it absorbed isDown()'s noise, just against a signal
+        that is not independently known to go wrong for multi-second
+        stretches. It debounces only the OUTSIDE direction (matching its
+        original design) — a re-entry (outside->inside) is applied
+        immediately, no debounce, since there is no equivalent "brief false
+        positive" hazard on that side to guard against.
+
+        Iterates a snapshot (list(...)) since a future _set_pressed caller
+        could in principle mutate _pressed_buttons mid-iteration; this method
+        no longer mutates _mouse_down_buttons itself, so no iteration hazard
+        exists there, but the snapshot pattern is kept for consistency."""
+        cursor_pos = QCursor.pos()
+        if _GRAB_TRACE_ENABLED:
+            logger.warning(
+                f"[POLL-TICK-TRACE] mouse_down_buttons="
+                f"{[b.objectName() for b in self._mouse_down_buttons]} "
+                f"cursor_pos=({cursor_pos.x()}, {cursor_pos.y()})"
+            )
+        now = time.perf_counter()
+        for button in list(self._mouse_down_buttons):
+            inside = button.rect().contains(button.mapFromGlobal(cursor_pos))
+            if inside:
+                self._pressed_false_since.pop(button, None)
+                self._set_pressed(button, True)
+                continue
+            since = self._pressed_false_since.get(button)
+            if since is None:
+                self._pressed_false_since[button] = now
+            elif now - since >= _RELEASE_DEBOUNCE_S:
+                self._pressed_false_since.pop(button, None)
+                self._set_pressed(button, False)
 
     def _restore_button_from_snapshot(self, button: QWidget) -> None:
         """Restore `button`'s overlay-local rect from self._panel_open_snapshot
@@ -1593,6 +1879,12 @@ class TransportBarBlurOverlay:
             )
             return
         rect = self._button_overlay_rect(button)
+        if _GRAB_TRACE_ENABLED:
+            logger.warning(
+                f"[PAINT-RESTORE-TRACE] button={button.objectName()!r} "
+                f"rect={rect} empty={rect.isEmpty()} "
+                f"bounding_rect={self._bounding_rect}"
+            )
         if rect.isEmpty():
             return
         pixmap = QPixmap(self._overlay.pixmap())
@@ -1698,7 +1990,6 @@ class TransportBarBlurOverlay:
         # pushed when a panel is actually being hidden and a widget is under
         # the cursor; always popped in the finally, so it can never strand a
         # stuck override.
-        from PySide6.QtGui import QCursor
         from PySide6.QtWidgets import QApplication
 
         _cursor_override_pushed = False
