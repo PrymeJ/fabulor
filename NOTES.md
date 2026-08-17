@@ -1,3 +1,163 @@
+## 2026-08-18 (Session 7) — Pressed-state FIXED (the real bug was a one-way door, not a timing lag). `chapter_preview_label` frost redraw shipped: three bugs found and fixed (fade-together opacity, stale-snapshot lingering border, and a rate-limit fix for a marquee-starving refresh loop). Title bar debug-clock crash fixed. Two commits.
+
+Seventh session (continuing directly from Session 6's compaction boundary — see that entry for the
+full pressed-state failure trail: MouseMove-reactive → sparse-delivery lag; `isDown()`-polling →
+sustained-glitch strand; wall-clock debounce → sustained-not-transient false reading).
+
+### Title bar crash — `_update_debug_clock` had swallowed `__init__`'s button-creation loop
+
+A structural bug in the uncommitted debug-clock addition from Session 6: the `for symbol, slot in
+[...]` loop that creates the minimize/close buttons had landed INSIDE `_update_debug_clock`'s method
+body instead of `__init__`, so every 50ms timer tick tried to rebuild both buttons from scratch and
+crashed on `NameError: name 'layout' is not defined` (the loop referenced `__init__`'s local
+`layout` variable, out of scope inside the method). Minimize/close were never created at all as a
+result. Fixed by moving the loop back to `__init__`, right after the timer setup; `_update_debug_clock`
+is now just its intended one-line clock-text update. Confirmed via log timestamps that the running
+process postdated the fix and the traceback stopped recurring. Pryme explicitly asked to keep the
+debug clock in place afterward — useful for future screenshot/recording correlation, including the
+tooltip work below.
+
+### Pressed-state — root cause was a ONE-WAY DOOR in the poll loop, not the signal or a timing lag
+
+Picked up exactly where Session 6 left off: the user's final framing was "before polling, well
+inside or outside the buttons, presses registered... the only problem areas were near the borders...
+Get rid of polling, couple it with `QCursor.pos()`." Then, mid-session, Pryme corrected the plan
+further: "wouldn't make sense that we don't drop polling right away? We have never tried them
+together." — the poll's cadence stayed; only its SIGNAL changed from `QPushButton.isDown()` to a
+direct `button.rect().contains(button.mapFromGlobal(QCursor.pos()))` check, keeping
+`MouseButtonPress`/`MouseButtonRelease` as the untouched, already-working session-boundary signal.
+
+**First live test after the signal swap: "Didn't work. No difference."** Confirmed via trace
+([SET-PRESSED-TRACE]/[POLL-TICK-TRACE]) that the geometric signal itself was working correctly —
+clean, prompt transitions in both directions on a single crossing. But Pryme's actual repro was
+different from what had been tested: "I continue to press... entering the button, going out of
+button" (multiple in/out crossings during ONE held press), and "right side clears, then left side
+catches up... left side never changes" after the FIRST exit.
+
+**Root cause, found by re-reading `_pressed_poll_tick` against that exact description**: the poll
+iterated `self._pressed_buttons` directly — the same set `_set_pressed(False)` REMOVES a button from
+on an exit. Once removed, the SAME loop (`for button in self._pressed_buttons`) could never see that
+button again for the rest of the hold — a one-way door, not a lag. This existed identically whether
+the signal was `isDown()` or geometric containment; the signal swap earlier in the session was a real
+improvement (removed a genuine unreliability hazard tied to `_grab_and_blur`'s hide/show cycle) but
+could never have fixed THIS bug, which is why "no difference" was the correct, literal outcome.
+
+**Fix**: split session tracking from paint-state tracking. `_mouse_down_buttons` (new) is the SOLE
+authority for "is the mouse physically down on this button right now" — opened only by a real
+`MouseButtonPress`, closed only by a real `MouseButtonRelease`, never touched by the poll.
+`_pressed_buttons` (existing) stays purely a PAINT-state set, freely toggled in either direction by
+the poll while a button is in `_mouse_down_buttons`. The poll now iterates `_mouse_down_buttons` — a
+set it never mutates — so a button that exits and later re-enters during the same held press is
+checked, and re-checked, on every tick for as long as the session stays open, any number of times, in
+either direction. `_arm_pressed_poll`/`_disarm_pressed_poll_if_idle` (new) move the timer lifecycle
+out of `_set_pressed` (now purely a paint mutator) into Press/Release directly, keyed off the SESSION
+set, not the paint set — a button can be mid-session with no paint showing (cursor outside) and the
+poll must keep running for it regardless.
+
+Live-tested with the fix: no misses across repeated in/out border crossings during a held press.
+Committed `632fccf` (fix, not wip — this is a complete, confirmed-working fix, unlike Session 6's
+three failed attempts).
+
+**Release debounce — added, then shrunk, then removed entirely, same day.** The 0.15s
+`_RELEASE_DEBOUNCE_S` (sized for `isDown()`'s confirmed transient-false-reading hazard) was carried
+over unchanged when the signal swapped to geometric containment. Live-tested and reported laggy:
+"the problem is the lag. It catches a couple hundred ms later" — confirmed in trace, ~150ms between
+the cursor clearly reading outside the rect and `_set_pressed(False)` actually firing. Shrunk to one
+poll interval (~50ms) — still reported as "a bit weird." Removed on request ("Can we test it without
+it?") and live-tested with NO misses: the geometric signal has no equivalent of `isDown()`'s "brief
+false positive mid-hold" failure mode, so there was nothing left for a grace period to usefully
+absorb. `_pressed_false_since`/`_RELEASE_DEBOUNCE_S` removed entirely rather than left as dead code.
+Committed `33a531a`.
+
+### Chapter-preview-label frost redraw (the tooltip item) — three real bugs, one still-open cosmetic artifact
+
+Scoped by Pryme up front, with screenshots: the widget is `chapter_preview_label` (the elided
+next/prev-chapter title box shown on transport-button hover), not a native tooltip. It has no
+manual fill+content shape like `next_button`/`speed_button` — it draws a real QSS box (background,
+1px border, rounded corners) and is visibility/opacity-driven, not hover/pressed-state-driven.
+Approach confirmed with Pryme before writing code: let Qt's real layout draw the real box+text at
+real font/alignment/color, clip-paint only the panel-covered portion via a private same-size pixmap,
+leave the sliver-side portion untouched (same shape as the button fix, no manual re-elision).
+
+Implementation added `chapter_preview_label` to the tracked-widget list and a new
+`_paint_preview_label` method, wired into `refresh_dirty`'s composite-reapply loop (mirroring the
+hover/pressed re-apply loops) and into `show_for_panel`'s initial pass. Three bugs surfaced from
+there, each found and fixed via live trace rather than guessed:
+
+1. **Box appeared before text ("a blink")** — `cp.setOpacity(opacity)` was called AFTER
+   `drawRoundedRect` but BEFORE `drawText`, so the box's fixed 0.5 background alpha painted
+   instantly at every fade tick while only the text ramped in on top. Fixed: opacity set ONCE,
+   before anything is drawn — matches how a real `QGraphicsOpacityEffect` fades a widget's whole
+   render uniformly.
+
+2. **Lingering border after hover-out, only cleared by hovering the OTHER button** — two-part bug,
+   two live-tested fixes. First: the "nothing should be showing" guard was an exact `opacity <= 0.0`
+   comparison; the fade's `OutCubic` easing can leave the last observed tick at a tiny nonzero value
+   (`.3f`-formats as "0.000" but is not actually 0.0), which fell through to the "still showing"
+   branch and painted an all-but-invisible box that never triggered any clear path — widened to an
+   epsilon (`<= 0.001`). Second, found only after Pryme reported the border STILL lingering post-fix:
+   the restore call (`_restore_button_from_snapshot`) WAS firing correctly every time (confirmed via
+   `[PAINT-RESTORE-TRACE]`), but `_panel_open_snapshot` is captured ONCE at panel-open time and this
+   panel can stay open across many hover cycles — if the label had any nonzero opacity at that exact
+   instant, the partial box got baked into the "clean" snapshot permanently, and every later restore
+   just faithfully replayed that same stale partial box. Confirmed by direct test: closing/reopening
+   the panel (forcing a fresh snapshot) cleared it every time. Fixed by doing a fresh, small
+   `_grab_and_blur` of just that rect on clear instead of replaying the snapshot — same mechanism
+   `refresh_dirty`'s own composite step already uses. **Still not fully resolved** — Pryme confirmed
+   live that even this fix left a faint residual border in some cases, but explicitly deprioritized
+   it as "not that important... a harmless artifact" once it was confirmed to cause no further
+   update/hitching cost and to not be visible under a real (non-transparent) panel background. Left
+   open, not reverted.
+
+3. **Marquee "pause and skip" while hovering next_button** — the one Pryme called "more important...
+   I don't like seemingly trivial things using a lot of processing power." Wrongly diagnosed twice
+   before being found: first suspected as a redundant-repaint problem (fixed via a `_preview_paint_memo`
+   text+opacity memo — real, kept, but insufficient alone, since `opacity` genuinely changes every
+   animation tick so the memo can't skip those); then suspected as the blur cost itself being too
+   expensive per call (fixed via `_preview_content_cache`, rendering+blurring once per distinct TEXT
+   and applying opacity only at blit time via `painter.setOpacity()` — real, kept, confirmed via
+   `[PAINT-PREVIEW-COST]` trace at ~0.2ms/call after the fix, but STILL didn't fix the marquee, per
+   Pryme: "it is still expensive and affects the marquee badly. Why doesn't the hover of the next
+   button cause this? It paints too."). That question was the right one and led to the real answer:
+   `[REFRESH-DIRTY-COST]` tracing showed `_grab_and_blur` itself costs ~4-8ms EVERY call, for ANY
+   dirty widget alike — not specific to this widget's own paint work at all. The bug was never cost
+   PER CALL, it was call FREQUENCY: `chapter_preview_label` had been placed in the `"immediate"`
+   rate-limit category (no throttling) when first tracked, so its continuously-ticking opacity fired
+   far more `refresh_dirty()` calls per second than any other tracked widget generates — confirmed
+   live to correlate specifically with ACTIVE hover churn (moving in/out), not with the preview
+   simply being visible/held-still, which pointed straight at Paint-event volume rather than paint
+   cost. Also ruled out an unrelated theory along the way (Pryme, correctly, when asked to test with
+   chapter-hints-preview disabled entirely as an isolation step): "What you suggest is equivalent to
+   turning the chapter hints off and hovering over the next button. Of course it doesn't cause any
+   issues. The cause is obviously the paint." Fixed by giving `chapter_preview_label` its own
+   rate-limit category (`_SUPPRESS_PREVIEW_S`) instead of `"immediate"` — tuned live by Pryme from an
+   untested starting guess (0.150s) down to 0.080s, checked against the MORE sensitive case (the
+   chapter progress slider's own visible pause, only noticeable on chapters short enough — ~1
+   minute — for the slider to move fast enough to show it) rather than just the marquee. Confirmed:
+   no marquee stall, no visible slider stall, at 0.080s.
+
+Committed `596e07a` (wip, first pass) then `0d39b38` (fix, the rate-limit fix that actually resolved
+the reported symptom) — Pryme was explicit both times about not letting an unconfirmed claim stand
+as "fixed": "It is still expensive and affects the marquee badly" after a change I had reasoned
+should have worked, and separately, "I have never confirmed the lingering-border to be fixed,
+either. It is still there" — both live corrections came before any commit that would have implied
+resolution, not after.
+
+**Diagnostic traces added/kept this session** (env-gated `FABULOR_GRAB_TRACE=1`, same convention as
+the file's existing `[DIRTY-TRACE]`/`[GRAB-ENTRY]` probes — cost nothing when disabled): `[SET-PRESSED-TRACE]`,
+`[POLL-TICK-TRACE]`, `[PAINT-PREVIEW-TRACE]`, `[PAINT-PREVIEW-CACHE-MISS]`, `[PAINT-PREVIEW-COST]`,
+`[REFRESH-DIRTY-COST]`. The last two are what actually found the real cost driver in bug 3 above —
+kept for any future investigation of this same call path, not stripped after the fix landed.
+
+**Working method note, worth keeping**: this session's actual bugs were each found by re-reading the
+exact wording of Pryme's live report against the code, not by re-theorizing from first principles —
+"left side never changes" (not "lags") pointed straight at a one-way door once taken literally;
+"closing/reopening clears it" pointed straight at a stale one-time snapshot; "why doesn't next_button's
+OWN hover cause this?" was the question that actually cracked the marquee bug, and it came from
+Pryme, not from me. Several of my own intermediate theories (the memo, the content cache, the
+isolation-test suggestion) were plausible, partially useful, and NOT what the user was actually
+reporting — each was corrected by a direct quote before being allowed to stand as a diagnosis.
+
 ## 2026-08-17 (Session 6) — Hover-flicker fixed, next_button/speed_button content redraw fixed, pressed-state chased through three failed iterations before finding `isDown()` itself unreliable under `_grab_and_blur`'s hide/show. Next session opens on `QCursor.pos()` geometric tracking, per Pryme's own framing. Nothing committed.
 
 Sixth session. Picked up the three still-open issues from Session 5 (hover blurred/crisp, tooltip

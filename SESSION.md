@@ -1,3 +1,47 @@
+## Session Summary — 2026-08-18 Session 7 — Pressed-state FIXED (root cause was a one-way door in the poll loop, not a signal or timing problem); chapter_preview_label frost redraw shipped, closing the long-open "tooltip stuck/absent" thread; title bar debug-clock crash fixed. `fix/book-detail-blur-park`
+
+Full detail in NOTES.md (top entry, same title). This is the pointer.
+
+**Title bar crash fixed** — Session 6's debug-clock addition had its button-creation loop nested
+inside the wrong method (`_update_debug_clock` instead of `__init__`), crashing every 50ms tick and
+silently dropping minimize/close. Moved back, no logic change.
+
+**Pressed state — fixed.** Session 6 ended having tried three approaches against the wrong theory
+(that `isDown()`'s unreliability was the whole problem). Swapping to a `QCursor.pos()`-based
+geometric signal (per Session 6's own agreed next direction) made "no difference" live — which
+turned out to be the correct, informative result: the poll iterated `_pressed_buttons` directly, the
+same set an exit REMOVES a button from, so once a button exited during a held press the poll could
+never see it again — a structural one-way door, present identically regardless of which signal fed
+it. Fixed by splitting session tracking (`_mouse_down_buttons`, Press/Release-only) from paint-state
+tracking (`_pressed_buttons`, freely toggled by the poll) — confirmed live with no misses across
+repeated in/out crossings. The release debounce, once real, was then shrunk and finally removed
+entirely — the geometric signal doesn't have `isDown()`'s transient-false-reading hazard, so nothing
+needed debouncing once the real bug was fixed. Two commits: `632fccf`, `33a531a`.
+
+**Chapter-preview-label tooltip — shipped, closing a thread open since 2026-08-14/15.** This is
+`chapter_preview_label` (the next/prev-chapter hover preview box), confirmed missing from the frost's
+tracked-widget list entirely (flagged, unresolved, across several prior sessions' TODO entries). Added
+tracking plus a new redraw method matching its real QSS box (not a manual fill like the transport
+buttons). Three real bugs found and fixed via live trace: fade-together opacity (box and text now
+fade as one, not box-then-text); a stale-panel-open-snapshot bug where the "clear" restore replayed
+whatever the preview looked like at panel-open time forever (fixed with a fresh small grab instead —
+confirmed live, most cases now clear correctly, one deprioritized cosmetic residual left, see
+TODO.md); and a marquee-starving perf bug, wrongly diagnosed twice (a redundant-repaint memo, then a
+render/blur cache — both real, both kept, neither the actual fix) before tracing the real cost driver
+to `_grab_and_blur` itself (~4-8ms per call, paid by every tracked widget alike) and fixing it by
+giving the label its own rate-limit category instead of "immediate" (no throttling) — tuned live by
+Pryme to 0.080s against the more sensitive chapter-slider-pause case, not just the marquee. Two
+commits: `596e07a` (wip), `0d39b38` (fix).
+
+**Working-method note worth keeping**: every real bug this session was found by re-reading Pryme's
+exact wording against the code rather than re-theorizing — "left side never changes" (not "lags")
+named the one-way door; "closing/reopening clears it" named the stale snapshot; "why doesn't
+next_button's own hover cause this?" (Pryme's question, not mine) was what actually found the
+rate-limit bug. Two of my own intermediate theories were plausible, partially useful, and directly
+corrected by a live quote before being allowed to stand as a diagnosis — see NOTES.md for both.
+
+---
+
 ## Session Summary — 2026-08-17 Session 6 — Hover flicker fixed and committed; next_button/speed_button content redraw fixed and committed; pressed-state (`:pressed`) chased through three iterations, all failed for the same underlying reason (`isDown()` unreliable under `_grab_and_blur`'s hide/show), and left UNCOMMITTED with a concrete next direction (`QCursor.pos()` geometric tracking) for next session. `fix/book-detail-blur-park`
 
 Full detail in NOTES.md (top entry, same title). This is the pointer.

@@ -35,6 +35,17 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
 - [2026-07-21] Spurious enterEvent heartbeat fixed; the underlying punch-through flash collision is still open
 
 ### Blur grab hide/show side effects
+- [2026-08-18] **`chapter_preview_label` frost redraw: faint border can linger after the preview
+  fully fades, even after the fresh-grab fix (`0d39b38`).** Deprioritized by Pryme, not chased
+  further this session — confirmed live to cause no further update/hitching cost, and not visible
+  under a real (non-transparent) panel background, so the cosmetic residual itself is the only open
+  question. If picked up: the fresh-grab-on-clear fix (see `_paint_preview_label`'s epsilon branch,
+  `transport_bar_blur.py`) replaced a stale-snapshot restore and fixed most cases, but Pryme reported
+  it "still there" at least once after that fix was live — not yet traced to why the fresh grab
+  itself would leave a residual (candidates, none checked: the grab landing on a frame that hasn't
+  fully settled post-fade; the rate-limit window (`_SUPPRESS_PREVIEW_S`, 0.080s) delaying the clear
+  tick long enough that something else re-composites over it first). Full trace: NOTES.md, Session 7.
+
 - [2026-08-01, MEASURED 2026-08-14] Transport buttons paint hovered/pressed under an open panel —
   4th instance of the grab's hide/show cycle; synthetic-Enter path measured, but it does NOT explain
   the cursor-far-from-buttons case (NOTES.md). **Affects EVERY panel** (Settings/Sleep/Speed/Stats),
@@ -331,6 +342,36 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
       next/speed content-redraw are working and could be committed separately if picked apart from
       the pressed-state code, but were left together, uncommitted, since the session ended
       mid-investigation. Full trace: NOTES.md, 2026-08-17 Session 6.
+
+  - **ALL THREE ISSUES NOW RESOLVED, 2026-08-18 (Session 7).** Full mechanism/trace: NOTES.md,
+    "Session 7" entry.
+    1. **Hover flicker** — already fixed Session 6, committed `7cc8ab6`.
+    2. **Tooltip not shown under an open panel** — this was always `chapter_preview_label`, the
+       widget the Session 2/5 entries above flagged as missing from `_all_tracked_widgets()`
+       entirely. Added to tracking; a new `_paint_preview_label` redraws its real box+text (QSS
+       background/border/font, not a manual fill like the buttons) clipped to the panel-covered
+       portion. Two real bugs found along the way (fade-together opacity; a stale-panel-open-snapshot
+       lingering-border bug, only partially fixed — see the still-open TODO entry below) and one
+       real perf bug (see #3). Committed `596e07a` (wip) then `0d39b38` (fix).
+    3. **Pressed state** — root cause was NOT the signal (`isDown()` vs. `QCursor.pos()`) and NOT a
+       timing lag. The poll iterated `_pressed_buttons` directly, the SAME set `_set_pressed(False)`
+       removes a button from on exit — a one-way door: once a button exited during a held press, the
+       poll loop could never see it again for the rest of that hold, so re-entry was silently never
+       detected. ("Signal swapped to `QCursor.pos()` per the plan above, tested — 'Didn't work. No
+       difference,' because the swap could never have fixed this bug.") Fixed by splitting session
+       tracking (`_mouse_down_buttons`, opened/closed only by real Press/Release) from paint-state
+       tracking (`_pressed_buttons`, freely toggled by the poll in either direction) — the poll now
+       iterates the session set, which it never mutates, so re-entry is caught on every tick. The
+       release debounce (`_RELEASE_DEBOUNCE_S`) was then shrunk, then removed entirely — the
+       geometric signal has no equivalent of `isDown()`'s "brief false positive" hazard, so nothing
+       needed debouncing once the one-way door was fixed. Committed `632fccf` then `33a531a`.
+
+    **New still-open item from this session's work**, added to the top of this file's dated list:
+    the chapter-preview-label frost redraw has a confirmed-live, deprioritized cosmetic residual — a
+    faint border can linger after the preview fully fades, in some cases even after the fresh-grab
+    fix (`0d39b38`). Pryme confirmed it does not cause any further update/hitching cost and is not
+    visible under a real (non-transparent) panel background — explicitly deprioritized as "not that
+    important... a harmless artifact," not reverted or further chased this session.
 
 - [2026-08-14] **Re-measure `_GRAB_FEEDBACK_SUPPRESS_S`.** Live again as of the 2026-08-15 revert
   above — the panel hide/show cycle this guard was sized against is back (it was briefly absent
