@@ -46,7 +46,7 @@ import os
 import time
 
 from PySide6.QtCore import QEasingCurve, QEvent, QObject, QPoint, QPropertyAnimation, QRect, Qt, QTimer
-from PySide6.QtGui import QColor, QCursor, QFontMetrics, QPainter, QPixmap
+from PySide6.QtGui import QColor, QCursor, QFontMetrics, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QGraphicsBlurEffect, QGraphicsOpacityEffect, QGraphicsScene, QLabel,
     QPushButton, QWidget,
@@ -501,6 +501,7 @@ class TransportBarBlurOverlay:
             main_window.forward_button,
             main_window.next_button,
             main_window.speed_button,
+            main_window.chapter_preview_label,
         ]
 
         # vol_stack (sleep_timer_label / vol_container[volume_slider] /
@@ -537,6 +538,7 @@ class TransportBarBlurOverlay:
                 main_window.forward_button,
                 main_window.next_button,
                 main_window.speed_button,
+                main_window.chapter_preview_label,
                 main_window.sleep_timer_label,   # vol_stack page 0
                 main_window.volume_slider,       # vol_stack page 1's real content
                 main_window.muted_icon_label,    # vol_stack page 2
@@ -866,6 +868,13 @@ class TransportBarBlurOverlay:
         # _restore_button_from_snapshot below, and a shared reference would
         # let those mutations corrupt the "clean" restore source too.
         self._panel_open_snapshot = QPixmap(blurred)
+        # Chapter-preview label (2026-08-17): if a preview is already showing
+        # when the panel opens (e.g. the user was already hovering
+        # prev_button/next_button), the mandatory full-rect grab above just
+        # captured its naturally blurred, uncorrected form — redraw it now,
+        # same as every other post-open dirty tick does via refresh_dirty's
+        # own re-apply loop, so it's never even briefly wrong for one frame.
+        self._paint_preview_label()
         self._overlay.setGeometry(self._bounding_rect)
         self._opacity_effect.setOpacity(0.0)
         self._overlay.show()
@@ -1222,6 +1231,13 @@ class TransportBarBlurOverlay:
             btn_rect = self._button_overlay_rect(btn)
             if btn_rect.intersects(local):
                 self._paint_button_pressed(btn)
+
+        # Re-apply the chapter-preview label's box+text for the same reason
+        # (2026-08-17) — not hover/pressed-state driven, so not covered by
+        # either loop above; checked independently against its own rect.
+        preview_rect = self._button_overlay_rect(self.main_window.chapter_preview_label)
+        if preview_rect.intersects(local):
+            self._paint_preview_label()
 
         logger.warning(f"[TIMER-TRACE] refresh_dirty tick={_tick} COMPOSITED dirty={dirty}")
 
@@ -1712,6 +1728,109 @@ class TransportBarBlurOverlay:
         press makes the opaque-fill-hides-content discrepancy visible for
         longer than a quick hover would."""
         self._paint_button_fill(button, 'accent_dark')
+
+    def _paint_preview_label(self) -> None:
+        """Redraw chapter_preview_label's real box+text on top of the frost,
+        clipped to the panel-covered PORTION of its rect only (2026-08-17).
+
+        UNLIKE next_button/speed_button: this widget has no manual fill+
+        content shape (it draws a real QSS box — background, 1px border,
+        rounded corners — via get_player_stylesheet's
+        `QLabel#chapter_preview_label` rule, not a hover/pressed pseudo-state
+        this class fakes), and it isn't hover/pressed-state driven — it's
+        VISIBLE (opacity-animated) independent of any button state, right-
+        or left-aligned inside preview_row depending on which of prev_button/
+        next_button triggered it (see app.py's _on_next_hover/_on_prev_hover
+        and _update_chapter_preview). It straddles the panel edge whenever a
+        next-chapter preview is showing while a panel is open (confirmed via
+        Pryme's screenshots, 2026-08-17: the panel's right edge crosses the
+        label's box mid-text, sometimes mid-elided-title).
+
+        Approach (Pryme confirmed, 2026-08-17): let Qt's own layout draw the
+        REAL box + REAL text at their real position/font/alignment/color —
+        no manual re-elision, no per-character QFontMetrics walk — and rely
+        purely on painter clipping to show only the PANEL-COVERED portion of
+        that render. The SLIVER-side portion is not touched here at all; it
+        is already the label's own live, correctly-rendered pixels, exactly
+        like next_button/speed_button's un-redrawn sliver portion.
+
+        Renders the label into its own small pixmap at its OWN size (not
+        painted with a clip rect directly into the overlay — QPainter clip
+        regions on a QPixmap the size of the overlay would work too, but
+        rendering to a same-size private pixmap first is what makes the
+        _blur_pixmap(..., _CONTENT_BLUR_RADIUS) step trivial to apply to
+        exactly this content, matching _paint_button_content's own shape),
+        then blits only the intersected (panel-covered) sub-rect of that
+        pixmap into the overlay — the sliver portion of the rendered pixmap
+        is simply never copied."""
+        label = self.main_window.chapter_preview_label
+        opacity = self.main_window.preview_opacity.opacity()
+        text = label.text()
+        if opacity <= 0.0 or not text:
+            return
+        full_rect = self._button_overlay_rect(label)  # already clipped to
+            # _bounding_rect — i.e. exactly the panel-covered portion, since
+            # _button_overlay_rect intersects with overlay_bounds (== the
+            # frosted region only). Despite the name, this helper is generic
+            # to any tracked widget's overlay-local rect, not button-specific.
+        if full_rect.isEmpty():
+            return  # label sits entirely in the live sliver — nothing to redraw
+        if _GRAB_TRACE_ENABLED:
+            logger.warning(
+                f"[PAINT-PREVIEW-TRACE] rect={full_rect} empty=False "
+                f"text={text!r} opacity={opacity:.3f} "
+                f"align={'right' if label.alignment() & Qt.AlignmentFlag.AlignRight else 'left'}"
+            )
+        theme = self.main_window.theme_manager.get_current_theme()
+        bg = QColor(theme['bg_deep'])
+        bg.setAlphaF(0.5)  # matches the QSS rule's rgba(bg_deep, 0.5)
+        border = QColor(theme['accent_dark'])
+
+        # Render at the label's OWN full size (not just the panel-covered
+        # slice) so the box/border/text lay out identically to the live
+        # widget, then only the panel-covered sub-rect gets copied out below
+        # — same reasoning as letting Qt's elidedText do the layout work
+        # upstream, applied one step further to the box/border too.
+        label_size = label.size()
+        content = QPixmap(label_size)
+        content.fill(Qt.GlobalColor.transparent)
+        cp = QPainter(content)
+        cp.setRenderHint(QPainter.RenderHint.Antialiasing)
+        cp.setPen(QPen(border, 1))
+        cp.setBrush(bg)
+        box_rect = content.rect().adjusted(0, 0, -1, -1)  # 1px pen inset,
+            # matching QSS border-radius box painting convention elsewhere
+            # in this file (_paint_button_fill's drawRoundedRect)
+        cp.drawRoundedRect(box_rect, 3, 3)  # QSS: border-radius: 3px
+        cp.setFont(label.font())
+        cp.setPen(label.palette().windowText().color())
+        cp.setOpacity(opacity)
+        # Vertical nudge (tuned live, 2026-08-17, same shape as
+        # _paint_button_content's next_button y_offset) — the manually
+        # rendered text sits 1px too high relative to the real QSS-painted
+        # label's `padding: 1px 0px 0px 0px` rule, which QPainter.drawText
+        # does not itself account for.
+        _PREVIEW_TEXT_Y_NUDGE = 2
+        text_rect = content.rect().translated(0, _PREVIEW_TEXT_Y_NUDGE)
+        cp.drawText(text_rect, int(label.alignment()), text)
+        cp.end()
+
+        blurred_content = _blur_pixmap(content, _CONTENT_BLUR_RADIUS)
+
+        # full_rect is already in overlay-local space AND already the
+        # panel-covered portion (see _button_overlay_rect above) — but it is
+        # relative to _bounding_rect's origin, while blurred_content is
+        # relative to the LABEL's own top-left. Re-derive the label's
+        # unclipped overlay-local top-left to know which sub-rect of
+        # blurred_content corresponds to full_rect, then copy only that.
+        label_top_left = label.mapTo(self._common_ancestor, QPoint(0, 0)) - self._bounding_rect.topLeft()
+        source_rect = full_rect.translated(-label_top_left)
+
+        pixmap = QPixmap(self._overlay.pixmap())
+        painter = QPainter(pixmap)
+        painter.drawPixmap(full_rect.topLeft(), blurred_content, source_rect)
+        painter.end()
+        self._overlay.setPixmap(pixmap)
 
     def _set_pressed(self, button: QWidget, pressed: bool) -> None:
         """Single mutation point for _pressed_buttons — the PAINT-state set
