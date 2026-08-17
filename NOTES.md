@@ -1,4 +1,4 @@
-## 2026-08-18 (Session 7) — Pressed-state FIXED (the real bug was a one-way door, not a timing lag). `chapter_preview_label` frost redraw shipped: three bugs found and fixed (fade-together opacity, stale-snapshot lingering border, and a rate-limit fix for a marquee-starving refresh loop). Title bar debug-clock crash fixed. Two commits.
+## 2026-08-18 (Session 1) — Pressed-state FIXED (the real bug was a one-way door, not a timing lag). `chapter_preview_label` frost redraw shipped: three bugs found and fixed (fade-together opacity, stale-snapshot lingering border, and a rate-limit fix for a marquee-starving refresh loop). Title bar debug-clock crash fixed. Two commits.
 
 Seventh session (continuing directly from Session 6's compaction boundary — see that entry for the
 full pressed-state failure trail: MouseMove-reactive → sparse-delivery lag; `isDown()`-polling →

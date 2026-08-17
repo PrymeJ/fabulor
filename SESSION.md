@@ -1,4 +1,4 @@
-## Session Summary — 2026-08-18 Session 7 — Pressed-state FIXED (root cause was a one-way door in the poll loop, not a signal or timing problem); chapter_preview_label frost redraw shipped, closing the long-open "tooltip stuck/absent" thread; title bar debug-clock crash fixed. `fix/book-detail-blur-park`
+## Session Summary — 2026-08-18 Session 1 — Pressed-state FIXED (root cause was a one-way door in the poll loop, not a signal or timing problem); chapter_preview_label frost redraw shipped, closing the long-open "tooltip stuck/absent" thread; title bar debug-clock crash fixed. `fix/book-detail-blur-park`
 
 Full detail in NOTES.md (top entry, same title). This is the pointer.
 
@@ -42,7 +42,7 @@ corrected by a live quote before being allowed to stand as a diagnosis — see N
 
 ---
 
-## Session Summary — 2026-08-17 Session 6 — Hover flicker fixed and committed; next_button/speed_button content redraw fixed and committed; pressed-state (`:pressed`) chased through three iterations, all failed for the same underlying reason (`isDown()` unreliable under `_grab_and_blur`'s hide/show), and left UNCOMMITTED with a concrete next direction (`QCursor.pos()` geometric tracking) for next session. `fix/book-detail-blur-park`
+## Session Summary — 2026-08-17 — Hover flicker fixed and committed; next_button/speed_button content redraw fixed and committed; pressed-state (`:pressed`) chased through three iterations, all failed for the same underlying reason (`isDown()` unreliable under `_grab_and_blur`'s hide/show), and left UNCOMMITTED with a concrete next direction (`QCursor.pos()` geometric tracking) for next session. `fix/book-detail-blur-park`
 
 Full detail in NOTES.md (top entry, same title). This is the pointer.
 

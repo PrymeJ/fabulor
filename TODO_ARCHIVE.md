@@ -479,3 +479,385 @@ order these entries had in TODO.md before the split (2026-07-30).
   re-verification) and "Investigate intermittent chapter-number flicker on backward seek to
   boundary" (2026-07-22, working theory is settle undershoot rather than a stale post-settle sample
   — possibly a distinct bug). Both remain in TODO.md; do not assume either is closed by this entry.
+
+- **CLOSED 2026-08-18: transport-bar frost hover/pressed/tooltip saga — original bug statement
+  through the render()/children-hide/manual-paint sub-thread and final fix.** Moved as two blocks,
+  in order — this one is the originating entry (2026-08-01, measured 2026-08-14: hover
+  hit-or-miss + next-chapter tooltip stuck, the shared `_grab_and_blur` hide/show mechanism), the
+  next is the 4th–6th direction attempts through the final fix. All three issues (hover flicker,
+  chapter_preview_label tooltip, pressed state) are now fixed; see NOTES.md/SESSION.md 2026-08-18
+  for the closing summary.
+- [2026-08-01, MEASURED 2026-08-14] Transport buttons paint hovered/pressed under an open panel —
+  4th instance of the grab's hide/show cycle; synthetic-Enter path measured, but it does NOT explain
+  the cursor-far-from-buttons case (NOTES.md). **Affects EVERY panel** (Settings/Sleep/Speed/Stats),
+  not Book Detail — its frost is a separate surface that does not use the shared overlay at all.
+  Symptom per Pryme: hover is *"a hit and miss, sometimes it highlights and sometimes not"*, and the
+  next-chapter tooltip *"stays stuck"*. It runs the whole time a panel is **open**, not only while
+  it is opening (the 2026-08-01 framing understated this).
+  **2026-08-14 measurement (NOTES.md, top entry):** 225 grabs / 21.1s sustained; of 702 accepted
+  paints, **0 land inside the 50ms `_grab_suppress_until` guard and 565 land in the 50-70ms band** —
+  the loop clears the guard by 8-15ms every single cycle, always in the same direction. The
+  intermittency is a race against that ~60ms flicker, NOT stale state; a fix premised on staleness
+  will miss. Probes are permanent and env-gated: `FABULOR_GRAB_TRACE=1`.
+  Two directions, neither started: widen `_GRAB_FEEDBACK_SUPPRESS_S` (cheap, symptom-level, and the
+  2026-07-27 objection to it stands — though it was written without knowing the margin is this
+  thin), or suppress by STATE across the hide/show rather than by a clock deadline (immune to
+  round-trip drift, more invasive).
+  **2026-08-14, third direction TRIED and REVERTED 2026-08-15:** `_grab_and_blur` was changed to
+  grab `content_container` (with `bg_main` composited underneath) instead of `main_window`, removing
+  the panel hide/show entirely on the theory that removing the hide/show cycle removes this whole
+  entry's mechanism. **It did not fix the symptom.** Pryme confirmed live: highlight was "more
+  responsive than before but still not acceptable... stays stale," and the next-button tooltip
+  stopped appearing under an open panel AT ALL (not merely stuck — absent). The change was also
+  reverted for an unrelated, more urgent reason: `content_container.grab()` returns Qt's default
+  palette color (32,35,38), fully opaque, at every pixel it doesn't paint itself (the transport
+  controls' inter-row layout gaps), which produced a visible rectangular darkening artifact — see
+  the NOTES.md entry "Grab-source switch shipped, restored the frost it broke, then falsified the
+  working theory behind per-source rate limits" (2026-08-15) for the full investigation, including
+  two failed compositing fixes that could never have worked (same-color-over-itself is a no-op, and
+  the opaque grab overwrites any fill painted underneath it regardless of color). Reverted back to
+  `main_window` + panel-hide 2026-08-15 (`_grab_and_blur`/`_grab_and_blur_for_frost` also collapsed
+  back into one function, `panel` now an explicit parameter). **This entry's underlying bug — hover
+  hit-or-miss, tooltip stuck/absent — is CONFIRMED STILL OPEN as of 2026-08-15**, unchanged by any
+  of this. Neither direction below was ever tried; both are still live options.
+
+- [2026-08-16] **A FOURTH direction TRIED and REVERTED: `QWidget.render(sourceRegion=...)` in place
+  of the per-tick `grab()`+hide/show, keeping `grab()`+hide/show only for `show_for_panel`'s one-time
+  panel-open pass.** Premise confirmed real by direct measurement before implementation: render()
+  delivers zero synthetic Enter/Leave, and — the load-bearing result — `QApplication.widgetAt()`
+  does NOT flip during a render() call the way it demonstrably does across a real `hide()`/`show()`
+  (reproduced directly in a scratch harness). This is not a dead premise; the mechanism genuinely
+  addresses the hover/tooltip bug's documented root cause. Two real regressions were found and fixed
+  in sequence during implementation (a flat `bg_main` hole-fill visible at low, normal
+  `panel_opacity_hover`; then a compounding-blur feedback loop from sourcing the fix's replacement
+  fill off the live, continuously-updated overlay pixmap instead of a write-once snapshot) — full
+  mechanism, root-cause evidence, and the fix for each in NOTES.md ("render() investigated..." entry,
+  2026-08-16) and `review/INDEX.md`'s row for `Design_260816_render_hole_fill_feedback_loop.md` (the
+  file itself was deleted 2026-08-16 Session 2 once the render() direction was settled dead — see
+  below — its content is preserved in that INDEX row). A THIRD issue then
+  surfaced under live tab-switching ("wrong state flashes... jumps from one stale image to another")
+  that was NOT root-caused — two candidate theories (a timing gap, `show_for_panel` re-firing) were
+  checked directly against the log and both ruled out; the likelier remaining direction (the live
+  overlay's own accumulated dirty-crop compositing being internally inconsistent, exposed differently
+  by whatever a tab switch happens to repaint) was never checked. Pryme's call: "I reverted the
+  render() approach. Introduces more issues than it solves." `transport_bar_blur.py` is back to the
+  exact previously-committed state (`4c4937f`/`5247177`) — confirmed via grep that zero trace of
+  `_render_and_blur`/`_panel_open_snapshot`/the four `[RENDER-*]` probes remains in the file. Nothing
+  from this attempt was committed. **This entry's underlying bug — hover hit-or-miss, tooltip
+  stuck/absent — remains open, unchanged.** If render() is ever re-attempted: the hole-fill MUST be
+  write-once-per-panel-open and read-only (never re-derived from `self._overlay.pixmap()`'s own
+  ongoing output, at any remove) — that requirement is now established by two independent live
+  failures, not a guess — and the tab-switch inconsistency needs to be root-caused BEFORE
+  re-attempting a fill fix, not treated as adjacent to it; it may share a cause with the feedback loop
+  or may be the live overlay's own patchwork compositing, unconfirmed either way. Also unchecked: does
+  the same tab-switch symptom reproduce on `main` (pre-render(), `_grab_and_blur`-only) — would
+  distinguish "render() caused this" from "render() merely exposed a pre-existing issue in
+  `refresh_dirty`'s incremental compositing."
+
+- [2026-08-16, Session 2, TRIED and REVERTED — a FIFTH direction, DEAD, not a tunable regression]
+  **Hide only the panel's CHILDREN (`panel.findChildren(QWidget)`), leave the panel itself visible,
+  instead of hiding the panel.** Premise confirmed real by direct measurement before implementation:
+  `QApplication.widgetAt()` stays resolved to the panel (no flip) when only children are hidden, a real
+  `grab()` came back correctly panel-colored (not a hole) where children were hidden, and an exhaustive
+  `hideEvent` audit across all six panels found no hard-stop-triggering side effect (one real timer-stop,
+  `TasselOverlay`, already proven self-healing under a MORE aggressive version of the same mechanism
+  today). Implemented, syntax-verified, reviewed. **Shipped a severe, structurally different regression
+  from every prior attempt**, Pryme's report verbatim: *"Psychedelic. Everything is everywhere on top of
+  everything, they are jumping up and down, the copy paste menu slides down the screen and takes focus
+  from my browser."* Screenshots showed every panel tab (Settings, Sprint, Stats) rendering with heavily
+  overlapping/ghosted/duplicated content; a popup escaped the application window entirely and stole OS
+  focus. **Not diagnosed to a specific widget class before revert** — the working hypothesis, unconfirmed,
+  is that `findChildren(QWidget)` recurses into structural widgets (`QStackedWidget` pages, `QTabWidget`
+  internals, `QMenu`/popup widgets — which are top-level windows in Qt even when logically nested, scroll
+  viewports) that the hideEvent audit never checked for, because that audit's question was "does hiding
+  this have a BEHAVIORAL side effect," never "is hiding this AT ALL, independent of any hideEvent
+  override, safe for Qt's own layout/stacking/window machinery." Reverted by Pryme himself
+  (`transport_bar_blur.py` confirmed back to zero diff against `HEAD`). Assessed directly, when asked
+  "is this dead": **yes, not salvageable without treating it as a new, large piece of work** — a real fix
+  would mean hand-curating, per panel, which children are safe leaf-content to hide vs. structural and
+  must never be touched, as ongoing maintenance for every current and future widget any panel gains, not
+  a one-time correction. Combined with the same-day render() dead end (entry above), TWO independent
+  hide/show-avoidance strategies have now failed for two different structural reasons in one day.
+  **One thread raised and deliberately left unchased this session**: `chapter_preview_label` — the real
+  widget behind what this whole investigation has been calling "the tooltip" (see NOTES.md, the button
+  hover/tooltip QSS investigation) — is confirmed NOT present in `TransportBarBlurOverlay._widgets`/
+  `_all_tracked_widgets()` at all. The dirty tracker has zero visibility into its fade in/out, independent
+  of whichever grab mechanism sits underneath. Not yet traced through to what this implies for whether
+  the frost shows the label correctly TODAY, under the current (reverted-to) `_grab_and_blur`-only code.
+  **Whoever picks this up next should resolve that tracking question first** — it may reframe the whole
+  problem, since a fix to the grab mechanism cannot help a widget the dirty tracker never sees change in
+  the first place. **This entry's underlying bug — hover hit-or-miss, tooltip/preview stuck/absent —
+  remains open, unchanged by any of this.**
+
+- [2026-08-16, Session 3] **A SIXTH direction, still viable and still committed as WIP (`30a19e3`) —
+  manual paint: intercept real Enter/Leave on the 6 transport buttons and paint hover state directly
+  into the overlay pixmap instead of grabbing it.** Unlike the four/five directions above, this one
+  is NOT dead — the core mechanism (verified: correct Enter→paint/Leave→restore mapping, correct
+  6-button set, `_button_overlay_rect`'s straddling-button clip for next_button/speed_button) remains
+  committed and untouched. Three specific bugs were diagnosed this session, one fix attempt caused a
+  real regression (reverted), and a second fix's re-test surfaced a third, worse, unexplained symptom
+  that ended the session before a fourth patch was attempted. Full trace: NOTES.md, "manual-paint hover
+  mechanism" entry, 2026-08-16 Session 3.
+  - **Issue 1 — RESOLVED to root cause, Session 4 (2026-08-16), CONFIRMED PRE-EXISTING, not caused
+    by this WIP.** Originally reported as "wrong color during theme hover-preview," suspected to be
+    `_paint_button_hover` calling the wrong theme getter — disproven by reading `theme_manager.py`
+    (`get_current_theme()` is documented and confirmed hover-inclusive). Correctly reframed from
+    Pryme's screenshots: the FROST'S OWN GRABBED-RECT BACKGROUND doesn't update to a hovered theme's
+    style during a live swatch preview at all, and streaks in on commit rather than landing atomically.
+    **Root cause found**: `refresh_dirty`'s existing `_is_hover_active` gate (added 2026-07-20 to
+    prevent a previewed theme's colors baking into the frost) suppresses EVERY grab for the entire
+    duration of any hover-preview, with a second `_POST_RESTYLE_COOLDOWN_S` gate extending the freeze
+    briefly after unhover — only then does one atomic catch-up grab land. Confirmed live via
+    `[TIMER-TRACE]`'s existing `reason=hover_active_gate`/`reason=cooldown_gate` lines: 64+ consecutive
+    declines during one real hover, one `COMPOSITED` after. **This is deliberate, pre-existing design,
+    NOT something the manual-paint work introduced** — confirmed three ways: (1) an isolation flag
+    (`FABULOR_SKIP_HOVER_FILTER=1`, temporary) proved `_HoverPaintFilter`'s mere presence makes no
+    difference — same gate/catch-up shape with the filter installed or not; (2) a `git worktree` checkout
+    of `4c4937f` (the commit immediately before this WIP — zero button-paint code exists there) reran
+    the identical live test and got the identical `hover_active_gate` → `cooldown_gate` → one
+    `COMPOSITED` shape. This settled a live disagreement between two Claude sessions (one argued
+    pre-existing, one — this WIP's own working assumption — argued newly introduced) with direct
+    evidence rather than continued argument. Full trace: NOTES.md, Session 4. **A real fix needs
+    either allowing some grab during a hover-preview without re-introducing the 2026-07-20 color-bleed
+    bug the gate exists to prevent, or a different mechanism entirely for keeping the frost visually
+    coherent during a live preview** — not attempted, investigation only.
+  - **Issue 2 (diagnosed, Fix A caused a regression, Fix B's status unconfirmed):** dirty-tracker
+    grabs — both a hovered button's own repaint AND unrelated full-region ticks that happen to cover
+    a button's rect — can overwrite crisp manual paint with a blurred grab result, confirmed via three
+    new instrumentation blocks (`[HOVER-PAINT]`/`[HOVER-RESTORE]`/`[DIRTY-GRAB]`, gated behind
+    `FABULOR_GRAB_TRACE=1` — NOT present in the reverted code, would need re-adding if revisited). Fix
+    A (exclude buttons from the dirty tracker) shipped a real, live-confirmed regression: manual paint
+    never handles `:pressed` (a real, separate QSS state from `:hover`), and the dirty tracker was the
+    ONLY mechanism ever capturing it — excluding buttons broke pressed-state feedback in the frost
+    entirely ("depressed style... not caught at all or fast... feels like the pre-fix state"). Fix A
+    was reverted; Fix B (track hovered buttons, re-apply paint after any composite whose dirty region
+    overlaps one) was re-tested alongside Issue 3's fix, but the re-test surfaced Issue 1's screenshot
+    (see below) before Fix B could be confirmed clean on its own — **status unconfirmed, not proven
+    working or broken**. If revisited: `:pressed` needs its OWN handling (a real gap, not covered by
+    any current design) before buttons can safely be excluded from the tracker again — Press/Release
+    interception and a `_paint_button_pressed` method were discussed as an option but never built.
+  - **Issue 3 (implemented, status unconfirmed for the same reason as Fix B):** `_panel_open_snapshot`
+    stale after a theme change while a panel is open — clean, scoped fix identified and implemented
+    (a missing line in `force_refresh_now()` mirroring `show_for_panel`'s own snapshot capture, plus
+    connecting the already-existing `theme_manager.theme_applied` signal — confirmed `Signal(dict)`,
+    fires only on genuine commits — to a new guarded `_on_theme_applied` slot). Implementation itself
+    was not the problem; it was re-tested alongside Fix B and neither was isolated from the other
+    before the session stopped.
+  - **The stopping point**: after reverting Fix A, a re-test screenshot (Waknuk theme, cover-art-pool
+    hover-preview active) showed the frost's lower two-thirds as a solid bright orange-to-red gradient
+    with button glyphs barely visible through it — not a wrong theme color, not the earlier
+    sequenced-paint streaking, not matching any hypothesis tested this session. Pryme's own read:
+    this looks like uninitialized/garbage pixel data. **Not diagnosed** — the session stopped here
+    rather than propose a fourth patch, on the reasoning that three unresolved/uncertain things were
+    now simultaneously true (Issue 1 still completely open, Fix B/Issue 3 never isolated from each
+    other or re-verified clean, and now a new, worse, unrecognized failure) and continuing to patch
+    forward without understanding the current state was not the responsible move.
+  - **Outcome**: `transport_bar_blur.py` reverted to `30a19e3` (the manual-paint WIP commit) — all of
+    this session's Issue 2/3 code is gone; the underlying manual-paint mechanism from the WIP commit is
+    untouched. **Per Pryme's explicit instruction, take these one at a time next session, starting with
+    the reframed Issue 1** (frost grabbed-rect content, not button hover color) — not the original,
+    now-disproven "wrong theme getter" framing.
+  - **Issue 1 — FIXED (2026-08-16, Session 5, `5d7d7e6`), scoped to the Themes tab only.** Reasoned
+    through live with Pryme rather than re-derived: park/unpark (the mechanism used for Book Detail
+    parking a panel's frost) does NOT apply here, because Book Detail's underlay is fully occluded
+    (nothing changes, safe to freeze) while Settings/Themes's underlay is genuinely live (ticking time
+    labels, the progressing chapter slider, and during a hover, the theme colors themselves) — parking
+    would freeze a visibly moving scene, which is worse than the original staleness, not a fix for it.
+    The shipped fix is narrower than either "make the frost track the preview live" (would mean
+    reopening `hover_active_gate`) or "freeze a good-enough frame" (still wrong for a live underlay):
+    **suppress the frost entirely while the Themes tab is active**, since `transport_bar_blur`
+    (the strip) and `visual_area_blur` (the cover art) are already two independent calls at every
+    panel-open site — skipping one while keeping the other required no changes to either blur
+    mechanism itself. Wired via `PanelManager._sync_transport_bar_blur_for_settings_tab()`
+    (`panels.py`), called from three sites: `QTabWidget.currentChanged` (real tab switches),
+    `_start_settings_entry`'s slide-finished handler (panel OPEN — needed separately because
+    reopening Settings already on Themes fires no `currentChanged`), and `apply_blur_live` (the live
+    Settings > Blur toggle). Live-confirmed working by Pryme, including the reopen-on-Themes and
+    toggle-while-on-Themes edge cases. **Does not touch `hover_active_gate`,
+    `_POST_RESTYLE_COOLDOWN_S`, park/unpark, or the theme-preview/commit lifecycle at all** — the
+    parts of this file with the worst regression track record are untouched by this fix.
+  - **Three issues remain open, restated in Pryme's own framing (2026-08-16, Session 5) — all live in
+    the separate manual-paint mechanism (`_HoverPaintFilter`/`_paint_button_hover`/
+    `_restore_button_from_snapshot`), untouched by the Issue 1 fix above:**
+    1. **Hover state inconsistent** — "sometimes blurred, sometimes crisp." Matches this entry's
+       original Issue 2 (dirty-tracker grabs racing/overwriting manual paint) — Fix A regressed
+       `:pressed` and was reverted; Fix B was never isolated/re-verified clean.
+    2. **Tooltip not shown under an open panel.** Matches the `chapter_preview_label` tracking gap
+       flagged in Session 2 above (not present in `_all_tracked_widgets()` at all) — still unresolved
+       and still the recommended starting point per that entry's own note.
+    3. **Pressed state not properly showing.** The confirmed Fix-A regression: manual paint has no
+       `:pressed` handling at all; the dirty tracker was the only mechanism ever capturing it, and
+       excluding buttons from that tracker (Fix A) broke it. A real fix needs its own
+       `_paint_button_pressed` + Press/Release interception, not yet designed.
+    Take one at a time, per Pryme's standing instruction — start wherever seems most tractable next
+    session; no priority order given among the three.
+  - **Issue 1 (hover flicker) and Issue 3 (pressed state) — both worked on Session 6 (2026-08-17),
+    both landed real fixes for sub-problems but Issue 3's core mechanism was found fundamentally
+    broken and is UNCOMMITTED, left as a starting point for next session.**
+    - **Hover flicker (Issue 1) — FIXED, not yet committed.** Root cause: `refresh_dirty`'s per-tick
+      composite (an unrelated dirty widget, or the hovered button's own QSS repaint) was overwriting
+      crisp manual hover paint with a blurred grab result. Fixed by tracking which buttons are
+      currently hovered (`_hovered_buttons`, populated/discarded in `_HoverPaintFilter.eventFilter`'s
+      Enter/Leave branches) and re-applying `_paint_button_hover` in `refresh_dirty` for any hovered
+      button whose overlay rect intersects the just-composited region. Live-confirmed working.
+    - **Content redraw for `next_button`/`speed_button` — FIXED, not yet committed.** The manual fill
+      is an opaque `accent_light`/`accent_dark` rect with nothing drawn on top, which hid the button's
+      real content (the `▶` chapter-skip glyph, the speed value) entirely — noticeably wrong per
+      Pryme, since the real QSS hover keeps content visible over its fill. Scoped to `next_button`/
+      `speed_button` only — the two buttons that straddle the panel's right edge into the live
+      sliver (per `_button_overlay_rect`'s own comment), so they're the only two whose manual fill is
+      ever actually visible. `next_button` draws a Unicode `▶` glyph (not the SVG icon — simpler, and
+      this is an approximation on a manual fill, not the real icon); `speed_button` draws its numeric
+      value with the trailing "x" dropped (`button.text().rstrip('xX')`). Both blurred at a separate,
+      smaller radius (`_CONTENT_BLUR_RADIUS`, tuned live to 6.0) than the background grab, and
+      right-aligned within the clipped overlay rect (`target.moveRight(rect.right())`) rather than
+      centered — centering left the glyph/text reading as left-aligned within the visible frosted
+      strip, confirmed live. `next_button`'s glyph additionally needed a -1px vertical nudge
+      (`y_offset`, tuned live) against the font metrics' own centering; `speed_button`'s digits needed
+      none.
+    - **Pressed state (`:pressed`, `accent_dark`) — FIXED in shape, but the underlying signal it
+      depends on was found UNRELIABLE. Root problem NOT solved; a concrete next direction was agreed
+      but not implemented.** Full mechanism: `_HoverPaintFilter` gained `MouseButtonPress`/
+      `MouseButtonRelease` branches (`_set_pressed(obj, True/False)` — a single mutation point for
+      `_pressed_buttons` that also paints/restores and arms/disarms a poll timer), mirroring
+      Enter/Leave's shape. `_paint_button_hover`/`_paint_button_pressed` were unified into a shared
+      `_paint_button_fill(button, theme_key)` so the accent_dark pressed fill gets the same
+      content-redraw treatment as hover. `refresh_dirty`'s re-apply loop was extended to also
+      re-apply pressed paint (pressed wins over hover for a button that's in both sets, matching real
+      QSS specificity — a pressed button is always also "hovered" since Enter fires before Press).
+      **This much works and was live-confirmed for a simple press/release.**
+      The harder problem — Qt does not fire Enter/Leave during an active mouse grab (a QPushButton
+      grabs the mouse for the duration of a press), so a drag-off/drag-back-in while held only
+      generates `MouseMove` — went through three failed iterations before the session ended:
+      1. **React to `MouseMove`, reading `isDown()` on each one.** Correct in principle (`isDown()`
+         flips exactly in sync with Qt's own rect hit-test, confirmed by direct probe both
+         directions) but Qt's actual `MouseMove` delivery during a SLOW drag can gap by 1.5+ seconds
+         with zero events (confirmed live via a `[PRESS-BORDER-TRACE]` probe — a real slow-drag repro
+         showed a 1.6s gap while the cursor was leaving a pressed button's rect), so this visibly
+         lagged the real widget — Pryme's report: "hit or miss... left side catches up" only once the
+         cursor moved far enough to generate another event.
+      2. **Replace MouseMove-reactive with a 50ms polling timer reading `isDown()` directly**
+         (`_pressed_poll_timer`/`_pressed_poll_tick`), independent of event delivery entirely. This
+         regressed WORSE per Pryme's live report ("much worse... left side not changing at all")
+         before being understood: `isDown()` itself is not perfectly reliable as a live-polled
+         signal. Confirmed via a `[POLL-TICK-TRACE]` probe: a single poll tick read `isDown()==False`
+         504ms into an otherwise-continuous, cursor-never-moved 4.7s hold — the false reading landed
+         22-30ms after a `[GRAB-ENTRY]` for that same button's rect, strongly correlating the glitch
+         with `_grab_and_blur`'s panel hide/show cycle (the SAME underlying hazard as the documented
+         tassel hand-cursor flicker — hiding/showing a widget mid-interaction perturbs Qt's live
+         pointer/press-tracking state — just corrupting `isDown()` instead of the resolved cursor
+         shape). One false reading discarded the button from `_pressed_buttons` and stopped the poll
+         timer, stranding the frost on the hover fill for the rest of the hold with nothing left
+         polling to correct it.
+      3. **Add a wall-clock release debounce** (`_pressed_false_since`, `_RELEASE_DEBOUNCE_S = 0.15`
+         — require `isDown()==False` to persist 150ms before treating it as a real release, chosen as
+         wall-clock rather than a tick count because grabs fire every ~5-15ms, frequently enough that
+         a fixed N-tick debounce could still get unlucky within a multi-second hold). **This did NOT
+         fix it** — re-tested live and found the false reading is not always a transient blip: in a
+         fresh 5-second-hold repro, `isDown()` read `False` starting ~720ms in and STAYED `False`
+         continuously for the rest of the hold (not a blip — a sustained wrong value for the
+         remainder of the interaction). A debounce of any duration cannot distinguish a sustained
+         wrong reading from a genuine release, since from the poller's perspective they're identical.
+      **Session ended here — Pryme's explicit call: don't touch the grab cycle to fix this (out of
+      scope), and the poller/debounce direction is dead as a sole signal.** Agreed next direction,
+      NOT implemented: **poll `QCursor.pos()` against the button's rect instead of trusting
+      `isDown()`** — a geometric containment check doesn't depend on Qt's internal press-state
+      bookkeeping at all, so it should be immune to whatever the grab hide/show is perturbing.
+      Pryme's own framing for the state machine this needs: *"Hover > Mouse pressed (painting
+      pressed already here) > Outside the button coords, paint regular. Back inside button coords,
+      paint pressed. Simple hover with no mouse, highlight."* This is the explicit session-opener for
+      next time.
+      **Diagnostic tooling left in place, all gated behind `FABULOR_GRAB_TRACE=1` (inert by
+      default), useful for the next attempt:** `[ALL-EVENTS-TRACE]` (unconditional, every event type
+      reaching `_HoverPaintFilter`, including `spontaneous()` — the tool that finally confirmed real
+      Press/Release delivery once the earlier "Press never fires" scare turned out to be a
+      timestamp-reporting mismatch, not a real bug); `[POLL-TICK-TRACE]`; `[SET-PRESSED-TRACE]`;
+      `[PAINT-FILL-TRACE]`/`[PAINT-RESTORE-TRACE]` (log the computed rect and whether it came back
+      empty — ruled out an empty-rect theory directly). A temporary live clock was also added to
+      `title_bar.py` (`_debug_clock_timer`, `HH:MM:SS.mmm`, 50ms update) for correlating
+      screen-recorded frames/screenshots against log timestamps — extracting video frames with
+      `ffmpeg` and reading the burned-in clock proved far more reliable than manually timed
+      screenshots for this class of investigation.
+      **Nothing from this session's pressed-state work is committed.** `transport_bar_blur.py` and
+      `title_bar.py` both carry a large uncommitted diff — the hover-flicker fix and the
+      next/speed content-redraw are working and could be committed separately if picked apart from
+      the pressed-state code, but were left together, uncommitted, since the session ended
+      mid-investigation. Full trace: NOTES.md, 2026-08-17 Session 6.
+
+  - **ALL THREE ISSUES NOW RESOLVED, 2026-08-18 (Session 1).** Full mechanism/trace: NOTES.md,
+    2026-08-18 entry.
+    1. **Hover flicker** — already fixed Session 6, committed `7cc8ab6`.
+    2. **Tooltip not shown under an open panel** — this was always `chapter_preview_label`, the
+       widget the Session 2/5 entries above flagged as missing from `_all_tracked_widgets()`
+       entirely. Added to tracking; a new `_paint_preview_label` redraws its real box+text (QSS
+       background/border/font, not a manual fill like the buttons) clipped to the panel-covered
+       portion. Two real bugs found along the way (fade-together opacity; a stale-panel-open-snapshot
+       lingering-border bug, only partially fixed — see the still-open TODO entry below) and one
+       real perf bug (see #3). Committed `596e07a` (wip) then `0d39b38` (fix).
+    3. **Pressed state** — root cause was NOT the signal (`isDown()` vs. `QCursor.pos()`) and NOT a
+       timing lag. The poll iterated `_pressed_buttons` directly, the SAME set `_set_pressed(False)`
+       removes a button from on exit — a one-way door: once a button exited during a held press, the
+       poll loop could never see it again for the rest of that hold, so re-entry was silently never
+       detected. ("Signal swapped to `QCursor.pos()` per the plan above, tested — 'Didn't work. No
+       difference,' because the swap could never have fixed this bug.") Fixed by splitting session
+       tracking (`_mouse_down_buttons`, opened/closed only by real Press/Release) from paint-state
+       tracking (`_pressed_buttons`, freely toggled by the poll in either direction) — the poll now
+       iterates the session set, which it never mutates, so re-entry is caught on every tick. The
+       release debounce (`_RELEASE_DEBOUNCE_S`) was then shrunk, then removed entirely — the
+       geometric signal has no equivalent of `isDown()`'s "brief false positive" hazard, so nothing
+       needed debouncing once the one-way door was fixed. Committed `632fccf` then `33a531a`.
+
+    **New still-open item from this session's work**, added to the top of this file's dated list:
+    the chapter-preview-label frost redraw has a confirmed-live, deprioritized cosmetic residual — a
+    faint border can linger after the preview fully fades, in some cases even after the fresh-grab
+    fix (`0d39b38`). Pryme confirmed it does not cause any further update/hitching cost and is not
+    visible under a real (non-transparent) panel background — explicitly deprioritized as "not that
+    important... a harmless artifact," not reverted or further chased this session.
+
+
+- [2026-08-15] **Per-source rate limits did NOT fix the rectangular artifact, the stale button
+  highlight, or the missing tooltip — Pryme confirmed live, and had predicted this before testing.**
+  Checkpoint C (grab frequency/breakdown by category) passed fully: marquee throttled to ~120-184ms
+  gaps while scrolling and zero grabs when the title fits (`timer_active=False`, stop-when-fits
+  confirmed working); time/slider categories produced zero grabs while paused in every window
+  checked. Checkpoint D (live visual) is where it failed — three results, read together:
+  - **Rectangular artifact: still present, unchanged.** Pryme's own words: *"has nothing to do with
+    the frequency of the grabs."* This retracts the working theory this whole rate-limiting pass was
+    built on (a live patch refreshing too often against a frozen backdrop) — reducing refresh
+    frequency does not touch it, which means the mechanism is a compositing/coverage defect (wrong
+    content, wrong position, or a region not redrawn as part of a coherent whole), not a rate
+    problem. Do not re-attempt a frequency-based fix for this artifact without new evidence pointing
+    at frequency specifically.
+  - **Button highlight: more responsive than before (the immediate category's 0.0s window is doing
+    something) but still "not acceptable," "stays stale."** The word "stale" here is the same word
+    that describes the artifact's frozen backdrop — plausibly the same underlying cause surfacing as
+    two symptoms, not two separate bugs. Not confirmed, just noted as the likelier reading before
+    anyone spends time on it as if it were independent.
+  - **Next-button tooltip: does not appear AT ALL under an open panel** — not delayed, not
+    flickering, absent. This is new information this pass surfaced, not previously isolated. A
+    tooltip is a separate top-level window Qt manages outside the widget tree the blur overlay
+    composites, so this is unlikely to share a mechanism with the grab/composite pipeline at all —
+    worth investigating as its own question (something intercepting the hover before Qt schedules
+    the tooltip, or a z-order/focus interaction with the overlay) rather than folding into the
+    artifact investigation.
+  - **Marquee scroll through frost: "acceptable."** The one thing this pass targeted (unconditional
+    high-frequency repaints from a widget with no state change) was the right diagnosis for the
+    marquee specifically — confirms rate-limiting was correctly scoped there, and wrong for the
+    button/tooltip/artifact cluster.
+  Per this pass's own scope limit ("if still present, log to TODO.md, do not fix here"), no further
+  fix attempted in this session. The per-source rate limiting code itself stays (Checkpoint C's
+  results are real and the marquee behavior is confirmed correct) — it just isn't the fix for the
+  artifact/highlight/tooltip cluster, which needs a different investigation.
+
+  **RESOLVED 2026-08-15 (artifact only) — root cause found, unrelated to rate limiting.** A pixel
+  probe on the live grab confirmed `content_container.grab()` (the transport path's grab source at
+  the time) returns fully opaque, wrongly-colored pixels wherever `content_container` doesn't paint
+  its own content — Qt's default palette color, not transparent. That made every compositing fix
+  attempted (a flat `bg_main` fill, then a two-pass `bg_main`+wash fill) provably unreachable: an
+  opaque `drawPixmap` on top overwrites any fill painted underneath it regardless of color. Fixed by
+  reverting the grab source to `main_window` (which is fully, correctly painted) — see the "Blur grab
+  hide/show side effects" entry above. Confirmed gone by Pryme on the theme that showed it. The
+  **highlight-stale and tooltip-absent halves are NOT resolved** — both persist unchanged with the
+  grab source reverted (Pryme: "tooltip and hover broken just like before"), confirming they were
+  never caused by the grab-source/rate-limiting work at all. Both remain open; see the "Blur grab
+  hide/show side effects" entry above for their status.

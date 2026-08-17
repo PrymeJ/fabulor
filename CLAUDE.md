@@ -1399,10 +1399,10 @@ GEMINI.md guardrail file; both were retired 2026-06-12.) The working model is "f
 
 ## Conventions
 
-- **SESSION.md entries are always prepended** (newest at the top), not appended.
+- **SESSION.md entries are always prepended** (newest at the top), not appended. **Session numbers reset every new day** — the first entry on a given date is always Session 1, even if it continues an issue from a prior day's Session 6.
 - **All git commit messages must start with a verb** (e.g. `feat:`, `fix:`, `docs:`, `refactor:`).
 - **After completing a task, flag if SESSION.md, NOTES.md, CLAUDE.md, or TESTING.md would benefit from an update** — but only when there is something specific and non-obvious worth recording, not as a reflexive offer after every change.
-- **Deferred work goes in `TODO.md`** (added 2026-06-19), not buried in NOTES.md prose or an external scratchpad. Short dated entries: what, why deferred, what it's blocked on. NOTES.md stays for root-cause writeups of things already done; TODO.md is for things not yet started.
+- **Deferred work goes in `TODO.md`** (added 2026-06-19), not buried in NOTES.md prose or an external scratchpad. Short dated entries: what, why deferred, what it's blocked on. NOTES.md stays for root-cause writeups of things already done; TODO.md is for things not yet started. **Closed/fixed/superseded entries move to `TODO_ARCHIVE.md`, not deleted and not left in TODO.md** — TODO.md is open work only; a closed entry left in place defeats the point of a todo list.
 - **Standalone analysis documents go in `review/`, named `Type_YYMMDD_topic.md`** — see `review/README.md` for the six types and the full rationale, and **`review/INDEX.md`** for a one-line summary of every existing document's actual finding (update it in the same commit that adds a new file — a stale index is worse than none, since it reads as complete). NEVER write one to the repo root, and NEVER give one the same name as a root document. Four rules, each of which exists because it was broken:
   - **The date is mandatory.** Without it a document reads as current forever.
   - **Never collide with a root filename.** `review/DEBT_INVENTORY.md` was read as a second, competing debt index by a reviewer on 2026-08-02 *despite* a `> **STALE**` banner in its first three lines — the filename is what gets seen first, so a header cannot fix a name collision. Now `review/Snapshot_260612_debt_inventory.md`.
