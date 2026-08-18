@@ -1,3 +1,73 @@
+## 2026-08-18 (Session 2) — Streak grid catch-up regression: newest cell rendered lit before its reveal animation, root-caused and fixed. `19d1c4d`
+
+**Symptom, reported live with screenshots:** after the previous session's day-boundary rollover-timer
+fix (`f50d1f6`, dated 2026-08-10 further down this file — since merged to `main` as part of
+`sleep-fix`), the streak count-up itself (39 → pause → 40) played correctly, but the grid cell for the new day was
+already lit the instant the panel opened, before the pause/tick even started — it should have stayed
+dimmed through the pause and popped in exactly when the counter ticked, same as a live tab-click into
+Timeline already does correctly.
+
+**Diagnosis, via temporary logging rather than continued static-read guessing.** Three rounds of
+static code reading (checked every call site of `refresh_current_tab`/`refresh_all`/`_refresh_time`
+for a premature `config.set_last_shown_streak` write) found nothing wrong and could not explain the
+symptom — a live report ("I find the streak already updated, without pausing") initially read as a
+number/timing bug, which sent the investigation down the wrong path entirely. Rather than keep
+constructing theories, added `[STREAK-ROLLOVER]`/`[STREAK-REFRESH]`/`[STREAK-REFRESH-CURRENT-TAB]`/
+`[STREAK-PANEL-OPEN]` `logger.warning` lines at the real decision points (`_on_streak_rollover`,
+`_refresh_time`'s streak_mode dispatch, `refresh_current_tab`, `_start_stats_entry`) and asked the
+user to reproduce once more under their own already-running `entr` dev loop, rather than launching a
+second competing instance (a real near-miss avoided mid-session — starting a second `python main.py`
+against the same DB/config while the user's own `entr`-managed process was already running would have
+risked confusing, hard-to-attribute side effects; caught before it happened, and the already-spawned
+duplicate was killed rather than left running).
+
+The resulting log, matched line-for-line against three screenshots (no session yet: dimmed 39,
+today's cell unlit; after a session: catch-up call fires with `prev_shown=39 current=40`, but the
+cell in the screenshot was ALREADY lit; then the count-up plays 39→40 correctly), showed the actual
+mechanism cleanly:
+```
+10:00:00,010  [STREAK-ROLLOVER] fired isVisible=False last_shown_streak=39
+15:05:11,062  [STREAK-REFRESH] mode=catch_up prev_shown=39 current=39   (before listening)
+15:06:59,537  [STREAK-REFRESH] mode=catch_up prev_shown=39 current=40   (after listening)
+15:07:14,260  [STREAK-REFRESH] mode=full     prev_shown=40 current=40   (tab re-click, already settled)
+```
+This proved the count-up number logic (`prev_shown`/`current`, the rollover's visibility guard) was
+entirely correct — the bug was never in what I'd been checking. It was in the grid CELL's own paint
+suppression, a separate mechanism from the counter.
+
+**Root cause.** `StreakGrid.catch_up_streak_count` (the panel-reopen path, called whenever Timeline is
+already the active tab so `QTabWidget.currentChanged` never fires — see the pre-existing "DO NOT let
+the Stats panel's Timeline slide-reopen skip the streak catch-up tick" CLAUDE.md rule this method
+implements) hardcoded `self._pending_reveal_days = 0`, with a comment claiming the grid must never be
+touched on this path. That was true only as an accident of the pre-fix staleness bug:
+`streak_grid_cache` could never contain a cell newer than what the last app-startup rebuild had
+computed, so a catch-up's newest cell was structurally guaranteed still unlit (`listened=0`) at the
+moment `set_data()` painted it — the suppression this method claimed to need simply couldn't matter,
+because the thing it would have suppressed never happened. The rollover-timer fix (previous session)
+made the cache genuinely current across a day boundary, which is exactly the condition under which
+this gap becomes visible: `_refresh_time` calls `set_data()` (which paints directly from
+`self._cache`, no suppression of its own) BEFORE calling `catch_up_streak_count`, so an already-`1`
+cell renders lit on that first paint, and the hardcoded `_pending_reveal_days = 0` gave
+`StreakGrid.paintEvent`'s `still_pending = day_index < (self._pending_reveal_days -
+self._revealed_days)` nothing to suppress with.
+
+**Fix.** Mirror `animate_streak_count`'s existing grid tie-in (which already gets this right for the
+live tab-click path): `catch_up_streak_count` now computes `grew = previous is not None and current >
+previous` and sets `_pending_reveal_days = (current - previous) if grew else 0`, calling
+`self.update()` immediately after — same shape, same ordering, as the "full" path. `_run_streak_leg2`
+(already shared by both paths) then reveals one cell per counter tick exactly as it already does for
+a live tab click. The `current <= previous` / no-real-increment case (a same-day reopen with nothing
+new to show) is unchanged — still a plain snap with zero grid touch, so the original
+"slide-reopen must never animate the grid for no reason" intent survives; only the specific case of a
+genuine overnight/multi-day gap now suppresses-then-reveals instead of front-loading the lit cell.
+
+**Verification.** Full test suite green. Diagnostic logging deliberately left in place in
+`stats_panel.py`/`panels.py` (`[STREAK-*]` lines) rather than stripped immediately — the user wants
+one more full live pass across a real day-boundary crossing tomorrow before removing it, so the trace
+stays available if anything else in this area needs re-diagnosing. Remove once confirmed clean.
+
+---
+
 ## 2026-08-18 (Session 1) — Pressed-state FIXED (the real bug was a one-way door, not a timing lag). `chapter_preview_label` frost redraw shipped: three bugs found and fixed (fade-together opacity, stale-snapshot lingering border, and a rate-limit fix for a marquee-starving refresh loop). Title bar debug-clock crash fixed. Two commits.
 
 Seventh session (continuing directly from Session 6's compaction boundary — see that entry for the

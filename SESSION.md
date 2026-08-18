@@ -1,3 +1,25 @@
+## Session Summary — 2026-08-18 Session 2 — Streak grid catch-up cells no longer skip their reveal animation after a day-boundary rollover. `19d1c4d` on `main`
+
+Follow-up to the previous session's rollover-timer fix (`f50d1f6`/`5d58b41`, merged to `main`), which
+itself fixed a real bug (`streak_grid_cache` freezing across a day boundary in a long-running
+session) but introduced a narrower regression: once the grid stayed fresh across the boundary,
+today's catch-up cell started rendering lit BEFORE the pause-then-tick animation played, instead of
+popping in with the count. Root cause, confirmed via live screenshots plus temporary `[STREAK-*]`
+diagnostic logging correlated against the actual call sequence: `catch_up_streak_count` hardcoded
+`_pending_reveal_days = 0` on the assumption — true only by accident of the old staleness bug — that
+a catch-up's newest cell could never already be `listened=1` in the DB when `set_data()` painted it.
+Fixed by arming `_pending_reveal_days`/`_revealed_days` the same way `animate_streak_count` already
+does, only when there's a genuine increment to catch up on, so the shared `_run_streak_leg2` reveal
+mechanism suppresses and then pops in the new cell(s) in sync with the counter tick — matching what a
+live tab-click into Timeline already does correctly.
+
+Diagnostic `[STREAK-ROLLOVER]`/`[STREAK-REFRESH]`/`[STREAK-REFRESH-CURRENT-TAB]`/`[STREAK-PANEL-OPEN]`
+logging added mid-investigation is deliberately left in `stats_panel.py`/`panels.py` for now, at the
+user's request, pending final live confirmation across a real day boundary tomorrow — remove once
+confirmed. Full trace-by-trace writeup in NOTES.md.
+
+---
+
 ## Session Summary — 2026-08-18 Session 1 — Pressed-state FIXED (root cause was a one-way door in the poll loop, not a signal or timing problem); chapter_preview_label frost redraw shipped, closing the long-open "tooltip stuck/absent" thread; title bar debug-clock crash fixed. `fix/book-detail-blur-park`
 
 Full detail in NOTES.md (top entry, same title). This is the pointer.
