@@ -1,10 +1,13 @@
 # THEME_ANIM_TODO: SessionListWidget, FinishedBookThumb, FinishedScrollRow, StatsPanel
+import logging
 import math
 import os
 import random
 import re
 from datetime import date
 from datetime import datetime
+
+logger = logging.getLogger(__name__)
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTabWidget, QLabel,
     QGridLayout, QSpinBox, QScrollArea, QPushButton, QApplication,
@@ -2124,14 +2127,29 @@ class StreakGrid(QWidget):
         Timeline tab in a prior session/switch (so QTabWidget.currentChanged
         never fires — _on_tab_changed is the only place that normally calls
         animate_streak_count, and the slide-reopen path deliberately never
-        triggers grid/label animation). If the persisted previous value
+        triggers grid LABEL animation). If the persisted previous value
         differs from the freshly-loaded current, that increment would
         otherwise go uncalled-out: set_data already snapped the display
         straight to current with no comparison. This shows previous
         immediately (no count-up, no grid touch), then after the same pause
         used elsewhere, ticks up to current with the leg-2 snap. A no-op
         (straight snap to current) if previous is None/unchanged/decreased —
-        there's nothing to tick over to."""
+        there's nothing to tick over to.
+
+        Grid CELL reveal mirrors animate_streak_count's tie-in (see the
+        comment there) when growing — set_data() is called by the caller
+        (_refresh_time) BEFORE this method runs, and it paints new cells from
+        self._cache immediately with no suppression of its own; without
+        arming _pending_reveal_days here, any cell that already flipped to
+        listened=1 in the DB (e.g. today's cell right after the day-boundary
+        rollover rebuilt streak_grid_cache — see the rollover-timer rule in
+        CLAUDE.md) renders lit up front, before the pause/tick even starts,
+        instead of popping in with the count. This was unreachable before the
+        rollover timer existed: streak_grid_cache could never contain a cell
+        newer than what the last app-startup rebuild had computed, so a
+        catch-up's newest cell was structurally always still unlit at this
+        point. The rollover timer fixed the staleness and exposed this gap.
+        Found live 2026-08-18 — see NOTES.md."""
         current = self._displayed_streak_target()
         self._streak_count_anim.stop()
         self._disconnect_streak_leg1_slot()
@@ -2141,14 +2159,14 @@ class StreakGrid(QWidget):
         if self._streak_leg2_step_timer is not None:
             self._streak_leg2_step_timer.stop()
             self._streak_leg2_step_timer = None
-        # Never touch the grid on this path — slide-reopen must never animate
-        # grid cells, only the catch-up tick (see _run_streak_leg2's
-        # pending_days=0 short-circuit).
-        self._pending_reveal_days = 0
+
+        grew = previous is not None and current > previous
+        self._pending_reveal_days = (current - previous) if grew else 0
         self._revealed_days = 0
+        self.update()
 
         self._last_animated_streak = current
-        if previous is None or current <= previous:
+        if not grew:
             self.set_streak_count(current)
             return
 
@@ -4426,6 +4444,8 @@ class StatsPanel(QWidget):
         idempotently without a prior clear."""
         from datetime import timedelta
         hour = self.config.get_day_start_hour()
+        logger.warning("[STREAK-ROLLOVER] fired isVisible=%s last_shown_streak=%s",
+                        self.isVisible(), self.config.get_last_shown_streak())
         self.db.build_streak_grid_cache(hour)
         today_adjusted = datetime.now() - timedelta(hours=hour)
         self.config.set_streak_grid_cache_date(today_adjusted.strftime('%Y-%m-%d'))
@@ -4465,11 +4485,15 @@ class StatsPanel(QWidget):
                 # actually plays, so persisting now (not after the animation finishes)
                 # correctly marks "shown" for next time regardless of session length.
                 prev_shown = self.config.get_last_shown_streak()
+                current_val = int(streak.get('current', 0))
+                logger.warning(
+                    "[STREAK-REFRESH] mode=%s prev_shown=%s current=%s isVisible=%s",
+                    streak_mode, prev_shown, current_val, self.isVisible())
                 if streak_mode == "full":
                     self._streak_grid.animate_streak_count(previous=prev_shown)
                 else:
                     self._streak_grid.catch_up_streak_count(prev_shown)
-                self.config.set_last_shown_streak(int(streak.get('current', 0)))
+                self.config.set_last_shown_streak(current_val)
         else:
             rows = self.db.get_hourly_heatmap(n_days=14)
             self._heatmap.set_data(rows, datetime.now().date())
@@ -4490,6 +4514,7 @@ class StatsPanel(QWidget):
     def refresh_current_tab(self):
         self._invalidate_period_cache()
         name = self.tabs.tabText(self.tabs.currentIndex())
+        logger.warning("[STREAK-REFRESH-CURRENT-TAB] name=%s isVisible=%s", name, self.isVisible())
         if name == "Overall":
             self.refresh_overall()
         elif name == "Day":
