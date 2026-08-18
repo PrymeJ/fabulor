@@ -1943,6 +1943,17 @@ class PanelManager:
         this guard. The guard is a plain no-op on re-entry, not a queue: the one
         in-flight close is already going to finish and hide the panel; a second
         request while it's pending adds nothing."""
+        # Hide the traveling focus marker (ui/focus_marker.py) immediately — before the
+        # snapback-settle wait and slide-out below, not after (see _on_settings_hidden,
+        # which used to own this and left the marker visibly patrolling the tab border
+        # throughout the whole close animation). Mirrors a tab switch's own
+        # _update_focus_marker() clear: the marker disappears the instant the widget it
+        # was tracking is going away, not once the transition finishes. Idempotent, so
+        # safe to call again on the re-entrancy early-return path below. Safe no-op if
+        # the marker doesn't exist.
+        marker = getattr(self.main_window, 'focus_marker', None)
+        if marker is not None:
+            marker.clear()
         if getattr(self, '_settings_close_pending', False):
             logger.warning("[CLOSE-SETTINGS-TRACE] _close_settings_flow: EARLY-RETURN, "
                             "already pending (re-entrancy guard)")
@@ -2035,14 +2046,6 @@ class PanelManager:
             pass
         self.settings_panel.hide()
         self._release_panel_focus(self.settings_panel)
-        # Hide the traveling focus marker (ui/focus_marker.py) — a panel slide-out doesn't
-        # reliably emit a FocusOut, so the marker's own focus-driven clear can't be relied on.
-        # Cleared here (panel genuinely closed), not at the top of _close_settings_flow, so it
-        # doesn't race the snapback-settle wait/slide-out above. Safe no-op if the marker
-        # doesn't exist.
-        marker = getattr(self.main_window, 'focus_marker', None)
-        if marker is not None:
-            marker.clear()
         self._notify_panel_closed()
 
     def _on_sidebar_hidden(self):
