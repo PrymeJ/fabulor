@@ -6,12 +6,14 @@ from PySide6.QtWidgets import QApplication
 from PySide6.QtGui import QFontDatabase, QFont
 from fabulor.logger_setup import setup_logging
 from fabulor.app import MainWindow
+from fabulor.ui.no_focus_rect_style import NoFocusRectStyle
 
 _FONTS_DIR = os.path.join(os.path.dirname(__file__), "src", "fabulor", "assets", "fonts")
 
 if __name__ == "__main__":
     setup_logging()
     app = QApplication(sys.argv)
+    app.setStyle(NoFocusRectStyle(app.style()))
     app.setDesktopFileName("fabulor")
     font_id = QFontDatabase.addApplicationFont(
         os.path.join(_FONTS_DIR, "OpenSans-CondensedRegular.ttf")
