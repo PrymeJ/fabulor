@@ -70,6 +70,14 @@ _BUTTON_CORNER_RADIUS = 4.0   # px — QPushButton (and #pattern_button, which d
 _TAB_CORNER_RADIUS = 2.0      # px — QTabBar::tab's top-left/top-right radius
 _CORNER_ARC_SEGMENTS = 6      # polyline segments per rounded corner; higher = smoother arc
 
+# Live-observed 1px horizontal misalignment specific to the QTabBar path — confirmed live
+# 2026-08-19 to affect ONLY the tab bar, not #pattern_button rectangles (which render correctly at
+# x=rect.left() with no offset), so this is scoped to the tab-bar rect only, not a general fix.
+# Root cause not isolated (every synthetic reproduction attempt rendered pixel-correct against a
+# reference line; the discrepancy only shows on the real live widget), but the fix itself is
+# simple and was specified directly rather than guessed further: shift the traced rect 1px right.
+_TAB_RECT_X_NUDGE = 1
+
 # Which paint style to use. "dot": a single filled circle (original). "gradient": a trailing
 # stretch of the border behind the current position, fading out toward the tail (a "comet").
 # "rotate": the ENTIRE border is always outlined; a color sweep travels continuously around it —
@@ -144,6 +152,15 @@ class _Perimeter:
         # it simply ends at the last vertex and t wraps back to the start (a visible jump across
         # the un-traced bottom edge — acceptable, and cheaper than easing it).
         self._pts = points
+        # Whether this is a real closed loop (last point == first) vs. an open path whose t-wrap
+        # is a bookkeeping convenience, not a real segment. `_paint_rotating_border` (the only
+        # style that draws every sample connected to its neighbor, INCLUDING the wraparound pair)
+        # must know this: drawing a line from point_at(1.0) [== point_at(0.0) after wrap] back to
+        # the start is correct for a closed loop (it just re-traces the already-real closing
+        # segment) but WRONG for an open path — it fabricates a diagonal line straight across the
+        # untraced gap (found live 2026-08-19: this drew a visible slanted line across the tab's
+        # bottom and a stray mark outside its left edge, on QTabBar's open top+sides-only path).
+        self.closed = len(points) >= 2 and _dist(points[0], points[-1]) < 0.01
         self._seg_len: list[float] = []
         total = 0.0
         for i in range(len(points) - 1):
@@ -209,11 +226,18 @@ def _rect_perimeter(rect: QRect, inset: float = 0.0, radius: float = 0.0) -> _Pe
     the border line, straddling it. A positive inset would tuck the path fully inside the border.
     `radius` (default 0, sharp corners) rounds all four corners to match the widget's own QSS
     border-radius — the corner is traced as a real arc (see _corner_arc), not cut straight across,
-    so the marker follows the button's actual rendered shape."""
+    so the marker follows the button's actual rendered shape.
+
+    Uses `left() + width()` / `top() + height()` for the far edges, NOT `rect.right()` /
+    `rect.bottom()` — Qt's QRect.right()/.bottom() are the last INCLUSIVE pixel
+    (`left() + width() - 1`), not the true edge coordinate, a documented trap in this codebase
+    (see CLAUDE.md's Qt QRect rule). Using them here left the perimeter's right/bottom edges 1px
+    short of the widget's actual rendered border (found live 2026-08-19, forcing the marker color
+    to solid white to make the 1px gap unambiguous against the real tab border)."""
     l = rect.left() + inset
     t = rect.top() + inset
-    r = rect.right() - inset
-    b = rect.bottom() - inset
+    r = rect.left() + rect.width() - inset
+    b = rect.top() + rect.height() - inset
     rad = max(0.0, min(radius, (r - l) / 2.0, (b - t) / 2.0))
     if rad <= 0:
         tl, tr = QPointF(l, t), QPointF(r, t)
@@ -239,11 +263,15 @@ def _tab_perimeter(rect: QRect, inset: float = 0.0, radius: float = 0.0) -> _Per
     the left side, across the top, down the right side to bottom-right. t wraps from bottom-right
     back to bottom-left (jumping the un-traced bottom). `radius` rounds only the top-left/top-right
     corners (matching QSS's border-top-*-radius on QTabBar::tab — the bottom corners are square,
-    same as the tab widget itself)."""
+    same as the tab widget itself).
+
+    Uses `left() + width()` / `top() + height()` for the far edges, NOT `rect.right()` /
+    `rect.bottom()` — see _rect_perimeter's docstring for why (the Qt QRect inclusive-edge trap,
+    CLAUDE.md)."""
     l = rect.left() + inset
     t = rect.top() + inset
-    r = rect.right() - inset
-    b = rect.bottom() - inset
+    r = rect.left() + rect.width() - inset
+    b = rect.top() + rect.height() - inset
     rad = max(0.0, min(radius, (r - l) / 2.0, (b - t) / 2.0))
     if rad <= 0:
         bl, tl = QPointF(l, b), QPointF(l, t)
@@ -469,6 +497,7 @@ class TravelingFocusMarker(QWidget):
                     return
                 top_left = w.mapTo(self.main_window, tr.topLeft())
                 rect = QRect(top_left, tr.size())
+                rect.translate(_TAB_RECT_X_NUDGE, 0)  # see _TAB_RECT_X_NUDGE's own comment
                 # inset=0: the path follows the raw border line so the marker sits centered ON it
                 # (straddling it half-in/half-out), not tucked inside the perimeter. radius matches
                 # QTabBar::tab's own border-top-*-radius QSS (top corners only).
@@ -556,9 +585,22 @@ class TravelingFocusMarker(QWidget):
         (each its own color/alpha) rather than one stroke, since QPen/QLinearGradient can't express
         a fade *along* an arbitrary curved path. The leading sample (closest to self._t) is the
         brightest/most opaque; the tail sample is dimmest, mirroring the "comet" look a plain dot
-        doesn't have."""
+        doesn't have.
+
+        `self._t - i * step_t` going negative is CLAMPED to 0.0 on an open perimeter, not wrapped.
+        `point_at` wraps any t into [0,1) unconditionally — correct for a closed loop (continuing
+        backward past the start just continues around the loop, which is real geometry there), but
+        on an open path (the tab's top+sides-only path) a negative t wraps to NEAR 1.0, i.e. the
+        FAR end of the path, not a smooth continuation off the near end. Near self._t≈0 (i.e. near
+        the tab's bottom-left start), this drew a stray line jumping most of the way across to the
+        other side — the same class of bug as _paint_rotating_border's phantom wraparound segment,
+        just triggered by a different sampling shape (backward-from-head vs. full-perimeter)."""
         step_t = (_TRAIL_LENGTH_PX / _TRAIL_SAMPLES) / self._perimeter.length
-        pts = [self._perimeter.point_at(self._t - i * step_t) for i in range(_TRAIL_SAMPLES + 1)]
+        if self._perimeter.closed:
+            pts = [self._perimeter.point_at(self._t - i * step_t) for i in range(_TRAIL_SAMPLES + 1)]
+        else:
+            pts = [self._perimeter.point_at(max(0.0, self._t - i * step_t))
+                   for i in range(_TRAIL_SAMPLES + 1)]
         pen = QPen()
         pen.setWidthF(_TRAIL_WIDTH)
         pen.setCapStyle(Qt.PenCapStyle.RoundCap)
@@ -594,13 +636,29 @@ class TravelingFocusMarker(QWidget):
         too, rather than the whole border just cutting off mid-sweep."""
         length = self._perimeter.length
         phase_px = self._t * length * (_ROTATE_SPEED_PX_PER_SEC / _PATROL_SPEED_PX_PER_SEC)
-        pts = [self._perimeter.point_at(i / _ROTATE_SAMPLES) for i in range(_ROTATE_SAMPLES + 1)]
+        # `point_at` wraps t into [0,1), so t=1.0 silently aliases to t=0.0 (the start) — fine for
+        # a closed loop (that IS the true endpoint) but wrong for an open path, where the true
+        # endpoint only exists at t=1.0 exactly and is otherwise unreachable by index sampling.
+        # Evenly spacing _ROTATE_SAMPLES+1 index-based samples across [0,1) — the old code —
+        # therefore left the open path's last real sample short of the true end (found live
+        # 2026-08-19: the tab's right side visibly stopped ~1.4px above its true bottom-right
+        # corner while the left side correctly reached its bottom-left corner via index 0, making
+        # the two sides look uneven/"slanted" even after the separate phantom-wraparound-segment
+        # bug, below, was fixed). Building the sample list explicitly per case fixes both: closed
+        # loops keep sampling [0,1) (t=1.0 would just re-visit the start redundantly); open paths
+        # sample all _ROTATE_SAMPLES+1 points evenly across the CLOSED interval [0,1] instead, so
+        # the final sample is the true endpoint, not an aliased wraparound.
+        if self._perimeter.closed:
+            pts = [self._perimeter.point_at(i / _ROTATE_SAMPLES) for i in range(_ROTATE_SAMPLES + 1)]
+        else:
+            pts = [self._perimeter.point_at(i / _ROTATE_SAMPLES) for i in range(_ROTATE_SAMPLES)]
+            pts.append(self._perimeter.point_at(0.999999999))  # true endpoint, avoids t==1.0's wrap
         pen = QPen()
         pen.setWidthF(_ROTATE_WIDTH)
         pen.setCapStyle(Qt.PenCapStyle.FlatCap)  # RoundCap bulges at the joints between these many
                                                    # short adjoining segments, reading thicker than
                                                    # the actual _ROTATE_WIDTH.
-        for i in range(_ROTATE_SAMPLES):
+        for i in range(len(pts) - 1):
             arc_px = (i / _ROTATE_SAMPLES) * length
             # Continuous sweep position through the palette, in [0, 1), wrapping — NOT a
             # symmetric -1..1 wave. A sine wave would bounce back and forth between only two
