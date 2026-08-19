@@ -95,7 +95,7 @@ stats_carousel_stripe:   (Optional) Background color for the Recently Finished s
 GROUP 10 — MISC UI
 focus_marker:         (Optional) Color of the traveling-border-marker keyboard-focus dot (ui/focus_marker.py, "dot" style only). Fallback: text.
 focus_marker_alpha:   (Optional) Opacity (0.0 to 1.0, NOT 0-255) ceiling for the focus marker dot. Fallback: 1.0.
-focus_marker_palette: (Optional) List of 2+ hex colors the traveling-border-marker's "rotate" style (ui/focus_marker.py) sweeps/blends between, instead of the fixed steel-silver default. Fallback: [accent_light, accent_dark] — deliberately NOT accent itself, since #pattern_button[selected="true"] fills its background with accent, and a marker that also rotates through accent would nearly vanish against a selected button at that point in its cycle.
+focus_marker_palette: (Optional) List of 2+ hex colors the traveling-border-marker's "rotate" style. Fallback: [accent_light, accent_dark]
 cover_preview_bg:     Background color for book cover previews in the library. Fallback: bg_deep → #000000.
 
 GROUP 11 — PLACEHOLDER COVERS
@@ -182,6 +182,7 @@ THEMES = {
         "bookmark_icon":                 "#1C709D",
         "tassel_head":                   "#B01F78",
         "tassel_fringe":                 "#3593C6",
+        "focus_marker_palette":          ["#FD0000", "#6D0707"],
         "placeholder_cover":             "#6D1212",
         "carousel_bg":                   "#2E184B",
         "carousel_stripe":               "#C31111",
@@ -217,6 +218,7 @@ THEMES = {
         "session_history_row_two":       "#161616",
         "streak_grid_outline":           "#FFC518",
         "tassel_fringe":                 "#FFBF00",
+        "focus_marker_palette":          ["#FF0000", "#420909"],
         "placeholder_cover":             "#FFBF00",
         "carousel_bg":                   "#241203",
         "carousel_stripe":               "#B07E09",
