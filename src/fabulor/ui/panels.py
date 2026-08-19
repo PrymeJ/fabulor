@@ -1494,7 +1494,6 @@ class PanelManager:
         self.stats_panel.setFixedWidth(panel_w)
         self.stats_panel.move(-panel_w, sidebar_y)
         self.stats_panel.show()
-        logger.warning("[STREAK-PANEL-OPEN] _start_stats_entry: about to call refresh_current_tab")
         self.stats_panel.refresh_current_tab()
         self.stats_panel.raise_()
         self._claim_panel_focus(self.stats_panel)

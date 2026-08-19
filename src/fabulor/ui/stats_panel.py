@@ -1,13 +1,10 @@
 # THEME_ANIM_TODO: SessionListWidget, FinishedBookThumb, FinishedScrollRow, StatsPanel
-import logging
 import math
 import os
 import random
 import re
 from datetime import date
 from datetime import datetime
-
-logger = logging.getLogger(__name__)
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTabWidget, QLabel,
     QGridLayout, QSpinBox, QScrollArea, QPushButton, QApplication,
@@ -4444,8 +4441,6 @@ class StatsPanel(QWidget):
         idempotently without a prior clear."""
         from datetime import timedelta
         hour = self.config.get_day_start_hour()
-        logger.warning("[STREAK-ROLLOVER] fired isVisible=%s last_shown_streak=%s",
-                        self.isVisible(), self.config.get_last_shown_streak())
         self.db.build_streak_grid_cache(hour)
         today_adjusted = datetime.now() - timedelta(hours=hour)
         self.config.set_streak_grid_cache_date(today_adjusted.strftime('%Y-%m-%d'))
@@ -4486,9 +4481,6 @@ class StatsPanel(QWidget):
                 # correctly marks "shown" for next time regardless of session length.
                 prev_shown = self.config.get_last_shown_streak()
                 current_val = int(streak.get('current', 0))
-                logger.warning(
-                    "[STREAK-REFRESH] mode=%s prev_shown=%s current=%s isVisible=%s",
-                    streak_mode, prev_shown, current_val, self.isVisible())
                 if streak_mode == "full":
                     self._streak_grid.animate_streak_count(previous=prev_shown)
                 else:
@@ -4514,7 +4506,6 @@ class StatsPanel(QWidget):
     def refresh_current_tab(self):
         self._invalidate_period_cache()
         name = self.tabs.tabText(self.tabs.currentIndex())
-        logger.warning("[STREAK-REFRESH-CURRENT-TAB] name=%s isVisible=%s", name, self.isVisible())
         if name == "Overall":
             self.refresh_overall()
         elif name == "Day":
