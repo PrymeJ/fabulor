@@ -3657,7 +3657,6 @@ def get_panel_base_stylesheet(theme_name="default"):
             border: 1px solid {t['accent_dark']};
             font-size: 11px;
             padding: 4px;
-            outline: none;
         }}
         QPushButton#pattern_button[selected="true"] {{
             background: {t['accent']};
@@ -3768,7 +3767,6 @@ def get_settings_stylesheet(theme_name="default"):
             border-top-right-radius: 2px;
             margin-right: 0px;
             margin-left: 2px;
-            outline: none;
         }}
         QTabBar::tab:selected {{
             background: {t['accent']};
