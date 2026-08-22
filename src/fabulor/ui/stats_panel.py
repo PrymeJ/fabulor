@@ -1645,7 +1645,7 @@ class HourlyHeatmap(QWidget):
         # Total-minutes footer — rotated -90°, below the grid, fades in/out on column hover
         if self._footer_date and self._footer_alpha > 0 and self._col_totals.get(self._footer_date, 0) > 0:
             col_i = self._dates.index(self._footer_date)
-            total_min = int(self._col_totals[self._footer_date] / 60)
+            total_min = round(self._col_totals[self._footer_date] / 60)
             label = f"{total_min}m"
             cx = self.HOUR_LABEL_W + col_i * (self.CELL + self.GAP) + self.CELL // 2
             footer_font = QFont()
@@ -1694,7 +1694,7 @@ class HourlyHeatmap(QWidget):
                 friendly_date = f"{d.strftime('%b')} {d.day}"
             except ValueError:
                 friendly_date = hit[0]
-            total_min = round(c['seconds'] / 60)
+            total_min = max(1, round(c['seconds'] / 60)) if c['seconds'] > 0 else 0
             header = f"{friendly_date} {hit[1]:02d}:00 · {total_min} min"
             
             limit = 9

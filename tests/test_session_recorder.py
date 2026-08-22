@@ -152,3 +152,44 @@ def test_recover_checkpoint_uses_file_mtime_not_now(qapp, tmp_path):
     )
     # session_end must never precede session_start even under clock skew.
     assert recovered_end >= db.sessions[0]["session_start"]
+
+
+def test_recover_checkpoint_unlinks_synchronously_before_write_completes(qapp, tmp_path):
+    """The checkpoint file must be gone the instant _recover_checkpoint's
+    synchronous portion returns, NOT only after the daemon write thread's
+    finally block runs. Otherwise a second process launched in quick
+    succession (e.g. an entr-style kill/relaunch dev loop, which never runs
+    closeEvent/clear_checkpoint) can see the same still-present checkpoint
+    and recover it AGAIN as a duplicate session before the first recovery's
+    write thread has had a chance to unlink it. Found live 2026-08-22/23:
+    dozens of duplicate listening_sessions rows from exactly this race —
+    see NOTES.md. This test does NOT wait for the write thread at all —
+    the file must already be gone by the time __init__ returns."""
+    db_path = tmp_path / "library.db"
+    checkpoint_path = tmp_path / "session_checkpoint.json"
+
+    data = {
+        "book_id": 1,
+        "book_path": "/books/long-one",
+        "book_title": "Long One",
+        "book_author": "Author",
+        "book_duration": 36000.0,
+        "session_start": datetime(2026, 8, 22, 19, 0, 0).isoformat(),
+        "position_start": 100.0,
+        "furthest_position": 200.0,
+        "listened_seconds": 200.0,
+    }
+    checkpoint_path.write_text(json.dumps(data), encoding="utf-8")
+
+    db = _FakeDB(tmp_path)
+    SessionRecorder(
+        db=db,
+        get_position_fn=lambda: 1000.0,
+        get_book_fn=lambda: _FakeBook(),
+    )
+
+    assert not checkpoint_path.exists(), (
+        "checkpoint must be unlinked synchronously during __init__, before "
+        "the write thread's DB call — a second immediate relaunch must never "
+        "be able to see (and re-recover) this same checkpoint file"
+    )

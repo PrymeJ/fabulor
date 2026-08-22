@@ -267,6 +267,23 @@ class SessionRecorder(QObject):
 
             day_start_hour = self._get_day_start_hour()
 
+            # Unlink BEFORE spawning the write thread, not in its finally. The
+            # write is dispatched to a daemon thread so a slow DB call can't
+            # delay startup, but that means a second restart arriving before
+            # the thread finishes (an entr-style kill/relaunch loop, which
+            # ungracefully kills the process on every save and never runs
+            # closeEvent/clear_checkpoint — the same class of gap CLAUDE.md's
+            # close()/clear_checkpoint ordering rule documents) would still see
+            # this exact checkpoint on disk and recover it AGAIN as a
+            # duplicate, repeatedly, until the write thread happened to win the
+            # race. Deleting the file synchronously here — this call already
+            # has everything it needs (data/session_start/session_end/listened
+            # captured above) — makes a second recovery of the SAME checkpoint
+            # structurally impossible regardless of write-thread timing. Found
+            # live 2026-08-22: dozens of duplicate rows since 2026-06-19 from
+            # exactly this race under the entr dev loop — see NOTES.md.
+            self._checkpoint_path.unlink(missing_ok=True)
+
             def _write():
                 try:
                     self._db.write_session(
@@ -291,8 +308,6 @@ class SessionRecorder(QObject):
                         self._db.set_started_at(data["book_id"], session_start)
                 except Exception:
                     pass
-                finally:
-                    self._checkpoint_path.unlink(missing_ok=True)
 
             threading.Thread(target=_write, daemon=True).start()
         except Exception:
