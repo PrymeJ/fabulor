@@ -241,13 +241,25 @@ class SessionRecorder(QObject):
         if not self._checkpoint_path.exists():
             return
         try:
+            # The checkpoint file is rewritten every 30s (_write_checkpoint)
+            # for as long as the session stays open, so its own mtime is the
+            # best available estimate of when the session actually stopped
+            # (crash/kill) — NOT datetime.now() at recovery time, which can be
+            # hours or days later if the app wasn't relaunched immediately and
+            # would otherwise stamp session_end at the wrong adjusted-date
+            # (corrupting the streak grid) and smear listened_seconds across
+            # every clock-hour in between (corrupting the hourly heatmap).
+            # Read before any parse/unlink touches the file. Floored at
+            # session_start so clock skew can never produce session_end <
+            # session_start.
+            checkpoint_mtime = datetime.fromtimestamp(self._checkpoint_path.stat().st_mtime)
             data = json.loads(self._checkpoint_path.read_text(encoding="utf-8"))
             listened = float(data.get("listened_seconds", 0))
             if listened < 60:
                 self._checkpoint_path.unlink(missing_ok=True)
                 return
             session_start = datetime.fromisoformat(data["session_start"])
-            session_end = datetime.now()
+            session_end = max(checkpoint_mtime, session_start)
             position_start = float(data.get("position_start") or 0)
             furthest = data.get("furthest_position")
             if furthest is not None:

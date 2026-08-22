@@ -8,8 +8,19 @@ silently discarded every active session on book/path removal — data loss for l
 sessions. close() reads the book through get_book_fn at call time, so the caller
 must keep the book valid until after close() returns.
 
+Also pins ``_recover_checkpoint``'s ``session_end`` contract: a stranded checkpoint
+(app crashed/killed before ``close()`` cleared it) must recover using the
+checkpoint file's own mtime as ``session_end``, never ``datetime.now()`` at
+recovery time — see CLAUDE.md / NOTES.md 2026-08-22 for the corruption this
+caused (a session that actually stopped near midnight was recovered on a later
+relaunch and stamped with that relaunch's wall-clock time as session_end,
+wrongly attributing the day to the streak grid and smearing listened_seconds
+across every clock-hour in between in the hourly heatmap).
+
 These tests need a QApplication because SessionRecorder builds QTimers.
 """
+import json
+import os
 from datetime import datetime, timedelta
 
 import pytest
@@ -93,3 +104,51 @@ def test_close_discards_when_book_is_none(qapp, tmp_path):
         t.join(timeout=2.0)
 
     assert db.sessions == [], "book None at close() time must discard (ordering-bug shape)"
+
+
+def test_recover_checkpoint_uses_file_mtime_not_now(qapp, tmp_path):
+    """A stranded checkpoint must recover with session_end derived from the
+    checkpoint file's mtime (last real write, ~30s cadence while the session
+    was open), not datetime.now() at recovery time — which could be hours or
+    days later and would corrupt the streak grid / hourly heatmap."""
+    db_path = tmp_path / "library.db"
+    checkpoint_path = tmp_path / "session_checkpoint.json"
+
+    session_start = datetime(2026, 8, 21, 22, 59, 52, 213310)
+    stale_mtime = datetime(2026, 8, 21, 23, 6, 30)  # ~last real checkpoint write
+    data = {
+        "book_id": 1,
+        "book_path": "/books/long-one",
+        "book_title": "Long One",
+        "book_author": "Author",
+        "book_duration": 36000.0,
+        "session_start": session_start.isoformat(),
+        "position_start": 100.0,
+        "furthest_position": 200.0,
+        "listened_seconds": 132.29,
+    }
+    checkpoint_path.write_text(json.dumps(data), encoding="utf-8")
+    stale_ts = stale_mtime.timestamp()
+    os.utime(checkpoint_path, (stale_ts, stale_ts))
+
+    db = _FakeDB(tmp_path)
+    rec = SessionRecorder(
+        db=db,
+        get_position_fn=lambda: 1000.0,
+        get_book_fn=lambda: _FakeBook(),
+    )
+    # _recover_checkpoint's write happens on a daemon thread; give it a moment.
+    import time
+    for _ in range(50):
+        if db.sessions:
+            break
+        time.sleep(0.05)
+
+    assert len(db.sessions) == 1
+    recovered_end = db.sessions[0]["session_end"]
+    assert recovered_end == stale_mtime, (
+        f"session_end must equal the checkpoint file's mtime ({stale_mtime}), "
+        f"not recovery-time now() — got {recovered_end}"
+    )
+    # session_end must never precede session_start even under clock skew.
+    assert recovered_end >= db.sessions[0]["session_start"]
