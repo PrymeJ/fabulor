@@ -1,3 +1,137 @@
+## 2026-08-22 — Checkpoint-recovery duplicate-write race: found, fixed, 67 historical rows cleaned up. Two independent heatmap rounding bugs fixed alongside it. `f3816cf`, `43a9fca`
+
+**First symptom, reported live with screenshots (streak/heatmap follow-up from the prior `main`
+session's rollover-timer fix):** the streak grid showed a listened cell for the current adjusted-day
+before any session had actually finished; the Day tab's most recent session was from the day before;
+and a `[pause_session]` terminal line was visibly still open. Separately, the hourly heatmap showed
+1-minute blips in every hour from 00:00 to 09:00 on a day the user was asleep, with the visible total
+at the bottom reading only 2m.
+
+**Root cause, confirmed by direct DB inspection, not guessed.** Two rows shared the identical
+`session_start` (`22:59:52` the previous evening) but different `session_end`s — one at `23:06:43`
+the same night (a normal close), the other at `10:41:45` the NEXT morning. That second timestamp
+matched a `Fabulor started` log line to the exact second. `SessionRecorder._recover_checkpoint`
+(session_recorder.py) stamped a recovered session's `session_end` as `datetime.now()` AT RECOVERY
+TIME — i.e. whenever the app next happened to launch — not when the session actually stopped. A
+stranded `session_checkpoint.json` (left behind because the process died before `closeEvent` could
+run `clear_checkpoint()`) got replayed at the next startup with a `session_end` hours removed from
+reality. Two consequences: (1) `get_streaks()`'s start-OR-end union rule (documented, correct in
+general — see the CLAUDE.md `get_streaks()`/`StreakGrid` shared-fact section) wrongly credited the
+NEXT day as listened, since the bogus `session_end` legitimately fell on that day per the rule's own
+logic — the rule wasn't wrong, its input was; (2) `get_hourly_heatmap`'s proportional wall-time split
+(db.py) divides a session's `listened_seconds` across every clock-hour between `session_start` and
+`session_end` in proportion to wall time in each — with `session_end` artificially ~12 hours later
+than reality, ~60 real seconds got smeared into a sliver per sleeping hour instead of landing where
+they actually happened.
+
+**Fix, part 1** (`f3816cf`): `_recover_checkpoint` now reads the checkpoint file's own mtime BEFORE
+touching it (it's rewritten every 30s for as long as a session stays open, so the mtime is the
+tightest honest estimate of when the session actually stopped) and uses `max(checkpoint_mtime,
+session_start)` as `session_end` — the floor guards against clock skew ever producing an end before
+the start. A new regression test plants a stranded checkpoint with a controlled mtime and asserts the
+recovered `session_end` matches it, not `datetime.now()`; verified to fail against the old code
+(showed the actual test-run wall-clock time instead) before confirming it passes with the fix.
+
+**A near-miss avoided mid-investigation, worth recording as its own lesson:** while chasing the log
+correlation, launching a second `python main.py` to test was briefly considered and actually started
+— before catching that the user's own `entr -r python main.py` dev loop was ALREADY running against
+the same DB/config. A second competing instance was killed immediately rather than left running. Two
+processes writing to the same SQLite file and QSettings store concurrently would have risked
+confusing, hard-to-attribute corruption layered on top of the bug already being chased. General
+rule reinforced: check `ps aux` for an already-running instance before launching one to test against,
+especially when the user has explicitly mentioned a dev loop.
+
+**Second symptom, found by the user testing the FIRST fix, not by continued static reading:**
+`session_end = max(checkpoint_mtime, session_start)` fixed the smearing's MAGNITUDE, but a `Day` tab
+check on 2026-08-19 still showed the wrong picture — a real ~60-72s session appearing to smear across
+three separate hour cells (14:00/15:00/16:00), each independently floored to "1m" by
+`max(1, round(...))`, when only ONE hour was ever really touched. The DB showed exactly two rows for
+that day, sharing a `session_start`, with the SAME shape as the first bug: one legitimate close, one
+recovery duplicate whose `session_end` (now correctly using mtime, per the part-1 fix) still landed
+~2h12m later than the legitimate row's — because THIS duplicate's underlying checkpoint file genuinely
+sat on disk, unwritten-to, for that entire span before the recovering restart happened, which is a
+real (if dev-loop-inflated) gap, not a bug in the part-1 fix itself. This is what widened the
+investigation from "one wrong timestamp" to "why does this checkpoint duplicate at all."
+
+**Root cause, part 2 — the actual duplicate-WRITE mechanism**, confirmed by reading
+`_recover_checkpoint`'s full body rather than just its `session_end` line: the checkpoint file's
+unlink lived in the DAEMON WRITE THREAD's `finally` block, AFTER the DB insert completed — not
+synchronously in `_recover_checkpoint` itself. `SessionRecorder.__init__` calls `_recover_checkpoint`
+synchronously at construction, but the actual file deletion only happens once that background thread
+finishes. Any SECOND process launch arriving before that thread completes sees the exact same
+checkpoint file still present and recovers it again — a straightforward TOCTOU race between the
+`_recover_checkpoint` call of one process and the write-thread completion of the file it's reading. On
+this app's `entr -r python main.py` dev loop (kills the running process on every source-file save,
+then relaunches — confirmed via `Fabulor started` log-line bursts as tight as 20-90 seconds apart)
+this race fires constantly, because `entr`'s kill bypasses Qt's `closeEvent` entirely, so
+`clear_checkpoint()` (the ONE place that reliably clears the file on a graceful quit — see the
+existing CLAUDE.md rule on `close()`/`clear_checkpoint()` ordering) never runs.
+
+**A user-caught false start, recorded because the correction itself is the useful part.** The very
+first read of a 64-minute single heatmap cell (Aug 16, 00:00) was diagnosed as a SPLITTING bug — "of
+course 64 minutes should split as 60+4 across two hours." The user checked the underlying session
+list themselves before accepting that framing, and found the real shape: the 00:29 session's own
+`session_start` had THREE rows (a chain of `1118`→`1119`→`1120`, each with a longer `session_end` and
+larger `listened_seconds` than the last — the SAME growing-duplicate-checkpoint pattern, not a
+splitting/rounding problem at all). There was nothing to split because there was nothing correctly
+sized to begin with — the "64 minutes" was already the wrong total before it ever reached the
+hour-splitting code. This is a direct instance of the CLAUDE.md rule "never substitute a plausible
+explanation for a checked one" — the splitting theory was plausible, matched the visible number, and
+was wrong; going one level down to the raw session rows is what caught it, and the user did that check
+themselves before it got asserted as fact.
+
+**Fix, part 2** (`43a9fca`): unlink the checkpoint file synchronously in `_recover_checkpoint`,
+immediately after reading it and BEFORE the write thread is spawned — not in the thread's `finally`.
+This makes a second recovery of the exact same checkpoint file structurally impossible regardless of
+write-thread timing; the only residual risk (losing a write if the process dies between the unlink and
+the DB call landing) is strictly better than the prior duplicate-on-recovery failure mode, and mirrors
+the same accepted tradeoff already documented for `close()`/`clear_checkpoint()`. A second new
+regression test plants a checkpoint and asserts the file is already gone the instant
+`SessionRecorder.__init__` returns, without waiting for the write thread at all; verified to fail
+against the reverted (old-shape) code before confirming it passes with the fix.
+
+**Scope assessment, discussed directly with the user rather than assumed:** this is NOT purely a
+dev-loop artifact. `entr`'s aggressive restart cadence is what inflated the historical damage to 67
+rows, but the underlying race is real and reachable by any ungraceful process death followed by a
+close relaunch — a real user who crashes and immediately reopens the app was equally exposed before
+this fix, just far less frequently than under `entr`. The normal quit-via-X-button path was already
+correct before any of this (via `closeEvent`→`clear_checkpoint()`), untouched by both fixes.
+
+**Data cleanup.** Wrote `/tmp/.../scratchpad/find_checkpoint_duplicates.py`: groups
+`listening_sessions` rows by `session_start`, and within each group keeps the row with the MAX
+`listened_seconds` (the most complete account of that one real session — verified this is correct
+regardless of which direction the discrepancy runs, by spot-checking both a monotonically-growing
+cascade, 2026-08-08's `990`-`997` Whistler cluster growing from 177.5s to a plateau at 636.2s across
+8 rows, and a case where the row with the EARLIER `session_end` had the HIGHER `listened_seconds` —
+2026-08-03's `913`/`914` — because a `close()`'s precise segment-accumulated total legitimately
+exceeded a slightly-stale final checkpoint tick's snapshot). Backed up the full `listening_sessions`
+table to CSV before running the delete. Found and removed 67 duplicate rows across 59
+`session_start` groups spanning 2026-06-19 through 2026-08-20 — every single one correlating with
+this exact signature. Verified post-delete: zero remaining `session_start` groups with count > 1;
+Aug 19's Day tab and Aug 16's 00:00 heatmap cell both independently re-checked live by the user and
+confirmed correct (64m → 33m, matching a hand-computed re-derivation of the hour-split math against
+the surviving rows before the user's own live check landed on the same number).
+
+**Two independent, smaller display bugs found and fixed along the way** (`43a9fca`, same commit as
+the synchronous-unlink fix): the heatmap tooltip header's total (`round(seconds/60)`, no floor) could
+show "0 min" while the single book row directly beneath it in the same tooltip showed "1m" — that row
+already floors via `max(1, round(...))` in `db.py`'s per-book minutes computation; the header now
+matches. And the day-gutter footer used `int()` (truncation) instead of `round()` — 299s of real
+listening displayed "4m" instead of the correctly-rounded "5m"; fixed to `round()`, with no floor
+needed since the app's existing 60s minimum session-length guarantee means the smallest possible
+nonzero day-total is already exactly 60s = 1 minute, never sub-minute.
+
+**Confirmed NOT a bug, before any code was touched:** a single hour's tooltip showing "5m" against a
+"4m" day-gutter total for the same day is mathematically correct, not a discrepancy to fix — the
+gutter is `round()` of the TRUE unrounded total across the whole day, while one hour's cell can
+independently round up on its own slice. The user reasoned through this correctly unprompted (using a
+concrete counterexample: four 1.5-minute sessions correctly summing to 6 minutes at the gutter would
+inflate to 4×2=8 if the gutter were built by summing already-rounded-and-floored per-cell values
+instead) before any fix was proposed, and that reasoning is what's now recorded as the standing
+behavior rather than "fixed" away.
+
+---
+
 ## 2026-08-18 (Session 2) — Streak grid catch-up regression: newest cell rendered lit before its reveal animation, root-caused and fixed. `19d1c4d`
 
 **Symptom, reported live with screenshots:** after the previous session's day-boundary rollover-timer
