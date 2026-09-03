@@ -673,6 +673,12 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # FocusIn/FocusOut branch via _update_focus_marker().
         from .ui.focus_marker import TravelingFocusMarker
         self.focus_marker = TravelingFocusMarker(self)
+        # Input-modality flag: True while the last real focus change came from keyboard
+        # navigation (Tab/Backtab), False after a mouse click moved focus. Read as the marker's
+        # show-gate in _update_focus_marker, written there too from the threaded-through
+        # QFocusEvent.reason(). The marker is a keyboard affordance — a mouse click must hide it
+        # rather than re-anchor it to whatever was clicked.
+        self._keyboard_nav_active: bool = False
         # Switching settings tabs keeps focus ON the tab bar (no FocusIn/FocusOut fires), so
         # re-evaluate marker scope on tab change: leaving Look clears it, and landing on Look
         # while the tab bar is focused re-anchors the marker to Look's tab rect.
@@ -3883,13 +3889,30 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             return True
         return focus in self.panel_manager.panel_tab_widgets("settings")
 
-    def _update_focus_marker(self) -> None:
+    def _update_focus_marker(self, reason: Qt.FocusReason | None = None) -> None:
         """Point the traveling focus marker at the currently-focused control iff it's in scope
-        (see _focus_marker_in_scope), else clear it. Cheap: runs only on FocusIn/FocusOut. On a
-        Tab move within scope this fires with the NEW focus already set, so the marker resumes
-        patrol on the new widget at its carried-over relative position (show_for keeps self._t)."""
+        (see _focus_marker_in_scope) AND the last input was keyboard navigation, else clear it.
+        Cheap: runs only on FocusIn/FocusOut. On a Tab move within scope this fires with the NEW
+        focus already set, so the marker resumes patrol on the new widget at its carried-over
+        relative position (show_for keeps self._t).
+
+        `reason` is the originating QFocusEvent's own reason(), threaded through from the
+        app-wide eventFilter's FocusIn/FocusOut branch — the one call site that actually has a
+        real focus event to read it from. It drives `_keyboard_nav_active` (the modality flag):
+        the marker is a KEYBOARD-navigation affordance, so a mouse click that moves focus must
+        hide it, not re-anchor it. The tabs.currentChanged call site passes nothing (None) on
+        purpose: a tab switch is a REPOSITION trigger, not a modality change, so it must leave
+        the flag exactly as the last real focus event set it."""
+        if reason is Qt.FocusReason.TabFocusReason:
+            self._keyboard_nav_active = True
+        elif reason is Qt.FocusReason.MouseFocusReason:
+            self._keyboard_nav_active = False
+        # reason is None or OtherFocusReason → preserve flag unchanged
         marker = getattr(self, 'focus_marker', None)
         if marker is None:
+            return
+        if not self._keyboard_nav_active:
+            marker.clear()
             return
         focus = QApplication.focusWidget()
         if self._focus_marker_in_scope(focus):
@@ -4028,7 +4051,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # panel open uniformly. Runs AFTER _handle_tab_escape so a Tab's setFocus has already
         # landed and QApplication.focusWidget() reflects the NEW target.
         if event.type() in (QEvent.Type.FocusIn, QEvent.Type.FocusOut):
-            self._update_focus_marker()
+            self._update_focus_marker(reason=event.reason())
 
         if hasattr(self, 'eof_revert_btn') and obj is self.eof_revert_btn:
             if event.type() == QEvent.Enter:

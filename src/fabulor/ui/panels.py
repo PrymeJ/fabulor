@@ -343,9 +343,28 @@ class PanelManager:
         """Suppress the transport-bar frost on the Themes tab specifically —
         see the connection site's own comment (PanelManager.__init__) for why.
         Only reachable while Settings is the visible panel (mw.tabs lives
-        inside settings_panel; nothing else drives its currentChanged)."""
+        inside settings_panel; nothing else drives its currentChanged).
+
+        Also reverts a live theme hover preview when the tab changes. This covers the
+        KEYBOARD path specifically: _ThemesTabBarInterceptor handles a mouse click on the
+        tab bar (it filters MouseButtonPress only, and must stay mouse-scoped), but arrow-key
+        tab switching never produces a press for it to see — QTabBar changes currentIndex
+        natively and currentChanged fires here instead. Without this, arrow-keying off the
+        Themes tab mid-preview leaves the previewed (uncommitted) colors painted.
+
+        `_is_hover_active` is the precise flag: True exactly when a hover preview is what was
+        last actually painted. It is written only by _mark_theme_applied, never speculatively,
+        so it is safe to read synchronously here. Deliberately NOT
+        _theme_genuinely_settled_on_committed() (broader than needed — it also covers a genuine
+        selection's own in-flight fade, which should be allowed to finish, not reverted), and
+        deliberately NOT _on_themes_tab_left() (a leaveEvent handler on the theme swatch box,
+        calibrated to filter blur-grab synthetic mouse-leaves; it has no keyboard relationship
+        and would misfire here)."""
         if not self.settings_panel.isVisible():
             return
+        tm = getattr(self.main_window, 'theme_manager', None)
+        if tm is not None and getattr(tm, '_is_hover_active', False):
+            tm._on_theme_unhovered()
         self._sync_transport_bar_blur_for_settings_tab()
 
     def _sync_transport_bar_blur_for_settings_tab(self):
