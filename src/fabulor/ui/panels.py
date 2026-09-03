@@ -85,17 +85,24 @@ _SNAPBACK_SETTLE_GAP_MS = 150
 
 class _ThemesTabBarInterceptor(QObject):
     """Event filter installed on Settings' tab bar (`mw.tabs.tabBar()`) — intercepts a
-    click on a DIFFERENT tab while the theme has not genuinely settled onto the
+    switch to a DIFFERENT tab while the theme has not genuinely settled onto the
     committed value, and defers the actual switch until it has
-    (2026-08-05, tab-switch snapback interception).
+    (2026-08-05, tab-switch snapback interception; extended to the keyboard path 2026-09-03).
+
+    Covers BOTH input paths, because both switch the tab before `currentChanged` can
+    veto anything:
+      * mouse — the switch happens inside `QTabBar.mousePressEvent`, on PRESS (not release)
+      * keyboard — Left/Right, handled natively by `QTabBar.keyPressEvent`
 
     WHY an event filter and not `currentChanged`: `QTabWidget.currentChanged` fires
     AFTER the tab has already switched — there is no Qt "veto this change" signal.
-    The switch itself happens inside `QTabBar.mousePressEvent`, on PRESS (not
-    release), so this filter must intercept `QEvent.Type.MouseButtonPress` and
-    return `True` to consume it before that handler ever runs — anything later
-    (release, `currentChanged`) is too late and would show the new tab's
-    stale-colored content for at least one frame before a correction could catch up.
+    So this filter must intercept the originating `MouseButtonPress`/`KeyPress` and
+    return `True` to consume it before Qt's own handler runs — anything later
+    (release, `currentChanged`) is too late. Reverting from `currentChanged` was tried
+    for the keyboard path (2026-09-03) and, while functionally correct, played the
+    ~200ms snapback fade over the tab the user had just landed on rather than the one
+    they were leaving; deferring the switch instead is what makes the revert read as
+    "finish, then move."
 
     WHY `_theme_genuinely_settled_on_committed()`, not `_is_hover_active` alone
     (CORRECTED 2026-08-05, live-reported by Pryme: "Doesn't work for the Change now
@@ -144,7 +151,7 @@ class _ThemesTabBarInterceptor(QObject):
         self._pm = panel_manager
 
     def eventFilter(self, obj, event):
-        if event.type() != QEvent.Type.MouseButtonPress:
+        if event.type() not in (QEvent.Type.MouseButtonPress, QEvent.Type.KeyPress):
             return False
         mw = self._pm.main_window
         tabs = getattr(mw, 'tabs', None)
@@ -154,9 +161,9 @@ class _ThemesTabBarInterceptor(QObject):
         tab_bar = tabs.tabBar()
         if obj is not tab_bar:
             return False
-        clicked_index = tab_bar.tabAt(event.position().toPoint())
-        if clicked_index < 0 or clicked_index == tabs.currentIndex():
-            return False  # not a tab, or re-clicking the already-active tab
+        target_index = self._target_index_for(event, tabs, tab_bar)
+        if target_index is None or target_index == tabs.currentIndex():
+            return False  # not a tab-switching event, or already on that tab
         # THE COMMON CASE — theme already genuinely settled on the committed value
         # (covers both "nothing was ever previewed/changed" and "a previous
         # preview/selection already fully settled"). Let the event pass through
@@ -166,13 +173,38 @@ class _ThemesTabBarInterceptor(QObject):
             return False
         # Either a hover preview is genuinely the last-painted state, OR a genuine
         # selection's own fade (e.g. "Change now") is still visually in flight.
-        # Consume the click (Qt never sees it, so the tab does not switch yet),
+        # Consume the event (Qt never sees it, so the tab does not switch yet),
         # revert any hover via the exact mechanism the dismiss fix already
         # verified (a no-op for the selection case — see class docstring), then
         # switch once settled.
         tm._on_theme_unhovered()
-        tm.call_when_theme_settled(lambda idx=clicked_index: tabs.setCurrentIndex(idx))
+        tm.call_when_theme_settled(lambda idx=target_index: tabs.setCurrentIndex(idx))
         return True
+
+    @staticmethod
+    def _target_index_for(event, tabs, tab_bar):
+        """Which tab index this event is about to switch to, or None if it isn't a tab switch.
+
+        Mouse: the tab under the cursor (None when the press missed every tab).
+
+        Keyboard: QTabBar switches on Left/Right ONLY, and does NOT wrap — measured directly
+        against a real QTabBar (2026-09-03): Up/Down leave currentIndex untouched and come back
+        `accepted=False`, Left at index 0 stays at 0, Right at the last index stays there. So the
+        target is a plain +/-1 step, and returning an out-of-range step as None makes the
+        boundary cases fall through untouched rather than being consumed for a switch that
+        would never have happened."""
+        if event.type() == QEvent.Type.MouseButtonPress:
+            idx = tab_bar.tabAt(event.position().toPoint())
+            return idx if idx >= 0 else None
+        key = event.key()
+        if key == Qt.Key.Key_Left:
+            step = -1
+        elif key == Qt.Key.Key_Right:
+            step = 1
+        else:
+            return None
+        idx = tabs.currentIndex() + step
+        return idx if 0 <= idx < tabs.count() else None
 
 
 class PanelManager:
@@ -345,26 +377,17 @@ class PanelManager:
         Only reachable while Settings is the visible panel (mw.tabs lives
         inside settings_panel; nothing else drives its currentChanged).
 
-        Also reverts a live theme hover preview when the tab changes. This covers the
-        KEYBOARD path specifically: _ThemesTabBarInterceptor handles a mouse click on the
-        tab bar (it filters MouseButtonPress only, and must stay mouse-scoped), but arrow-key
-        tab switching never produces a press for it to see — QTabBar changes currentIndex
-        natively and currentChanged fires here instead. Without this, arrow-keying off the
-        Themes tab mid-preview leaves the previewed (uncommitted) colors painted.
-
-        `_is_hover_active` is the precise flag: True exactly when a hover preview is what was
-        last actually painted. It is written only by _mark_theme_applied, never speculatively,
-        so it is safe to read synchronously here. Deliberately NOT
-        _theme_genuinely_settled_on_committed() (broader than needed — it also covers a genuine
-        selection's own in-flight fade, which should be allowed to finish, not reverted), and
-        deliberately NOT _on_themes_tab_left() (a leaveEvent handler on the theme swatch box,
-        calibrated to filter blur-grab synthetic mouse-leaves; it has no keyboard relationship
-        and would misfire here)."""
+        Deliberately does NOT revert a live theme hover preview. An earlier version of this
+        method did, to cover arrow-key tab switching (which _ThemesTabBarInterceptor could not
+        see while it filtered MouseButtonPress only). That worked but looked wrong: currentChanged
+        fires AFTER Qt has already switched, so the ~200ms snapback fade played over the tab the
+        user had just arrived on, instead of finishing on the tab they were leaving.
+        _ThemesTabBarInterceptor now handles the keyboard path too, deferring the switch until
+        the revert has settled — so reverting here as well would both double-fire and reintroduce
+        the exact after-the-switch timing this was moved away from (its own deferred
+        setCurrentIndex re-enters this handler)."""
         if not self.settings_panel.isVisible():
             return
-        tm = getattr(self.main_window, 'theme_manager', None)
-        if tm is not None and getattr(tm, '_is_hover_active', False):
-            tm._on_theme_unhovered()
         self._sync_transport_bar_blur_for_settings_tab()
 
     def _sync_transport_bar_blur_for_settings_tab(self):
