@@ -1,3 +1,75 @@
+## Session Summary — 2026-09-03/04 Session 1 — Traveling focus marker unparked: rebased onto `main`, geometry fixed, made keyboard-only, row-aware arrow nav on Look, and mouse-hover suppression while the keyboard drives. `4b76695`→`f383f8c` on `feature/traveling-focus-marker`
+
+Resumed the traveling-focus-marker branch, parked since 2026-07-10 with 446 commits of `main`
+landed in the meantime. Rebased it cleanly (three conflicts, all mechanical: `_close_settings_flow`
+had grown a snapback-timing state machine, two unrelated new themes collided at the same insertion
+point, and SESSION.md was the usual prepend collision), then spent the session on the feature
+itself. Nothing is merged to `main`; the branch is local-only and not pushed.
+
+**Geometry: four bugs on the open tab-bar path, all found by live screenshot rather than by
+reading.** The marker traced a sharp-cornered box over rounded widgets; `_rect_perimeter`/
+`_tab_perimeter` used `QRect.right()`/`.bottom()` (the last INCLUSIVE pixel, the documented
+CLAUDE.md trap) so the far edges fell 1px short; `_paint_rotating_border` drew a phantom closing
+segment across the deliberately-untraced bottom edge, because `point_at` wraps t into [0,1) and the
+draw loop connected the wrapped pair; and `_paint_gradient_trail` had the same wrap bug from the
+other direction, teleporting the "comet" tail to the far end of the path whenever it sampled
+backward past t=0. A residual 1px left offset resisted every synthetic reproduction — three separate
+harnesses rendered pixel-correct against a reference line — and was fixed by direct instruction
+(`_TAB_RECT_X_NUDGE`) rather than more theorizing; root cause never isolated, and the constant says
+so.
+
+**Color: the "static" marker was a color-space mistake, not a broken mechanism.** Three rounds of
+"no difference" while debug logging showed the phase genuinely advancing and `paintEvent` firing
+~60fps. Cause: HSV hue rotation on this app's near-white theme text colors is a near-total no-op
+(hue barely matters at ~zero saturation), confirmed by temporarily swapping in a full rainbow, which
+made the same underlying motion obviously visible. Replaced with an RGB blend across a real
+`focus_marker_palette` theme key (falling back to `[accent_light, accent_dark]`, deliberately NOT
+`accent` — `#pattern_button[selected="true"]`'s background IS accent). A `palette_frac=0.0` boundary
+bug (falsiness used as "no palette", silently mapping the sweep's start to the base color) was caught
+by testing the boundary numerically, not by reading the code.
+
+**Modality: presses state intent; focus reasons do not.** Making the marker keyboard-only took three
+attempts, each corrected by a live trace rather than by reasoning:
+1. `QFocusEvent.reason()` alone — defeated because Qt reports a mouse click ON A TAB as
+   `TabFocusReason` (measured: press cleared the flag at 23:03:55,452, the focus event re-set it
+   3ms later). Fixed with `_MOUSE_PRESS_FOCUS_WINDOW_S`, letting the unambiguous press win.
+2. Setting the flag only from `TabFocusReason` — missed two paths that move the selection without
+   any qualifying focus event: Left/Right on the tab bar (focus never leaves it) and Left/Right
+   between sibling buttons (native moves carry no `TabFocusReason`). Fixed by asserting keyboard
+   mode from the navigation KEY PRESS, mirroring the mouse-press clear.
+3. Scoping. Asserting app-wide stranded the flag somewhere the hand-back check couldn't clear it;
+   narrowing to the Look tab then broke the tab bar, since arrowing through tabs leaves Look by
+   definition. The correct scope is the SETTINGS PANEL — exactly the control set the hand-back check
+   recognises. That invariant (setter and clearer must span the same controls) is now stated in the
+   code, with both failures recorded so the next narrowing attempt doesn't repeat either.
+
+**Two Qt facts worth carrying forward**, both cost a round each: Qt reports a mouse click on a tab
+as `TabFocusReason`; and polishing an ancestor does NOT re-resolve a descendant's cached style —
+the tab bar and the buttons each needed their own `unpolish`/`polish`, discovered separately.
+
+**Also shipped:** the native focus rectangle is suppressed app-wide via a `QProxyStyle`
+(`ui/no_focus_rect_style.py`) after QSS `outline: none` was confirmed live to do nothing on Fusion —
+the dead QSS was then removed rather than left looking load-bearing. Theme-preview revert on tab
+switch was moved from `currentChanged` (which fires after Qt has already switched, so the snapback
+played over the newly-arrived tab) into `_ThemesTabBarInterceptor`, extended to `KeyPress` so both
+input paths share one revert-then-defer-the-switch mechanism. Row-aware arrow navigation on Look
+(Down enters from the tab bar, Up/Down step whole rows, Left at row 0 col 0 returns to the tab bar),
+with rows derived live from the layout so the Chapter-notches Animation pair is only a stop while
+visible.
+
+**Housekeeping:** `~/.bashrc` still exported `FABULOR_LOG_MAX_BYTES=524288000` (500 MB → 2 GB worst
+case) from a 2026-07-30 probe explicitly commented "Drop with the probe"; ~1 GB had accumulated.
+Lowered to 50 MB and the stale rotated backups deleted. `FABULOR_LOG_LEVEL=DEBUG` left alone.
+
+**Next session:** extend the keyboard navigation and hover-suppression to the other Settings tabs
+and to other panels. The modality flag and its scope predicates (`_settings_is_active` /
+`_look_tab_is_active`) are the pieces that will need widening; `look_tab_button_rows()` is
+Look-specific by name and by implementation, and is the natural thing to generalize.
+
+`pytest tests/ -q` green throughout (504 tests).
+
+---
+
 ## Session Summary — 2026-08-22 Session 1 — Checkpoint-recovery duplicate-session race found and fixed; 67 corrupted historical rows cleaned up; two hourly-heatmap rounding inconsistencies fixed. `f3816cf`/`43a9fca` on `feature/traveling-focus-marker`
 
 Started from a live report of the streak/heatmap bugs fixed in the prior (`main`) session showing

@@ -1,3 +1,45 @@
+## Traveling focus marker — keyboard/mouse modality, Look-tab arrows — 2026-09-04
+
+**LIVE-ONLY.** Every bug in this section was invisible to scripted checks: three separate offscreen
+harnesses rendered the marker's geometry pixel-correct against a reference line while the live app
+showed a 1px offset, and the modality bugs were all found by tracing the running app, never by
+reading the code. Two of them were *introduced* by a fix that reasoned correctly from a passing
+test. Do not treat green tests or a clean render as coverage here.
+
+### Marker appearance (Settings > Look)
+- [ ] Tab into the Look tab's buttons: the marker traces the button's **rounded** corners, following the real border — not a sharp-cornered box, and not offset outside it
+- [ ] Marker on a settings TAB: top and both sides are traced, the bottom edge is deliberately not — and there is **no diagonal line** cutting across the untraced bottom, and no stray mark past the left or right edge
+- [ ] Both vertical sides reach the same depth (an uneven/"slanted" bottom means the endpoint sampling regressed)
+- [ ] The color visibly travels around the border. If it looks static, check the theme's `focus_marker_palette`: an HSV hue rotation on a near-white color is a visual no-op — this must be an RGB blend between genuinely different colors
+- [ ] No native dotted focus rectangle anywhere (suppressed app-wide by `NoFocusRectStyle`; QSS `outline: none` does NOT work on Fusion)
+
+### Modality — most recent input wins
+- [ ] Click a button with the mouse: marker does **not** appear
+- [ ] Click a **tab** with the mouse: marker does not appear (Qt reports this as `TabFocusReason`, hence `_MOUSE_PRESS_FOCUS_WINDOW_S` — a regression here shows the marker on mouse clicks)
+- [ ] Tab/arrow to navigate: marker appears, and any mouse `:hover` highlight **clears** — on both tabs and buttons
+- [ ] Hover a tab, then arrow through the tabs: the hovered tab's highlight goes away and stays away (no blink-then-return)
+- [ ] Hover a button, then arrow between buttons: same
+- [ ] Move the mouse onto a tab or button while the marker is showing: hover takes over, marker disappears
+- [ ] Move the mouse over **dead space** (a header, empty area): marker stays — only a real control hands control back
+- [ ] Keyboard-navigate, go to another settings tab and back: mouse hover still works **without** needing a click first (this specific strand needed the setter and the hand-back check to span the same controls)
+- [ ] Arrow around the **Themes** tab, return to Look: hover still works on both tabs and buttons
+- [ ] Type an arrow key inside a text field (Library search, sleep custom minutes): modality unaffected, no marker
+
+### Look-tab arrow navigation
+- [ ] From the tab bar, **Down** enters the buttons at the first row's first button
+- [ ] **Down**/**Up** move between rows, always landing on the row's **first** button
+- [ ] **Up** from the first row returns to the tab bar
+- [ ] **Left** at the first row's first button returns to the tab bar
+- [ ] **Left**/**Right** otherwise step within the row (native behaviour, unchanged)
+- [ ] **Down** on the last row does nothing (swallowed — it must not fall out of the grid)
+- [ ] Tab/Shift+Tab still cycle through every control exactly as before
+- [ ] Set **Chapter notches** to Off: the Animation On/Off pair disappears and is no longer an arrow-key stop; set it On and they are reachable again (rows are derived live per keypress)
+
+### Theme preview revert on tab switch
+- [ ] Hover a theme swatch to preview, then switch tabs **with the mouse**: the preview reverts fully, *then* the tab switches — the snapback must not play over the newly-arrived tab
+- [ ] Same with **arrow keys** on the tab bar (this path used to revert after the switch)
+- [ ] Switching tabs with no preview showing: no added delay, behaves exactly as before
+
 ## Playback
 
 - [x] Play/pause toggles correctly

@@ -119,6 +119,20 @@ The real library used for day-to-day testing has been ~400 books. That is not re
   top-level widget's own cursor property, not the platform's actual visible cursor
   state. Don't use it as a proxy for "what does the user currently see."
 - **Qt's `QRect.right()`/`.bottom()` are inclusive (last pixel), not the true edge** — documented historical quirk, not a bug. Use `x()+width()`/`y()+height()`. Suspect first for any single-pixel boundary hit-test mismatch.
+- **A mouse click on a QTabBar tab arrives as `TabFocusReason`, not `MouseFocusReason`** (measured
+  2026-09-03) — the reason describes focus moving *to a tab*, not the Tab key. `OtherFocusReason` is
+  no better: it covers both a tab click AND the legitimate keyboard hop where Tab lands on the tab
+  bar and Qt forwards focus onward ~2ms later. **No `QFocusEvent.reason()` value reliably means
+  "the user is on the mouse."** Record modality from the actual `MouseButtonPress`/`KeyPress`
+  instead — same shape as the `user_seek_pending`/`sleep_fired` rule: a flag set where intent is
+  known beats anything inferred downstream. Two successive fixes here were defeated by trusting a
+  reason (see `_set_keyboard_nav_active`'s MODALITY OWNERSHIP notes, app.py).
+- **`unpolish`/`polish` on a parent does NOT re-resolve a child's cached style.** A dynamic
+  property gating QSS on an ancestor (e.g. `#settings_panel[kbdnav="true"] ... :hover`) will not
+  take effect on descendants until each one is polished itself — and `update()` alone is not
+  enough. Found twice in one session, separately, on `QTabBar` (whose `::tab` sub-controls cache
+  their own hover state) and then on the buttons underneath it (2026-09-04). If a property-gated
+  rule "isn't applying" while the property and flag both verify correct, this is the cause.
 - **Constraining a lone stretch participant's height moves the whole block.** In a `QVBoxLayout`
   with one `stretch=1` member, that member absorbs all leftover height. `setFixedHeight` or
   `setMaximumHeight` on it withdraws it from the stretch and the layout redistributes the freed
@@ -1721,7 +1735,19 @@ Any `QWidget` subclass (not `QFrame`, not `QLabel`) that owns a background-color
 
 *Reorganization note (2026-07-13): the "Critical Architecture Rules" section was restructured to remove repetition — it previously existed as two passes (a full-prose section and a later condensed second pass covering many of the same rules). The two were merged: rules that appeared in both now appear once, under whichever fact they share, with no information dropped. Rules unique to either pass are unchanged. See the note directly under the "Critical Architecture Rules" heading for detail.*
 
-*Last updated: 2026-08-13 — Scrollbar row-alignment work extended to a third and fourth panel.
+*Last updated: 2026-09-04 — Traveling focus marker (branch `feature/traveling-focus-marker`, NOT
+merged): rebased onto current `main` after being parked since 2026-07-10, geometry corrected, made
+keyboard-only, given row-aware arrow navigation on Settings > Look, and paired with mouse-hover
+suppression so only one affordance answers "where am I?" at a time. Two new Qt gotchas added to
+Debugging discipline above — a tab CLICK arrives as `TabFocusReason` (so no focus reason can mean
+"mouse"; record modality from the press), and polishing a parent does not re-resolve a child's
+cached style (property-gated QSS needs each widget polished). Full narrative, including the three
+failed modality designs and why each was wrong, in SESSION.md 2026-09-03/04; live-check list in
+TESTING.md's "Traveling focus marker" section. Next session extends this to the other Settings tabs
+and other panels — `_settings_is_active`/`_look_tab_is_active` and `look_tab_button_rows()` are the
+Look-specific pieces that will need generalizing.
+
+*Previously: 2026-08-13 — Scrollbar row-alignment work extended to a third and fourth panel.
 **Tags panel** (`ui/tag_manager.py`) gained `register_snap` for `_tag_scroll`'s right-click jump
 (`0cbddbd`) — its wheel step and viewport cap were already row-pitch-correct (`_TAG_ROW_PITCH`,
 fixed/uniform), so this was purely additive: right-click jump was the only gap, same as the
