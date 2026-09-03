@@ -3886,6 +3886,81 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # (together with the NoFocus chrome buttons) it can never move focus anywhere.
         return True
 
+    def _handle_look_arrows(self, event) -> bool:
+        """Arrow-key navigation for the Settings > Look tab. Returns True iff this consumed the
+        event. Called from the app-level eventFilter, same contract as _handle_tab_escape.
+
+        Overrides Qt's native arrow behaviour, which treats a QHBoxLayout of buttons as a flat
+        chain: natively Up/Down do the same thing as Left/Right (step one button sideways),
+        which is useless on a tab of stacked rows. Here:
+
+            Down   from the tab bar -> first button of the FIRST row
+                   from a button    -> first button of the NEXT row
+            Up     from a button    -> first button of the PREVIOUS row
+                   from row 0       -> back to the tab bar
+            Left   at row 0's first button -> back to the tab bar
+                   otherwise                -> native (previous button in the row)
+            Right  -> always native (next button in the row)
+
+        Up/Down always land on the row's FIRST button rather than trying to preserve a column:
+        the rows are 5, 3, 3, 4, 3 and 2-or-4 buttons wide, so there is no honest column to
+        preserve and a clamped guess would land unpredictably.
+
+        Tab/Shift+Tab are deliberately NOT touched — _handle_tab_escape still owns those, and
+        their flat cycle through every control stays exactly as it was.
+
+        Everything is derived per keypress from PanelManager.look_tab_button_rows(), which reads
+        the live layout, so a row whose buttons are currently hidden (the Chapter-notches
+        Animation pair when notches are Off) is simply not a stop."""
+        key = event.key()
+        if key not in (Qt.Key.Key_Up, Qt.Key.Key_Down, Qt.Key.Key_Left, Qt.Key.Key_Right):
+            return False
+        if not hasattr(self, 'panel_manager'):
+            return False
+        if self.panel_manager.active_full_panel() != "settings":
+            return False
+        if not hasattr(self, 'tabs') or self.tabs.tabText(self.tabs.currentIndex()) != "Look":
+            return False
+        focus = QApplication.focusWidget()
+        if isinstance(focus, QLineEdit):
+            return False  # never preempt a text field's own cursor keys
+        rows = self.panel_manager.look_tab_button_rows()
+        if not rows:
+            return False
+        tab_bar = self.tabs.tabBar()
+
+        # On the tab bar: Down enters the buttons. Left/Right must stay native so they keep
+        # switching tabs (via _ThemesTabBarInterceptor), and Up has nowhere above to go.
+        if focus is tab_bar:
+            if key == Qt.Key.Key_Down:
+                rows[0][0].setFocus(Qt.FocusReason.TabFocusReason)
+                return True
+            return False
+
+        # Locate the focused button in the grid.
+        pos = next((( r, c) for r, row in enumerate(rows)
+                    for c, btn in enumerate(row) if btn is focus), None)
+        if pos is None:
+            return False  # focus is on some other Look control — leave it to Qt
+        row_i, col_i = pos
+
+        if key == Qt.Key.Key_Down:
+            if row_i + 1 < len(rows):
+                rows[row_i + 1][0].setFocus(Qt.FocusReason.TabFocusReason)
+                return True
+            return True  # last row: swallow, so Down can't fall out of the button grid
+        if key == Qt.Key.Key_Up:
+            if row_i > 0:
+                rows[row_i - 1][0].setFocus(Qt.FocusReason.TabFocusReason)
+            else:
+                tab_bar.setFocus(Qt.FocusReason.TabFocusReason)
+            return True
+        if key == Qt.Key.Key_Left and row_i == 0 and col_i == 0:
+            tab_bar.setFocus(Qt.FocusReason.TabFocusReason)
+            return True
+        # Left elsewhere, and Right anywhere: native within-row stepping is already correct.
+        return False
+
     def _focus_marker_in_scope(self, focus) -> bool:
         """Whether the traveling focus marker should be tracking `focus` right now. Scoped THIS
         pass to the Settings panel's Look tab only: the Settings panel must be the active full
@@ -4116,6 +4191,12 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
         if event.type() == QEvent.Type.KeyPress:
             if self._handle_tab_escape(event):
+                return True
+            # Look-tab arrow navigation. After _handle_tab_escape (which owns Tab/Backtab and
+            # never sees arrows) and before the library branch, whose own arrow handling is
+            # gated on the Library panel being the active one, so the two cannot both claim a
+            # key. Self-gating: returns False immediately unless Settings > Look is active.
+            if self._handle_look_arrows(event):
                 return True
             if (hasattr(self, 'library_panel')
                     and event.key() in self.library_panel._LIST_KEY_HANDLED_KEYS):

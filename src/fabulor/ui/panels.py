@@ -2493,6 +2493,45 @@ class PanelManager:
             result.append(w)
         return result
 
+    def look_tab_button_rows(self) -> list:
+        """The Look tab's buttons grouped into VISUAL rows, for arrow-key navigation
+        (see MainWindow._handle_look_arrows). Each entry is a list of buttons on one line,
+        left-to-right; rows are top-to-bottom. Empty list if Look is not the active tab.
+
+        Derived LIVE from the layout rather than from mw's per-group dicts (fade_buttons,
+        blur_buttons, ...) or any build-time snapshot, for two reasons:
+          * The Chapter-notches line's Animation pair is setVisible(False) whenever notches are
+            Off (app.py's set_notches_selection), so a fixed structure would offer a keyboard
+            stop on buttons that are not on screen. Visibility has to be re-read per keypress.
+          * Row membership then follows whatever the builder actually lays out — add or reorder
+            a row in build_appearance_tab and this keeps working with no second place to update.
+
+        The notches line's two groups (notches On/Off + Animation On/Off) share ONE QHBoxLayout
+        and are deliberately treated as ONE row, matching what the user sees on screen."""
+        tabs = getattr(self.main_window, 'tabs', None)
+        if tabs is None or tabs.tabText(tabs.currentIndex()) != "Look":
+            return []
+        root = tabs.currentWidget()
+        if root is None:
+            return []
+        layout = root.layout()
+        if layout is None:
+            return []
+        rows = []
+        for i in range(layout.count()):
+            item = layout.itemAt(i)
+            sub = item.layout()
+            if sub is None:
+                continue  # a header QLabel or the trailing stretch, not a button row
+            row = []
+            for j in range(sub.count()):
+                w = sub.itemAt(j).widget()
+                if isinstance(w, QPushButton) and w.isVisibleTo(root):
+                    row.append(w)
+            if row:
+                rows.append(row)
+        return rows
+
     # ── Panel-local keyboard focus ownership ─────────────────────────────────
     # Enforces the invariant that MainWindow.keyPressEvent's _focus_allows_global_shortcuts
     # relies on: whenever a panel/overlay is open, SOME widget inside it must hold real Qt
