@@ -87,6 +87,15 @@ _SPEED_NUDGE_THROTTLE_S = 0.12
 _CHAPTER_NUDGE_THROTTLE_S = 0.15
 _LONG_SKIP_THROTTLE_S = 0.18
 
+# How long after a physical MouseButtonPress a TabFocusReason focus event is still attributed to
+# that press rather than to real keyboard navigation — see _update_focus_marker's MODALITY
+# OWNERSHIP notes. Qt reports a mouse click ON A TAB as TabFocusReason (measured live 2026-09-03:
+# press at 23:03:55,452 -> TabFocusReason FocusIn at 23:03:55,455, a 3ms gap), so the reason alone
+# cannot distinguish "user pressed Tab" from "user clicked a tab" and the unambiguous press has to
+# win. 0.05s is ~17x the measured gap — comfortably wide for a slow frame, far below any plausible
+# press-then-deliberately-Tab interval.
+_MOUSE_PRESS_FOCUS_WINDOW_S = 0.05
+
 # Shared dismiss duration for the indicator zone's two transient states: the volume-slider
 # preview (vol_hide_timer) and the sleep-just-armed-while-muted confirmation
 # (sleep_confirm_timer). Both revert to whatever _settle_vol_stack() resolves to next.
@@ -673,12 +682,16 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # FocusIn/FocusOut branch via _update_focus_marker().
         from .ui.focus_marker import TravelingFocusMarker
         self.focus_marker = TravelingFocusMarker(self)
-        # Input-modality flag: True while the last real focus change came from keyboard
-        # navigation (Tab/Backtab), False after a mouse click moved focus. Read as the marker's
-        # show-gate in _update_focus_marker, written there too from the threaded-through
-        # QFocusEvent.reason(). The marker is a keyboard affordance — a mouse click must hide it
-        # rather than re-anchor it to whatever was clicked.
+        # Input-modality flag: True while the last real input was keyboard navigation, False
+        # after a mouse click. Read as the marker's show-gate in _update_focus_marker. The marker
+        # is a keyboard affordance — a mouse click must hide it rather than re-anchor it to
+        # whatever was clicked.
         self._keyboard_nav_active: bool = False
+        # perf_counter() of the last MouseButtonPress the app-wide eventFilter saw, or None.
+        # _update_focus_marker uses it to reject a TabFocusReason that is really just the focus
+        # change a mouse click on the tab bar produced — see _MOUSE_PRESS_FOCUS_WINDOW_S and
+        # that method's MODALITY OWNERSHIP notes.
+        self._last_mouse_press_t: float | None = None
         # Switching settings tabs keeps focus ON the tab bar (no FocusIn/FocusOut fires), so
         # re-evaluate marker scope on tab change: leaving Look clears it, and landing on Look
         # while the tab bar is focused re-anchors the marker to Look's tab rect.
@@ -3898,16 +3911,53 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
         `reason` is the originating QFocusEvent's own reason(), threaded through from the
         app-wide eventFilter's FocusIn/FocusOut branch — the one call site that actually has a
-        real focus event to read it from. It drives `_keyboard_nav_active` (the modality flag):
-        the marker is a KEYBOARD-navigation affordance, so a mouse click that moves focus must
-        hide it, not re-anchor it. The tabs.currentChanged call site passes nothing (None) on
-        purpose: a tab switch is a REPOSITION trigger, not a modality change, so it must leave
-        the flag exactly as the last real focus event set it."""
+        real focus event to read it from. Together with the mouse-press clear described below it
+        drives `_keyboard_nav_active` (the modality flag): the marker is a KEYBOARD-navigation
+        affordance, so mouse input must hide it, not re-anchor it. The tabs.currentChanged call
+        site passes nothing (None) on purpose: a tab switch is a REPOSITION trigger, not a
+        modality change, so it must leave the flag exactly as the last real input set it.
+
+        Focus reasons alone are NOT sufficient to tell mouse from keyboard on this UI — that was
+        established by measurement, not assumption, after two versions of this gate shipped and
+        failed live. The ownership split below is what actually works; read it before touching
+        either branch.
+
+        MODALITY OWNERSHIP — read this before changing either half:
+
+        * CLEARING the flag is owned by the eventFilter's general MouseButtonPress branch, not by
+          this method. A physical press is the ONLY unambiguous "the user is on the mouse"
+          signal available; see that branch's comment for the measured reasons why no
+          QFocusEvent.reason() value can stand in for it.
+        * SETTING it True is owned HERE, by TabFocusReason — but ONLY outside
+          _MOUSE_PRESS_FOCUS_WINDOW_S of the last press. Qt reports a mouse click ON A TAB as
+          TabFocusReason (focus is moving to a tab; nothing to do with the Tab key), so without
+          that window a tab click re-sets the flag milliseconds after the press cleared it, and
+          the marker shows for a mouse click. That is exactly how the first version of this fix
+          failed live (2026-09-03): press cleared at 23:03:55,452, TabFocusReason re-set at
+          23:03:55,455. The press must win, so the window rejects the set rather than the clear.
+        * The MouseFocusReason `elif` below is BELT-AND-SUSPENDERS only. A real press clears the
+          flag before the resulting focus change is even delivered, so in practice this branch
+          almost never fires first. It is kept for any focus change Qt attributes to the mouse
+          without a press this filter saw. Do not treat it as the primary mechanism, and do not
+          delete the press-based clear on the theory that it makes this branch redundant — the
+          dependency runs the other way.
+        * OtherFocusReason must stay a NO-OP here. It is genuinely ambiguous: it covers both a
+          mouse click on a tab AND the legitimate keyboard two-step hop (Tab lands on the tab
+          bar, then Qt forwards focus to a pattern_button ~2ms later with OtherFocusReason).
+          Clearing on it would kill the marker mid-Tab-navigation."""
         if reason is Qt.FocusReason.TabFocusReason:
-            self._keyboard_nav_active = True
+            # Reject a TabFocusReason that is really the focus change a just-delivered mouse
+            # press produced — see MODALITY OWNERSHIP above. Only a genuine Tab/Backtab, well
+            # clear of any press, may turn the marker back on.
+            _press_t = self._last_mouse_press_t
+            if (_press_t is None
+                    or (time.perf_counter() - _press_t) > _MOUSE_PRESS_FOCUS_WINDOW_S):
+                self._keyboard_nav_active = True
         elif reason is Qt.FocusReason.MouseFocusReason:
+            # Secondary/defensive — see MODALITY OWNERSHIP above; the MouseButtonPress branch
+            # in eventFilter is what actually clears this in the common cases.
             self._keyboard_nav_active = False
-        # reason is None or OtherFocusReason → preserve flag unchanged
+        # reason is None or OtherFocusReason → preserve flag unchanged (deliberately ambiguous)
         marker = getattr(self, 'focus_marker', None)
         if marker is None:
             return
@@ -4020,6 +4070,33 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # Read it against how many times you actually clicked:
         #   grep '\[RCLICK\]' fabulor.log | wc -l
         if event.type() == QEvent.Type.MouseButtonPress:
+            # PRIMARY input-modality clear for the traveling focus marker (see
+            # _update_focus_marker). ANY physical button press means the user is driving with
+            # the mouse, so the keyboard-navigation affordance must stop showing. This lives at
+            # the general MouseButtonPress level, NOT inside the Qt.RightButton branch below —
+            # a LEFT-click is the main case, and it never reaches that branch.
+            #
+            # Why a press and not QFocusEvent.reason(): NO focus reason reliably identifies
+            # "the user is using the mouse" here. Measured live 2026-09-03 on the Settings tab
+            # bar, a single mouse click on a tab produces BOTH of these, milliseconds apart:
+            #   OtherFocusReason  — also the reason for the legitimate keyboard two-step hop
+            #                       (Tab lands on the tab bar, Qt forwards focus to a
+            #                       pattern_button ~2ms later), so it cannot mean "mouse"
+            #   TabFocusReason    — because focus is moving TO A TAB, not because Tab was
+            #                       pressed; this one had to be measured to be believed, and it
+            #                       is what defeated the first version of this fix (the press
+            #                       cleared the flag at 23:03:55,452 and the TabFocusReason
+            #                       focus event re-set it 3ms later at 23:03:55,455)
+            # A physical button press is the only unambiguous signal, so it is recorded here and
+            # allowed to WIN over the reason for _MOUSE_PRESS_FOCUS_WINDOW_S — see
+            # _update_focus_marker.
+            #
+            # Deliberately OUTSIDE the try/except below: that guard exists to swallow failures
+            # in the [RCLICK] probe's own panel_manager access, and a plain attribute write
+            # cannot raise AttributeError/RuntimeError. Keeping it out means a future edit to
+            # the probe can never silently swallow a failed modality clear.
+            self._keyboard_nav_active = False
+            self._last_mouse_press_t = time.perf_counter()
             try:
                 if event.button() == Qt.RightButton:
                     _stamp = int(event.timestamp())
