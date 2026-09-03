@@ -4084,6 +4084,34 @@ def get_settings_stylesheet(theme_name="default"):
             background: rgba({_hex_to_rgb(tab_hover_bg)}, {tab_hover_opacity});
             color: {tab_hover_text};
         }}
+        /* Keyboard-mode hover suppression (2026-09-03). While the keyboard is driving,
+           MainWindow._set_keyboard_nav_active puts kbdnav="true" on #settings_panel and these
+           rules neutralize :hover, so the traveling focus marker is the ONLY thing claiming
+           "you are here" — previously the marker and the cursor's :hover both lit up on
+           different controls and nothing said which one Enter would act on.
+
+           Scoped to #settings_panel deliberately: #pattern_button:hover lives in the SHARED
+           get_panel_base_stylesheet, used by Speed/Sleep/Sprint too, and none of those have a
+           keyboard marker to compete with. Overriding here (this sheet is appended to the base)
+           rather than editing the shared rule leaves those panels untouched by construction.
+
+           Each override restates the widget's non-hover appearance rather than using an
+           `inherit`-style reset, which QSS does not support — :hover simply loses. Keep these
+           in sync if the base rules' resting colors change. */
+        QWidget#settings_panel[kbdnav="true"] QPushButton#pattern_button:hover {{
+            background: transparent;
+            border: 1px solid {t['accent_dark']};
+        }}
+        QWidget#settings_panel[kbdnav="true"] QPushButton#pattern_button[selected="true"]:hover {{
+            background: {t['accent']};
+        }}
+        QWidget#settings_panel[kbdnav="true"] QPushButton#pattern_button[is_default="true"]:hover {{
+            border: 2px solid {t['accent_light']};
+        }}
+        QWidget#settings_panel[kbdnav="true"] QTabBar::tab:hover:!selected {{
+            background: {t['bg_deep']};
+            color: rgba({text_rgb}, 0.9);
+        }}
         QTabWidget QWidget {{
             background: transparent;
         }}

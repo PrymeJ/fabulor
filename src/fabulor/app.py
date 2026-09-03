@@ -96,6 +96,25 @@ _LONG_SKIP_THROTTLE_S = 0.18
 # press-then-deliberately-Tab interval.
 _MOUSE_PRESS_FOCUS_WINDOW_S = 0.05
 
+# Cursor poll driving "the mouse is being used again", which ends keyboard mode and restores
+# QSS :hover highlights (see MainWindow._set_keyboard_nav_active). Deliberately much faster than
+# PanelManager's 500ms sidebar idle poll: that one backs a 10s deadline where half a second of
+# slack is invisible, whereas this one gates a highlight the user expects back the instant they
+# move the mouse — 500ms there would read as the hover being broken. Cheap for the same reason
+# the sidebar's is (one QCursor.pos() read + a comparison) and, like it, runs only while needed.
+_KBDNAV_CURSOR_POLL_MS = 60
+# Movement below this many pixels does not count as "the user moved the mouse" — absorbs
+# sub-pixel/±1px OS-level cursor jitter, the same concern _MOUSE_JITTER_PX handles for the
+# Themes-tab swatch leave check (ui/theme_manager.py).
+_KBDNAV_CURSOR_JITTER_PX = 3
+# Keys that assert keyboard mode on press (see MainWindow.eventFilter's KeyPress branch). These
+# are the keys that MOVE THE SELECTION — pressing one means the user is navigating, whether or
+# not it happens to generate a focus event Qt labels TabFocusReason.
+_KBDNAV_ASSERT_KEYS = frozenset((
+    Qt.Key.Key_Tab, Qt.Key.Key_Backtab,
+    Qt.Key.Key_Up, Qt.Key.Key_Down, Qt.Key.Key_Left, Qt.Key.Key_Right,
+))
+
 # Shared dismiss duration for the indicator zone's two transient states: the volume-slider
 # preview (vol_hide_timer) and the sleep-just-armed-while-muted confirmation
 # (sleep_confirm_timer). Both revert to whatever _settle_vol_stack() resolves to next.
@@ -692,6 +711,21 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # change a mouse click on the tab bar produced — see _MOUSE_PRESS_FOCUS_WINDOW_S and
         # that method's MODALITY OWNERSHIP notes.
         self._last_mouse_press_t: float | None = None
+        # Cursor position sampled when keyboard mode was entered, and the poll that watches it.
+        # While the keyboard is driving, QSS :hover highlights are suppressed (see
+        # _set_keyboard_nav_active) so only ONE affordance answers "where am I?" at a time; the
+        # first real cursor movement hands the UI back to the mouse.
+        #
+        # A POLL, not a QEvent.MouseMove filter branch: Qt only GENERATES MouseMove for widgets
+        # with setMouseTracking(True), which almost nothing in this app sets, so a move-event
+        # listener would silently never fire for ordinary cursor motion. This is the same trap
+        # (and the same QCursor.pos() workaround) documented for the sidebar hotspot's idle
+        # dismiss — see PanelManager._sidebar_idle_poll_timer. Runs ONLY while suppression is
+        # active, and stops the moment the mouse takes over.
+        self._kbdnav_cursor_anchor = None
+        self._kbdnav_cursor_poll = QTimer(self)
+        self._kbdnav_cursor_poll.setInterval(_KBDNAV_CURSOR_POLL_MS)
+        self._kbdnav_cursor_poll.timeout.connect(self._on_kbdnav_cursor_poll)
         # Switching settings tabs keeps focus ON the tab bar (no FocusIn/FocusOut fires), so
         # re-evaluate marker scope on tab change: leaving Look clears it, and landing on Look
         # while the tab bar is focused re-anchors the marker to Look's tab rect.
@@ -3915,11 +3949,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         key = event.key()
         if key not in (Qt.Key.Key_Up, Qt.Key.Key_Down, Qt.Key.Key_Left, Qt.Key.Key_Right):
             return False
-        if not hasattr(self, 'panel_manager'):
-            return False
-        if self.panel_manager.active_full_panel() != "settings":
-            return False
-        if not hasattr(self, 'tabs') or self.tabs.tabText(self.tabs.currentIndex()) != "Look":
+        if not self._look_tab_is_active():
             return False
         focus = QApplication.focusWidget()
         if isinstance(focus, QLineEdit):
@@ -3961,17 +3991,158 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # Left elsewhere, and Right anywhere: native within-row stepping is already correct.
         return False
 
+    def _set_keyboard_nav_active(self, active: bool) -> None:
+        """Single owner of `_keyboard_nav_active` AND its visual consequences.
+
+        Two things must move together, which is why nothing writes the flag directly:
+          1. the traveling focus marker's show-gate (_update_focus_marker), and
+          2. the `kbdnav` dynamic property on the Settings panel, which the QSS reads to
+             suppress :hover highlights while the keyboard is driving.
+
+        (2) exists because the keyboard marker and the mouse's :hover were both lighting up at
+        once — the marker on one control, :hover on whatever the cursor happened to rest over —
+        so nothing on screen said which one Enter would act on (reported live 2026-09-03 with
+        three screenshots: hover on the Audio TAB while the marker sat on a button, and hover on
+        the "1500" BUTTON while the marker sat on "Slow"). Most-recent-input-wins: whichever
+        device was used last owns the highlight.
+
+        The property is set on `settings_panel` (not per-button) so one polish() covers every
+        descendant, and the QSS gates its :hover rules on it — see get_settings_stylesheet.
+        Qt does not re-evaluate a stylesheet when a dynamic property changes, so unpolish/polish
+        is required; skipped entirely when the value hasn't changed, since polishing the panel
+        walks all its children."""
+        if active == getattr(self, '_keyboard_nav_active', False):
+            return
+        self._keyboard_nav_active = active
+        panel = getattr(self, 'settings_panel', None)
+        if panel is not None:
+            panel.setProperty("kbdnav", "true" if active else "false")
+            panel.style().unpolish(panel)
+            panel.style().polish(panel)
+            # Polishing the panel re-resolves the PANEL's own style, but its descendants keep
+            # painting from their cached style until they are polished themselves — so both the
+            # tab bar and the Look buttons need explicit repolishing or their hover highlight
+            # stays lit through a correct flag flip and a correct property write (both confirmed
+            # live 2026-09-04: the tab bar first, then the buttons, each via a [KBDNAV] trace
+            # showing clean True/False alternation while the highlight visibly persisted).
+            # update() alone is not enough — the unpolish/polish pair is what re-resolves
+            # [kbdnav] for them.
+            tabs = getattr(self, 'tabs', None)
+            if tabs is not None:
+                bar = tabs.tabBar()
+                bar.style().unpolish(bar)
+                bar.style().polish(bar)
+                bar.update()
+            # Every #pattern_button under the panel, NOT just look_tab_button_rows() — that
+            # helper returns [] unless Look is the current tab, so flipping the flag while on
+            # another tab left Look's buttons holding a stale style, and their hover stayed
+            # broken on return (reported live 2026-09-04). findChildren reaches them regardless
+            # of which tab is showing; a hidden button polishing to the same value is harmless.
+            for btn in panel.findChildren(QPushButton):
+                if btn.objectName() == "pattern_button":
+                    btn.style().unpolish(btn)
+                    btn.style().polish(btn)
+                    btn.update()
+        if active:
+            # Remember where the cursor was resting when the keyboard took over, so merely
+            # ENTERING keyboard mode while the cursor already sits on a control doesn't
+            # immediately hand it straight back — see _on_kbdnav_cursor_poll.
+            self._kbdnav_cursor_anchor = QCursor.pos()
+            self._kbdnav_cursor_poll.start()
+        else:
+            self._kbdnav_cursor_anchor = None
+            self._kbdnav_cursor_poll.stop()
+
+    def _on_kbdnav_cursor_poll(self) -> None:
+        """Hand the UI back to the mouse when the cursor is genuinely ON a control it could
+        act on — a Look-tab button or a settings tab — not merely because it moved.
+
+        "Any movement ends keyboard mode" was tried first and rejected live (2026-09-03): a few
+        pixels of drift across dead space killed the marker mid-navigation, which reads as the
+        keyboard affordance being fragile. The mouse should only take over when it actually has
+        something to claim, which is also what makes the handoff legible — hover lights up on
+        the very control the cursor is over, in the same instant the marker goes away.
+
+        The cursor must also have MOVED from where it rested when keyboard mode began. Without
+        that, arrow-keying while the cursor happens to sit on a button would hand control back
+        on the very next poll tick, making keyboard nav impossible from that position.
+
+        See _set_keyboard_nav_active for why this is a poll rather than a MouseMove listener."""
+        anchor = self._kbdnav_cursor_anchor
+        if anchor is None:
+            self._kbdnav_cursor_poll.stop()
+            return
+        # Left the surface entirely (Settings closed) while keyboard mode was on: drop it here
+        # rather than leaving it set for whenever the user returns. Deliberately checks
+        # _settings_is_active, NOT _look_tab_is_active — arrowing through the TAB BAR leaves the
+        # Look tab by definition, and clearing on that turned the tab bar's own keyboard
+        # navigation back into mouse mode mid-flight (reported live 2026-09-04).
+        if not self._settings_is_active():
+            self._set_keyboard_nav_active(False)
+            return
+        pos = QCursor.pos()
+        if (abs(pos.x() - anchor.x()) < _KBDNAV_CURSOR_JITTER_PX
+                and abs(pos.y() - anchor.y()) < _KBDNAV_CURSOR_JITTER_PX):
+            return  # hasn't left its resting spot yet
+        if not self._cursor_over_navigable_control(pos):
+            return  # moved, but over dead space — keyboard keeps the highlight
+        self._set_keyboard_nav_active(False)
+        self._update_focus_marker()
+
+    def _settings_is_active(self) -> bool:
+        """Whether the Settings panel is the open panel — the surface the keyboard/mouse
+        modality applies to.
+
+        This, NOT "the Look tab is current", is the right scope for the modality flag, because
+        the TAB BAR is keyboard-navigable and mouse-hoverable on every settings tab; only the
+        Look BUTTONS are Look-specific (_look_tab_is_active covers those). Scoping the modality
+        to Look alone regressed exactly that case (reported live 2026-09-04): arrowing through
+        the tabs necessarily leaves Look, so the setter switched off mid-navigation and the
+        poll's off-surface branch actively cleared the flag, leaving a hovered tab highlighted
+        while the keys were driving.
+
+        The invariant that matters is narrower than "one surface": the modality setter and the
+        hand-back check (_cursor_over_navigable_control) must recognise the SAME set of
+        controls, so the flag can never be set somewhere nothing can clear it. Both now span
+        the whole Settings panel — tab bar always, Look buttons when Look is up."""
+        return (hasattr(self, 'panel_manager') and hasattr(self, 'tabs')
+                and self.panel_manager.active_full_panel() == "settings")
+
+    def _look_tab_is_active(self) -> bool:
+        """Whether Settings > Look specifically is on screen — i.e. whether the Look BUTTONS
+        exist as navigation/hover targets right now. Narrower than _settings_is_active; use that
+        one for anything about the tab bar or the modality flag itself."""
+        return (self._settings_is_active()
+                and self.tabs.tabText(self.tabs.currentIndex()) == "Look")
+
+    def _cursor_over_navigable_control(self, global_pos) -> bool:
+        """Whether `global_pos` is over a control that competes with the traveling marker for
+        "you are here" — i.e. something with its own :hover state the keyboard also navigates to:
+        the settings tab bar, or one of the Look tab's buttons.
+
+        Uses the same live row source as the arrow navigation (look_tab_button_rows) so the two
+        can't disagree about what a button is — notably, a hidden Chapter-notches Animation
+        button is not in the rows and so is correctly not a handoff target."""
+        if not hasattr(self, 'tabs') or not hasattr(self, 'panel_manager'):
+            return False
+        tab_bar = self.tabs.tabBar()
+        if tab_bar.isVisible():
+            local = tab_bar.mapFromGlobal(global_pos)
+            if tab_bar.rect().contains(local) and tab_bar.tabAt(local) >= 0:
+                return True
+        for row in self.panel_manager.look_tab_button_rows():
+            for btn in row:
+                if btn.rect().contains(btn.mapFromGlobal(global_pos)):
+                    return True
+        return False
+
     def _focus_marker_in_scope(self, focus) -> bool:
         """Whether the traveling focus marker should be tracking `focus` right now. Scoped THIS
         pass to the Settings panel's Look tab only: the Settings panel must be the active full
         panel, the Look tab must be the active settings tab, and `focus` must be either the
         Settings tab bar OR one of the Look tab's Tab-navigable controls (the exact same
         membership set Tab cycling uses — no second source of truth)."""
-        if focus is None or not hasattr(self, 'panel_manager'):
-            return False
-        if self.panel_manager.active_full_panel() != "settings":
-            return False
-        if not hasattr(self, 'tabs') or self.tabs.tabText(self.tabs.currentIndex()) != "Look":
+        if focus is None or not self._look_tab_is_active():
             return False
         if focus is self.tabs.tabBar():
             return True
@@ -4003,8 +4174,18 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
           this method. A physical press is the ONLY unambiguous "the user is on the mouse"
           signal available; see that branch's comment for the measured reasons why no
           QFocusEvent.reason() value can stand in for it.
-        * SETTING it True is owned HERE, by TabFocusReason — but ONLY outside
-          _MOUSE_PRESS_FOCUS_WINDOW_S of the last press. Qt reports a mouse click ON A TAB as
+        * SETTING it True is owned PRIMARILY by the eventFilter's KeyPress branch, which asserts
+          keyboard mode from the navigation key itself (_KBDNAV_ASSERT_KEYS). Symmetric with the
+          press-based clear, and for the same reason: the press states intent, the focus event
+          that may follow it does not. Two live-reported cases (2026-09-04) move the selection
+          without producing any qualifying focus event at all — Left/Right on the tab bar (focus
+          never leaves it) and Left/Right between sibling buttons (native moves carry no
+          TabFocusReason) — so a reason-only design left a hovered control highlighted while the
+          keyboard was plainly driving.
+        * The TabFocusReason branch below is the SECONDARY setter, and is now largely redundant
+          (the key press that caused the focus move already asserted the mode). It is kept for
+          focus arriving by Tab from paths the KeyPress branch does not see, and it is still
+          gated on _MOUSE_PRESS_FOCUS_WINDOW_S: Qt reports a mouse click ON A TAB as
           TabFocusReason (focus is moving to a tab; nothing to do with the Tab key), so without
           that window a tab click re-sets the flag milliseconds after the press cleared it, and
           the marker shows for a mouse click. That is exactly how the first version of this fix
@@ -4027,11 +4208,11 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             _press_t = self._last_mouse_press_t
             if (_press_t is None
                     or (time.perf_counter() - _press_t) > _MOUSE_PRESS_FOCUS_WINDOW_S):
-                self._keyboard_nav_active = True
+                self._set_keyboard_nav_active(True)
         elif reason is Qt.FocusReason.MouseFocusReason:
             # Secondary/defensive — see MODALITY OWNERSHIP above; the MouseButtonPress branch
             # in eventFilter is what actually clears this in the common cases.
-            self._keyboard_nav_active = False
+            self._set_keyboard_nav_active(False)
         # reason is None or OtherFocusReason → preserve flag unchanged (deliberately ambiguous)
         marker = getattr(self, 'focus_marker', None)
         if marker is None:
@@ -4170,7 +4351,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             # in the [RCLICK] probe's own panel_manager access, and a plain attribute write
             # cannot raise AttributeError/RuntimeError. Keeping it out means a future edit to
             # the probe can never silently swallow a failed modality clear.
-            self._keyboard_nav_active = False
+            self._set_keyboard_nav_active(False)
             self._last_mouse_press_t = time.perf_counter()
             try:
                 if event.button() == Qt.RightButton:
@@ -4190,6 +4371,36 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 pass
 
         if event.type() == QEvent.Type.KeyPress:
+            # Assert keyboard mode from the KEY PRESS itself, before any handler runs — the
+            # mirror of the MouseButtonPress clear below, and for the same reason: a press
+            # states intent unambiguously, whereas the focus event that may follow it does not.
+            #
+            # Inferring this downstream from TabFocusReason (the original design) missed two
+            # cases reported live 2026-09-04, both of which move the SELECTION without producing
+            # a qualifying focus event:
+            #   * Left/Right ON THE TAB BAR — focus never leaves the tab bar, so no focus event
+            #     fires at all and a hovered tab stayed highlighted while the keys drove.
+            #   * Left/Right BETWEEN BUTTONS — handled natively by Qt (see _handle_look_arrows,
+            #     which deliberately returns False for those), and a native sibling focus move
+            #     does not carry TabFocusReason.
+            # Scoped THREE ways, each closing a real failure:
+            #   * to the navigation keys, so ordinary typing and non-navigational shortcuts
+            #     leave the modality alone;
+            #   * skipped while a text field has focus, matching _handle_tab_escape's own
+            #     deference to QLineEdit;
+            #   * and only where the marker actually operates — the SETTINGS PANEL. Asserting
+            #     app-wide stranded the flag: arrowing around a tab with no hand-back targets
+            #     set it True where _cursor_over_navigable_control could never clear it, so
+            #     :hover stayed dead until a button was clicked. Narrowing it to the LOOK TAB
+            #     then broke the tab bar instead, since arrowing through tabs leaves Look by
+            #     definition. The Settings panel is the correct scope: it is exactly the set of
+            #     controls the hand-back check also recognises (tab bar always, Look buttons
+            #     when Look is up), which is the property that makes the flag reliably
+            #     clearable. Both regressions reported live 2026-09-04.
+            if (event.key() in _KBDNAV_ASSERT_KEYS
+                    and not isinstance(QApplication.focusWidget(), QLineEdit)
+                    and self._settings_is_active()):
+                self._set_keyboard_nav_active(True)
             if self._handle_tab_escape(event):
                 return True
             # Look-tab arrow navigation. After _handle_tab_escape (which owns Tab/Backtab and
