@@ -76,8 +76,11 @@ _CORNER_ARC_SEGMENTS = 6      # polyline segments per rounded corner; higher = s
 _SQUARE_CORNER_OBJECT_NAMES = frozenset(("balance_slider",))
 
 # Qt's painting convention puts pixel CENTRES at half-integer coordinates, so a 1px stroke drawn
-# on an integer straddles two rows at half intensity each rather than filling one. Added where a
-# long axis-aligned run makes that smear visible — see _tab_top_edge_perimeter.
+# on an integer straddles two rows at half intensity each rather than filling one (measured
+# 2026-09-05: #7f7f7f/#808080 across two rows at integer y, one crisp #ffffff row at y+0.5).
+# Applied to every perimeter the marker traces — the tab's top edge, and all four edges of a
+# widget rect, where it additionally pulls the right/bottom strokes back inside the widget
+# (left()+width() is one PAST the last painted pixel).
 _HALF_PIXEL = 0.5
 
 # Controls that show keyboard focus as a FILL SHIFT in QSS instead of a traveling border, and so
@@ -192,6 +195,26 @@ class _Perimeter:
             self._seg_len.append(d)
             total += d
         self.length = max(total, 1.0)  # guard div-by-zero for a degenerate 0-size rect
+
+    def vertex_ts(self) -> list:
+        """The t-position of every VERTEX on this path, in [0, 1].
+
+        Painting samples the path at evenly-spaced t and joins consecutive samples with straight
+        lines. Nothing about even spacing makes a sample land on a corner, so a segment that
+        happens to straddle one draws a diagonal SHORTCUT across it and the corner reads as
+        clipped. On a 140x12 slider two of the four corners fell 1.625px from the nearest sample
+        while the other two landed exactly — which is precisely how it presented live
+        (2026-09-05: "always the top right and bottom left").
+
+        Callers merge these into their sample list so every corner is a real sample and no
+        segment ever spans one. Cheap: a handful of cumulative sums, recomputed per paint only
+        because the perimeter itself is rebuilt on target change, not per frame."""
+        ts = [0.0]
+        acc = 0.0
+        for seg in self._seg_len:
+            acc += seg
+            ts.append(acc / self.length)
+        return ts
 
     def point_at(self, t: float) -> QPointF:
         t -= int(t)  # wrap into [0,1)
@@ -615,7 +638,16 @@ class TravelingFocusMarker(QWidget):
             else:
                 top_left = w.mapTo(self.main_window, QPoint(0, 0))
                 rect = QRect(top_left, w.size())
-                self._perimeter = _rect_perimeter(rect, radius=_corner_radius_for(w))
+                # inset=_HALF_PIXEL for the same reason the tab's top edge is offset (see
+                # _tab_top_edge_perimeter): a 1px stroke on an integer coordinate straddles two
+                # pixel lines at half intensity instead of filling one. It matters on all four
+                # edges here, and it also pulls the right/bottom strokes back onto the widget —
+                # rect.left()+width() is one PAST the last painted pixel, so at inset 0 those
+                # two edges drew just outside the control. Both were visible on the Audio tab's
+                # balance slider, whose long flat runs and hard edges leave nowhere to hide
+                # (reported live 2026-09-05).
+                self._perimeter = _rect_perimeter(
+                    rect, inset=_HALF_PIXEL, radius=_corner_radius_for(w))
         except RuntimeError:
             self._target = None
             self._perimeter = None
@@ -758,17 +790,40 @@ class TravelingFocusMarker(QWidget):
         # sample all _ROTATE_SAMPLES+1 points evenly across the CLOSED interval [0,1] instead, so
         # the final sample is the true endpoint, not an aliased wraparound.
         if self._perimeter.closed:
-            pts = [self._perimeter.point_at(i / _ROTATE_SAMPLES) for i in range(_ROTATE_SAMPLES + 1)]
+            ts = [i / _ROTATE_SAMPLES for i in range(_ROTATE_SAMPLES + 1)]
         else:
-            pts = [self._perimeter.point_at(i / _ROTATE_SAMPLES) for i in range(_ROTATE_SAMPLES)]
-            pts.append(self._perimeter.point_at(0.999999999))  # true endpoint, avoids t==1.0's wrap
+            ts = [i / _ROTATE_SAMPLES for i in range(_ROTATE_SAMPLES)]
+            ts.append(0.999999999)  # true endpoint, avoids t==1.0's wrap
+        # Merge in the path's own vertices so no segment straddles a corner and cuts it off as a
+        # diagonal — see _Perimeter.vertex_ts. Built against a FIXED snapshot of the even samples
+        # (`lo`/`hi` and the dedup both read `ts` as it was, not as it is being appended to): an
+        # earlier attempt tested against the list while mutating it, so a vertex could be
+        # measured against a moving bound and silently dropped — which left the bottom-left
+        # corner still cut. Re-sorted afterwards so the walk stays monotonic, which arc_px below
+        # depends on.
+        lo, hi = ts[0], ts[-1]
+        merged = sorted(ts + [vt for vt in self._perimeter.vertex_ts() if lo < vt < hi])
+        # Deduplicate AFTER sorting, against the previous kept value — so vertices are checked
+        # against each other, not only against the even samples. A rounded rect contributes ~30
+        # arc vertices, many closer together than _EPS, and an earlier version that compared
+        # each vertex only to the even samples let those through: the list came back
+        # non-monotonic, which silently corrupts arc_px below (it assumes strictly increasing t).
+        _EPS = 1e-9
+        ts = [merged[0]]
+        for t in merged[1:]:
+            if t - ts[-1] > _EPS:
+                ts.append(t)
+        pts = [self._perimeter.point_at(t) for t in ts]
         pen = QPen()
         pen.setWidthF(_ROTATE_WIDTH)
         pen.setCapStyle(Qt.PenCapStyle.FlatCap)  # RoundCap bulges at the joints between these many
                                                    # short adjoining segments, reading thicker than
                                                    # the actual _ROTATE_WIDTH.
         for i in range(len(pts) - 1):
-            arc_px = (i / _ROTATE_SAMPLES) * length
+            # From the sample's own t, NOT from its index — the corner merge above makes the
+            # spacing uneven, so an index-derived position would stretch and compress the colour
+            # sweep around every corner.
+            arc_px = ts[i] * length
             # Continuous sweep position through the palette, in [0, 1), wrapping — NOT a
             # symmetric -1..1 wave. A sine wave would bounce back and forth between only two
             # points in the palette (its min/max) rather than genuinely cycling through every
