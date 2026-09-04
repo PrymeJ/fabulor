@@ -82,6 +82,19 @@ _SIDEBAR_IDLE_POLL_MS = 500
 # _fade_in_flight check, which the ordinary no-hover dismiss skips entirely.
 _SNAPBACK_SETTLE_GAP_MS = 150
 
+# Settings tabs wired for arrow navigation — covered by settings_tab_button_rows() +
+# MainWindow._handle_settings_arrows. Membership is the ONE switch for turning it on for a tab:
+# both the row extraction and the arrow handler are generic over rows, so a tab whose controls
+# are QHBoxLayout rows and/or single full-width widgets needs nothing else. Audio qualifies
+# because its balance slider and Reset button become one-item rows (see settings_tab_button_rows).
+#
+# The remaining tabs are excluded because they are NOT that shape, each needing its own design:
+#   Library — button rows PLUS two list boxes (Manage folders, Excluded books), which own arrows
+#             for their own row selection, so they are Tab-entered rather than arrow-entered
+#   Themes  — a swatch grid, deliberately deferred to its own arrows+space design (see
+#             panel_tab_widgets, which already excludes ThemeItem for the same reason)
+_ARROW_NAV_TABS = frozenset(("Look", "Controls", "Audio"))
+
 
 class _ThemesTabBarInterceptor(QObject):
     """Event filter installed on Settings' tab bar (`mw.tabs.tabBar()`) — intercepts a
@@ -2493,23 +2506,41 @@ class PanelManager:
             result.append(w)
         return result
 
-    def look_tab_button_rows(self) -> list:
-        """The Look tab's buttons grouped into VISUAL rows, for arrow-key navigation
-        (see MainWindow._handle_look_arrows). Each entry is a list of buttons on one line,
-        left-to-right; rows are top-to-bottom. Empty list if Look is not the active tab.
+    def settings_tab_button_rows(self) -> list:
+        """The active settings tab's controls grouped into VISUAL rows, for arrow-key navigation
+        (see MainWindow._handle_settings_arrows). Each entry is a list of widgets on one line,
+        left-to-right; rows are top-to-bottom. Empty list on a tab not yet wired for arrow
+        navigation (see _ARROW_NAV_TABS).
 
         Derived LIVE from the layout rather than from mw's per-group dicts (fade_buttons,
-        blur_buttons, ...) or any build-time snapshot, for two reasons:
-          * The Chapter-notches line's Animation pair is setVisible(False) whenever notches are
-            Off (app.py's set_notches_selection), so a fixed structure would offer a keyboard
-            stop on buttons that are not on screen. Visibility has to be re-read per keypress.
+        blur_buttons, digit_mode_buttons, ...) or any build-time snapshot, for two reasons:
+          * Controls are hidden and shown at runtime — Look's Chapter-notches line hides its
+            Animation pair when notches are Off, and Audio's "Reset to defaults" is hidden
+            whenever every audio setting is already at its default (AudioSettingsTab.
+            update_visuals). A fixed structure would offer a keyboard stop on something that is
+            not on screen, so visibility has to be re-read per keypress.
           * Row membership then follows whatever the builder actually lays out — add or reorder
-            a row in build_appearance_tab and this keeps working with no second place to update.
+            a row and this keeps working with no second place to update.
 
-        The notches line's two groups (notches On/Off + Animation On/Off) share ONE QHBoxLayout
-        and are deliberately treated as ONE row, matching what the user sees on screen."""
+        TWO ROW SHAPES, because the tabs genuinely have two:
+          * a QHBoxLayout of controls — the common case. Two logical groups sharing ONE layout
+            are deliberately ONE row, matching what the user sees: Look's notches line
+            (notches + Animation) and Controls' digit line (By name/By index + Auto-play/Jump
+            only) are both this shape.
+          * a single widget added straight to the tab's QVBoxLayout via addWidget — Audio's L/R
+            balance slider and its full-width "Reset to defaults" button. These become one-item
+            rows, so Up/Down reach them like any other row and Left/Right have something
+            meaningful to do (the arrow handler steps a slider's value rather than moving focus).
+
+        Membership is by focus policy, not by class: any widget that accepts focus counts, which
+        is what lets a ClickSlider and a non-#pattern_button QPushButton participate without
+        being special-cased here. Non-focusable decoration (header QLabels, the trailing
+        stretch) is skipped for free.
+
+        Still NOT covered, and needing their own design: Library's two list boxes, which own the
+        arrow keys for their own row selection and so are Tab-entered rather than arrow-entered."""
         tabs = getattr(self.main_window, 'tabs', None)
-        if tabs is None or tabs.tabText(tabs.currentIndex()) != "Look":
+        if tabs is None or tabs.tabText(tabs.currentIndex()) not in _ARROW_NAV_TABS:
             return []
         root = tabs.currentWidget()
         if root is None:
@@ -2517,19 +2548,27 @@ class PanelManager:
         layout = root.layout()
         if layout is None:
             return []
+
+        def _navigable(w) -> bool:
+            return (w is not None
+                    and w.isVisibleTo(root)
+                    and bool(w.focusPolicy() & Qt.FocusPolicy.TabFocus))
+
         rows = []
         for i in range(layout.count()):
             item = layout.itemAt(i)
             sub = item.layout()
-            if sub is None:
-                continue  # a header QLabel or the trailing stretch, not a button row
-            row = []
-            for j in range(sub.count()):
-                w = sub.itemAt(j).widget()
-                if isinstance(w, QPushButton) and w.isVisibleTo(root):
-                    row.append(w)
-            if row:
-                rows.append(row)
+            if sub is not None:
+                row = [w for j in range(sub.count())
+                       if _navigable(w := sub.itemAt(j).widget())]
+                if row:
+                    rows.append(row)
+                continue
+            # A widget sitting directly in the tab's own column (no inner QHBoxLayout) is its
+            # own single-item row — Audio's balance slider and Reset button.
+            w = item.widget()
+            if _navigable(w):
+                rows.append([w])
         return rows
 
     # ── Panel-local keyboard focus ownership ─────────────────────────────────

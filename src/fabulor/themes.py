@@ -96,6 +96,7 @@ GROUP 10 — MISC UI
 focus_marker:         (Optional) Color of the traveling-border-marker keyboard-focus dot (ui/focus_marker.py, "dot" style only). Fallback: text.
 focus_marker_alpha:   (Optional) Opacity (0.0 to 1.0, NOT 0-255) ceiling for the focus marker dot. Fallback: 1.0.
 focus_marker_palette: (Optional) List of 2+ hex colors the traveling-border-marker's "rotate" style. Fallback: [accent_light, accent_dark]
+focus_audio_tab_reset: (Optional) Background of the Audio tab's "Reset to defaults" button while it holds keyboard focus. Large filled buttons use a FILL SHIFT instead of the traveling border marker, which is a thin-border affordance and reads as noise on a big surface. Fallback: accent_light — the same step this button's own mouse hover uses.
 cover_preview_bg:     Background color for book cover previews in the library. Fallback: bg_deep → #000000.
 
 GROUP 11 — PLACEHOLDER COVERS
@@ -4212,7 +4213,45 @@ def get_settings_stylesheet(theme_name="default"):
             color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
             font-size: 14px;
             padding: 10px;
-            margin-top: 10px;
+        }}
+        /* Mouse hover. Needs its own ID-level rule: the generic `QPushButton:hover` cannot
+           reach this button, because the ID selector above outranks a plain type selector on
+           specificity and simply wins. That is why this button had no hover response at all
+           (pre-existing, found 2026-09-05 — not caused by the keyboard-focus work below).
+           accent_light is the same color the generic rule intended.
+
+           Deliberately NOT extended to #disable_sleep_btn, which has the identical gap: this
+           family of "reset/destructive action" buttons is explicitly un-unified (see
+           get_sleep_stylesheet's docstring) and unifying them is its own TODO item. */
+        #reset_audio_btn:hover {{
+            background: {t['accent_light']};
+        }}
+        /* Keyboard focus on the Reset button is shown as a FILL SHIFT, not the traveling
+           border marker (ui/focus_marker.py skips it — see _FILL_FOCUS_OBJECT_NAMES). The
+           marker is a thin-border affordance: it reads well crawling a small #pattern_button
+           or a tab, and reads as noise around a large filled button, where the border is not
+           what the eye tracks (live judgement 2026-09-04). Same reason Library's list boxes
+           will need their own treatment.
+
+           Default is accent_light — the exact step this button's own mouse hover already uses
+           (the generic QPushButton:hover rule), so keyboard focus and mouse hover agree.
+           focus_audio_tab_reset overrides it per theme.
+
+           Scoped to kbdnav="true" so it applies only while the keyboard is driving; with the
+           mouse, ordinary :hover behaviour is unchanged. */
+        QWidget#settings_panel[kbdnav="true"] #reset_audio_btn:focus {{
+            background: {t.get('focus_audio_tab_reset', t['accent_light'])};
+        }}
+        /* Keyboard-mode hover suppression, same contract as #pattern_button above: while the
+           keys are driving, a hovered-but-unfocused Reset button must not also light up. */
+        QWidget#settings_panel[kbdnav="true"] #reset_audio_btn:hover {{
+            background: {accent_style};
+        }}
+        /* ...but a control that is BOTH hovered and keyboard-focused is still focused, so the
+           focus fill has to win. Listed after the :hover rule above: equal specificity, so
+           source order decides. */
+        QWidget#settings_panel[kbdnav="true"] #reset_audio_btn:focus:hover {{
+            background: {t.get('focus_audio_tab_reset', t['accent_light'])};
         }}
         #balance_slider {{
             qproperty-bg_color: "{t['slider_chapter_bg']}";

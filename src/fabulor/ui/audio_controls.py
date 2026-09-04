@@ -89,6 +89,14 @@ class AudioSettingsTab(QWidget):
         self.balance_slider.setValue(int(self.config.get_balance() * 100))
         self.balance_slider.setFixedHeight(12)
         self.balance_slider.setFixedWidth(140)
+        # Keyboard-navigable, unlike every other ClickSlider in the app. ClickSlider is a
+        # QWidget subclass and so NoFocus by default, which is deliberate and load-bearing for
+        # the transport sliders (see CLAUDE.md's NoFocus sweep: a focusable chrome widget would
+        # swallow Space and starve the global shortcut dispatcher). This instance lives INSIDE a
+        # panel, where that rule does not apply and where it needs to be a keyboard stop like
+        # any other Audio control — so the policy is granted per-instance, never on the class.
+        # Left/Right adjust its value; see MainWindow._handle_settings_arrows.
+        self.balance_slider.setFocusPolicy(Qt.FocusPolicy.TabFocus)
         self.balance_slider.valueChanged.connect(self._on_balance_changed)
         layout.addWidget(self.balance_slider)
 

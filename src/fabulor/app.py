@@ -27,6 +27,7 @@ from .ui.sprint_panel import SprintPanel
 from .ui.theme_manager import ThemeManager, ThemeComboBox
 import time # For sleep timer
 from .library_controller import LibraryController
+from .ui.controls import ClickSlider # arrow-key adjustment of a focused settings slider
 from .ui.cover_loader import CoverLoaderWorker # For async cover loading
 from .ui.library import LibraryPanel
 from .ui.panels import PanelManager # New import for PanelManager
@@ -110,6 +111,12 @@ _KBDNAV_CURSOR_JITTER_PX = 3
 # Keys that assert keyboard mode on press (see MainWindow.eventFilter's KeyPress branch). These
 # are the keys that MOVE THE SELECTION — pressing one means the user is navigating, whether or
 # not it happens to generate a focus event Qt labels TabFocusReason.
+# Value step for Left/Right on a keyboard-focused settings slider (Audio's L/R balance, range
+# -100..100). 5 gives 40 presses end-to-end — fine-grained enough to land on a deliberate value,
+# coarse enough to cross the range without holding the key forever. The slider snaps to centre on
+# its own (snap_to_center), so 0 stays easy to hit.
+_BALANCE_ARROW_STEP = 5
+
 _KBDNAV_ASSERT_KEYS = frozenset((
     Qt.Key.Key_Tab, Qt.Key.Key_Backtab,
     Qt.Key.Key_Up, Qt.Key.Key_Down, Qt.Key.Key_Left, Qt.Key.Key_Right,
@@ -3920,9 +3927,10 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # (together with the NoFocus chrome buttons) it can never move focus anywhere.
         return True
 
-    def _handle_look_arrows(self, event) -> bool:
-        """Arrow-key navigation for the Settings > Look tab. Returns True iff this consumed the
-        event. Called from the app-level eventFilter, same contract as _handle_tab_escape.
+    def _handle_settings_arrows(self, event) -> bool:
+        """Arrow-key navigation for the button-row settings tabs (Look, Controls — see
+        panels._ARROW_NAV_TABS). Returns True iff this consumed the event. Called from the
+        app-level eventFilter, same contract as _handle_tab_escape.
 
         Overrides Qt's native arrow behaviour, which treats a QHBoxLayout of buttons as a flat
         chain: natively Up/Down do the same thing as Left/Right (step one button sideways),
@@ -3937,24 +3945,27 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             Right  -> always native (next button in the row)
 
         Up/Down always land on the row's FIRST button rather than trying to preserve a column:
-        the rows are 5, 3, 3, 4, 3 and 2-or-4 buttons wide, so there is no honest column to
-        preserve and a clamped guess would land unpredictably.
+        row widths differ both within and across tabs (Look runs 5, 3, 3, 4, 3 and 2-or-4;
+        Controls runs 4 and 2), so there is no honest column to preserve and a clamped guess
+        would land unpredictably.
 
         Tab/Shift+Tab are deliberately NOT touched — _handle_tab_escape still owns those, and
         their flat cycle through every control stays exactly as it was.
 
-        Everything is derived per keypress from PanelManager.look_tab_button_rows(), which reads
-        the live layout, so a row whose buttons are currently hidden (the Chapter-notches
-        Animation pair when notches are Off) is simply not a stop."""
+        Fully generic over the rows: everything is derived per keypress from
+        PanelManager.settings_tab_button_rows(), which reads the live layout. A row whose buttons
+        are currently hidden (Look's Chapter-notches Animation pair when notches are Off) is
+        simply not a stop, and a tab is opted in purely by joining _ARROW_NAV_TABS — no
+        per-tab code lives here."""
         key = event.key()
         if key not in (Qt.Key.Key_Up, Qt.Key.Key_Down, Qt.Key.Key_Left, Qt.Key.Key_Right):
             return False
-        if not self._look_tab_is_active():
+        if not self._settings_is_active():
             return False
         focus = QApplication.focusWidget()
         if isinstance(focus, QLineEdit):
             return False  # never preempt a text field's own cursor keys
-        rows = self.panel_manager.look_tab_button_rows()
+        rows = self.panel_manager.settings_tab_button_rows()
         if not rows:
             return False
         tab_bar = self.tabs.tabBar()
@@ -3967,24 +3978,35 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 return True
             return False
 
-        # Locate the focused button in the grid.
+        # Locate the focused control in the grid.
         pos = next((( r, c) for r, row in enumerate(rows)
-                    for c, btn in enumerate(row) if btn is focus), None)
+                    for c, w in enumerate(row) if w is focus), None)
         if pos is None:
-            return False  # focus is on some other Look control — leave it to Qt
+            return False  # focus is on some other control — leave it to Qt
         row_i, col_i = pos
 
         if key == Qt.Key.Key_Down:
             if row_i + 1 < len(rows):
                 rows[row_i + 1][0].setFocus(Qt.FocusReason.TabFocusReason)
                 return True
-            return True  # last row: swallow, so Down can't fall out of the button grid
+            return True  # last row: swallow, so Down can't fall out of the grid
         if key == Qt.Key.Key_Up:
             if row_i > 0:
                 rows[row_i - 1][0].setFocus(Qt.FocusReason.TabFocusReason)
             else:
                 tab_bar.setFocus(Qt.FocusReason.TabFocusReason)
             return True
+
+        # Left/Right on a focused SLIDER adjust its value instead of moving focus — a slider's
+        # own affordance is its position, so stepping off it sideways would leave the keyboard
+        # unable to actually set the thing it just selected. Checked before the row-edge rules
+        # below so a slider never falls through to them (it is always a one-item row, so
+        # col_i == 0 would otherwise send Left back to the tab bar).
+        if isinstance(focus, ClickSlider):
+            step = -_BALANCE_ARROW_STEP if key == Qt.Key.Key_Left else _BALANCE_ARROW_STEP
+            focus.setValue(max(focus.minimum(), min(focus.maximum(), focus.value() + step)))
+            return True
+
         if key == Qt.Key.Key_Left and row_i == 0 and col_i == 0:
             tab_bar.setFocus(Qt.FocusReason.TabFocusReason)
             return True
@@ -4033,16 +4055,20 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 bar.style().unpolish(bar)
                 bar.style().polish(bar)
                 bar.update()
-            # Every #pattern_button under the panel, NOT just look_tab_button_rows() — that
-            # helper returns [] unless Look is the current tab, so flipping the flag while on
-            # another tab left Look's buttons holding a stale style, and their hover stayed
-            # broken on return (reported live 2026-09-04). findChildren reaches them regardless
-            # of which tab is showing; a hidden button polishing to the same value is harmless.
+            # EVERY button under the panel, not just the current tab's and not filtered by
+            # object name. Two reasons, both learned the hard way:
+            #   * settings_tab_button_rows() only reports the CURRENT tab, so flipping the flag
+            #     while on another tab left the others' buttons holding a stale style and their
+            #     hover stayed broken on return (reported live 2026-09-04).
+            #   * an objectName == "pattern_button" filter silently excluded #reset_audio_btn,
+            #     whose focus fill is ALSO [kbdnav]-gated — any button that grows a
+            #     kbdnav-dependent rule must be repolished, so the safe default is all of them.
+            # findChildren reaches them regardless of which tab is showing, and a button with no
+            # kbdnav-dependent rule simply polishes to the same value.
             for btn in panel.findChildren(QPushButton):
-                if btn.objectName() == "pattern_button":
-                    btn.style().unpolish(btn)
-                    btn.style().polish(btn)
-                    btn.update()
+                btn.style().unpolish(btn)
+                btn.style().polish(btn)
+                btn.update()
         if active:
             # Remember where the cursor was resting when the keyboard took over, so merely
             # ENTERING keyboard mode while the cursor already sits on a control doesn't
@@ -4073,10 +4099,10 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self._kbdnav_cursor_poll.stop()
             return
         # Left the surface entirely (Settings closed) while keyboard mode was on: drop it here
-        # rather than leaving it set for whenever the user returns. Deliberately checks
-        # _settings_is_active, NOT _look_tab_is_active — arrowing through the TAB BAR leaves the
-        # Look tab by definition, and clearing on that turned the tab bar's own keyboard
-        # navigation back into mouse mode mid-flight (reported live 2026-09-04).
+        # rather than leaving it set for whenever the user returns. Deliberately the PANEL-level
+        # check, not a per-tab one — arrowing through the TAB BAR changes the current tab by
+        # definition, and clearing on that turned the tab bar's own keyboard navigation back
+        # into mouse mode mid-flight (reported live 2026-09-04).
         if not self._settings_is_active():
             self._set_keyboard_nav_active(False)
             return
@@ -4093,36 +4119,32 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         """Whether the Settings panel is the open panel — the surface the keyboard/mouse
         modality applies to.
 
-        This, NOT "the Look tab is current", is the right scope for the modality flag, because
-        the TAB BAR is keyboard-navigable and mouse-hoverable on every settings tab; only the
-        Look BUTTONS are Look-specific (_look_tab_is_active covers those). Scoping the modality
-        to Look alone regressed exactly that case (reported live 2026-09-04): arrowing through
-        the tabs necessarily leaves Look, so the setter switched off mid-navigation and the
-        poll's off-surface branch actively cleared the flag, leaving a hovered tab highlighted
-        while the keys were driving.
+        This, NOT "one particular tab is current", is the right scope for the modality flag,
+        because the TAB BAR is keyboard-navigable and mouse-hoverable on every settings tab;
+        only the button rows are per-tab. Scoping the modality to the Look tab alone regressed
+        exactly that case (reported live 2026-09-04): arrowing through the tabs necessarily
+        leaves Look, so the setter switched off mid-navigation and the poll's off-surface branch
+        actively cleared the flag, leaving a hovered tab highlighted while the keys were driving.
 
         The invariant that matters is narrower than "one surface": the modality setter and the
         hand-back check (_cursor_over_navigable_control) must recognise the SAME set of
-        controls, so the flag can never be set somewhere nothing can clear it. Both now span
-        the whole Settings panel — tab bar always, Look buttons when Look is up."""
+        controls, so the flag can never be set somewhere nothing can clear it. Both span the
+        whole Settings panel — tab bar always, plus whatever settings_tab_button_rows() reports
+        for the current tab."""
         return (hasattr(self, 'panel_manager') and hasattr(self, 'tabs')
                 and self.panel_manager.active_full_panel() == "settings")
-
-    def _look_tab_is_active(self) -> bool:
-        """Whether Settings > Look specifically is on screen — i.e. whether the Look BUTTONS
-        exist as navigation/hover targets right now. Narrower than _settings_is_active; use that
-        one for anything about the tab bar or the modality flag itself."""
-        return (self._settings_is_active()
-                and self.tabs.tabText(self.tabs.currentIndex()) == "Look")
 
     def _cursor_over_navigable_control(self, global_pos) -> bool:
         """Whether `global_pos` is over a control that competes with the traveling marker for
         "you are here" — i.e. something with its own :hover state the keyboard also navigates to:
-        the settings tab bar, or one of the Look tab's buttons.
+        the settings tab bar, or one of the active tab's arrow-navigable buttons.
 
-        Uses the same live row source as the arrow navigation (look_tab_button_rows) so the two
-        can't disagree about what a button is — notably, a hidden Chapter-notches Animation
-        button is not in the rows and so is correctly not a handoff target."""
+        Uses the same live row source as the arrow navigation (settings_tab_button_rows) so the
+        two can't disagree about what a button is — notably, a hidden Chapter-notches Animation
+        button is not in the rows and so is correctly not a handoff target. That shared source is
+        also what keeps the modality flag clearable: the setter and this check must recognise the
+        same controls, or the flag can be set somewhere nothing can clear it (see
+        _settings_is_active's docstring for the two live regressions that proved it)."""
         if not hasattr(self, 'tabs') or not hasattr(self, 'panel_manager'):
             return False
         tab_bar = self.tabs.tabBar()
@@ -4130,19 +4152,22 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             local = tab_bar.mapFromGlobal(global_pos)
             if tab_bar.rect().contains(local) and tab_bar.tabAt(local) >= 0:
                 return True
-        for row in self.panel_manager.look_tab_button_rows():
+        for row in self.panel_manager.settings_tab_button_rows():
             for btn in row:
                 if btn.rect().contains(btn.mapFromGlobal(global_pos)):
                     return True
         return False
 
     def _focus_marker_in_scope(self, focus) -> bool:
-        """Whether the traveling focus marker should be tracking `focus` right now. Scoped THIS
-        pass to the Settings panel's Look tab only: the Settings panel must be the active full
-        panel, the Look tab must be the active settings tab, and `focus` must be either the
-        Settings tab bar OR one of the Look tab's Tab-navigable controls (the exact same
-        membership set Tab cycling uses — no second source of truth)."""
-        if focus is None or not self._look_tab_is_active():
+        """Whether the traveling focus marker should be tracking `focus` right now: the Settings
+        panel must be the active full panel, and `focus` must be either the Settings tab bar OR
+        one of the active tab's Tab-navigable controls (the exact same membership set Tab cycling
+        uses — no second source of truth).
+
+        Scoped to the Settings PANEL, not to one tab: the tab bar is a marker target on every
+        tab, and the marker follows Tab-cycling wherever that goes. Which tabs additionally get
+        ARROW navigation is a separate, narrower question — see panels._ARROW_NAV_TABS."""
+        if focus is None or not self._settings_is_active():
             return False
         if focus is self.tabs.tabBar():
             return True
@@ -4380,9 +4405,9 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             # a qualifying focus event:
             #   * Left/Right ON THE TAB BAR — focus never leaves the tab bar, so no focus event
             #     fires at all and a hovered tab stayed highlighted while the keys drove.
-            #   * Left/Right BETWEEN BUTTONS — handled natively by Qt (see _handle_look_arrows,
-            #     which deliberately returns False for those), and a native sibling focus move
-            #     does not carry TabFocusReason.
+            #   * Left/Right BETWEEN BUTTONS — handled natively by Qt (see
+            #     _handle_settings_arrows, which deliberately returns False for those), and a
+            #     native sibling focus move does not carry TabFocusReason.
             # Scoped THREE ways, each closing a real failure:
             #   * to the navigation keys, so ordinary typing and non-navigational shortcuts
             #     leave the modality alone;
@@ -4407,7 +4432,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             # never sees arrows) and before the library branch, whose own arrow handling is
             # gated on the Library panel being the active one, so the two cannot both claim a
             # key. Self-gating: returns False immediately unless Settings > Look is active.
-            if self._handle_look_arrows(event):
+            if self._handle_settings_arrows(event):
                 return True
             if (hasattr(self, 'library_panel')
                     and event.key() in self.library_panel._LIST_KEY_HANDLED_KEYS):

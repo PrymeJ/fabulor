@@ -70,6 +70,30 @@ _BUTTON_CORNER_RADIUS = 4.0   # px — QPushButton (and #pattern_button, which d
 _TAB_CORNER_RADIUS = 2.0      # px — QTabBar::tab's top-left/top-right radius
 _CORNER_ARC_SEGMENTS = 6      # polyline segments per rounded corner; higher = smoother arc
 
+# Keyboard-navigable controls that paint SQUARE corners, so the marker must not round them (see
+# _corner_radius_for). ClickSlider draws a plain filled rect — no drawRoundedRect, and no
+# border-radius in its QSS — so tracing it at the button radius visibly clipped its corners.
+_SQUARE_CORNER_OBJECT_NAMES = frozenset(("balance_slider",))
+
+# Qt's painting convention puts pixel CENTRES at half-integer coordinates, so a 1px stroke drawn
+# on an integer straddles two rows at half intensity each rather than filling one. Added where a
+# long axis-aligned run makes that smear visible — see _tab_top_edge_perimeter.
+_HALF_PIXEL = 0.5
+
+# Controls that show keyboard focus as a FILL SHIFT in QSS instead of a traveling border, and so
+# must NOT get a marker at all — showing both would double up the affordance this whole mechanism
+# exists to keep singular.
+#
+# The traveling marker is a thin-border affordance. It reads well crawling a small
+# #pattern_button or a tab, where the border IS the visual edge of the control; on a large filled
+# button the border is not what the eye tracks, so a dot circling it reads as noise rather than
+# as "you are here" (live judgement 2026-09-04, after the marker was tried on Audio's Reset
+# button and on Library's list boxes).
+#
+# Their focus appearance lives entirely in themes.py (search the object name); this module's only
+# job is to stay out of the way. Library's two list boxes are the expected next additions.
+_FILL_FOCUS_OBJECT_NAMES = frozenset(("reset_audio_btn",))
+
 # Live-observed 1px horizontal misalignment specific to the QTabBar path — confirmed live
 # 2026-08-19 to affect ONLY the tab bar, not #pattern_button rectangles (which render correctly at
 # x=rect.left() with no offset), so this is scoped to the tab-bar rect only, not a general fix.
@@ -220,6 +244,22 @@ def _corner_arc(center: QPointF, radius: float, start_deg: float, end_deg: float
     return pts
 
 
+def _corner_radius_for(widget) -> float:
+    """The corner radius the marker should trace for `widget` — it must match what that widget
+    actually PAINTS, or the marker cuts corners the widget doesn't have (or squares off ones it
+    does). Confirmed live 2026-09-04 on the Audio tab's balance slider: traced at the button
+    radius, its corners were visibly clipped against a square bar.
+
+    Keyed on objectName rather than on class, deliberately: the radius is a QSS fact (themes.py
+    styles these by object name), so reading the same key keeps the two in step, and it avoids
+    importing widget classes into this module just to isinstance-check them.
+
+    `_SQUARE_CORNER_OBJECT_NAMES` is the exception list because square is the exception — every
+    button in these panels is rounded. Add to it when a new square-painted control becomes a
+    keyboard stop."""
+    return 0.0 if widget.objectName() in _SQUARE_CORNER_OBJECT_NAMES else _BUTTON_CORNER_RADIUS
+
+
 def _rect_perimeter(rect: QRect, inset: float = 0.0, radius: float = 0.0) -> _Perimeter:
     """Closed loop around all four edges of `rect`, starting at the top-left and going clockwise.
     `inset` (default 0) offsets the path inward from the raw edge; at 0 the marker rides centered ON
@@ -257,13 +297,48 @@ def _rect_perimeter(rect: QRect, inset: float = 0.0, radius: float = 0.0) -> _Pe
     return _Perimeter(pts)
 
 
+def _tab_top_edge_perimeter(rect: QRect, inset: float = 0.0) -> _Perimeter:
+    """Open path along ONLY the top edge of `rect`, left to right — the marker style tabs
+    actually use (2026-09-04).
+
+    Replaces the top+sides path (_tab_perimeter, kept below for reference) because the sides read
+    as noise: a tab is a small target, and three edges meant the dot spent most of its lap moving
+    vertically through the two short sides, drawing attention to the tab's outline rather than to
+    the tab. On some themes the side strokes also sat awkwardly against the neighbouring tab's
+    edge. One horizontal sweep across the top is calmer and unambiguous.
+
+    A straight line, but INSET at each end by the tab's own corner radius, so it spans only the
+    flat part of the top edge. Running the full width put the ends out where QTabBar::tab's
+    border-top-*-radius has already curved the border away, which visually squared off the
+    rounded corners — the marker read as a hard bar capping a soft shape (reported live
+    2026-09-05). Stopping at the tangent points leaves the corners visibly round.
+
+    Offset by _HALF_PIXEL so the 1px stroke lands ON one pixel row instead of straddling two.
+    Measured 2026-09-05: a 1px antialiased line at an INTEGER y renders as two rows at ~50%
+    each (#7f7f7f / #808080), while the same line at y+0.5 renders as one crisp full-intensity
+    row (#ffffff). The smeared version blends with the tab's own border underneath, which read
+    live as the sweep slanting upward at both ends. This matters here and not for the button
+    perimeters because those are dominated by their corner arcs and vertical runs; a long
+    perfectly-horizontal line is the case where the smear is unmissable."""
+    l = rect.left() + inset + _TAB_CORNER_RADIUS
+    t = rect.top() + inset + _HALF_PIXEL
+    r = rect.left() + rect.width() - inset - _TAB_CORNER_RADIUS
+    return _Perimeter([QPointF(l, t), QPointF(r, t)])
+
+
 def _tab_perimeter(rect: QRect, inset: float = 0.0, radius: float = 0.0) -> _Perimeter:
     """Open path over ONLY the top and two side edges of `rect` — the bottom edge (shared with the
-    tab's content panel below) is deliberately not patrolled, per the design. Path: bottom-left up
+    tab's content panel below) is deliberately not patrolled. Path: bottom-left up
     the left side, across the top, down the right side to bottom-right. t wraps from bottom-right
     back to bottom-left (jumping the un-traced bottom). `radius` rounds only the top-left/top-right
     corners (matching QSS's border-top-*-radius on QTabBar::tab — the bottom corners are square,
     same as the tab widget itself).
+
+    SUPERSEDED 2026-09-04 by _tab_top_edge_perimeter (see its docstring for why) and no longer
+    called. Kept because it is the only worked example of an open path with rounded corners, and
+    because the geometry bugs it exercised — the phantom wraparound segment and the endpoint
+    sampling short of the true end — are easy to reintroduce; both fixes live in
+    _paint_rotating_border and _paint_gradient_trail, keyed on _Perimeter.closed.
 
     Uses `left() + width()` / `top() + height()` for the far edges, NOT `rect.right()` /
     `rect.bottom()` — see _rect_perimeter's docstring for why (the Qt QRect inclusive-edge trap,
@@ -377,8 +452,12 @@ class TravelingFocusMarker(QWidget):
     def show_for(self, widget: QWidget) -> None:
         """(Re)start patrol on `widget`. Carries the current relative position (self._t) over to
         the new widget's border rather than resetting to a fixed start-point. Interrupts any
-        slowing/waiting/fading in progress and resumes full-speed patrol immediately."""
-        if widget is None:
+        slowing/waiting/fading in progress and resumes full-speed patrol immediately.
+
+        Declines widgets that show focus as a QSS fill shift instead (see
+        _FILL_FOCUS_OBJECT_NAMES) — clearing rather than tracing them, so the two affordances
+        never appear at once."""
+        if widget is None or widget.objectName() in _FILL_FOCUS_OBJECT_NAMES:
             self.clear()
             return
         self._target = widget
@@ -479,7 +558,8 @@ class TravelingFocusMarker(QWidget):
     def _rebuild_perimeter(self) -> None:
         """Map the target's border into overlay coordinates and build its perimeter. A QTabBar
         traces only the active tab's top+side edges (bottom shared with the panel); everything
-        else traces its full rounded rect. Guards a destroyed C++ widget (stale Python ref after a
+        else traces its full rect, rounded to match whatever corner radius that widget actually
+        paints (see _corner_radius_for). Guards a destroyed C++ widget (stale Python ref after a
         panel rebuild) as 'no target'."""
         w = self._target
         if w is None:
@@ -499,14 +579,12 @@ class TravelingFocusMarker(QWidget):
                 rect = QRect(top_left, tr.size())
                 rect.translate(_TAB_RECT_X_NUDGE, 0)  # see _TAB_RECT_X_NUDGE's own comment
                 # inset=0: the path follows the raw border line so the marker sits centered ON it
-                # (straddling it half-in/half-out), not tucked inside the perimeter. radius matches
-                # QTabBar::tab's own border-top-*-radius QSS (top corners only).
-                self._perimeter = _tab_perimeter(rect, radius=_TAB_CORNER_RADIUS)
+                # (straddling it half-in/half-out), not tucked inside the perimeter.
+                self._perimeter = _tab_top_edge_perimeter(rect)
             else:
                 top_left = w.mapTo(self.main_window, QPoint(0, 0))
                 rect = QRect(top_left, w.size())
-                # radius matches QPushButton's own border-radius QSS.
-                self._perimeter = _rect_perimeter(rect, radius=_BUTTON_CORNER_RADIUS)
+                self._perimeter = _rect_perimeter(rect, radius=_corner_radius_for(w))
         except RuntimeError:
             self._target = None
             self._perimeter = None
