@@ -214,6 +214,16 @@ def _dist(a: QPointF, b: QPointF) -> float:
     return (dx * dx + dy * dy) ** 0.5
 
 
+def _parse_palette(value: str) -> list:
+    """Parse a comma-joined hex string into QColors — the form a palette arrives in from QSS,
+    since Qt properties cannot carry a Python list. Falls back to _DEFAULT_ROTATE_PALETTE if
+    fewer than 2 valid colors survive (empty string before the first stylesheet application, or
+    a malformed theme value); the sweep needs at least two to blend between."""
+    colors = [QColor(part.strip()) for part in value.split(",") if part.strip()]
+    colors = [c for c in colors if c.isValid()]
+    return colors if len(colors) >= 2 else list(_DEFAULT_ROTATE_PALETTE)
+
+
 def _blend_color(a: QColor, b: QColor, frac: float) -> QColor:
     """Plain per-channel RGB lerp from `a` (frac=0) to `b` (frac=1). Deliberately NOT an HSV blend
     — see _marker_color's docstring for why an HSV hue rotation is a visual no-op on the
@@ -427,6 +437,10 @@ class TravelingFocusMarker(QWidget):
         # Falls back to _DEFAULT_ROTATE_PALETTE if the string is empty/unparseable (e.g. before
         # the first stylesheet application).
         self._focus_marker_palette: list[QColor] = list(_DEFAULT_ROTATE_PALETTE)
+        # Separate palette used only while the target is a settings TAB — see _active_palette.
+        # themes.py defaults it to focus_marker_palette, so the two are identical unless a theme
+        # deliberately overrides the tab one.
+        self._focus_marker_tab_palette: list[QColor] = list(_DEFAULT_ROTATE_PALETTE)
 
     @Property(QColor)
     def focus_marker_color(self): return self._focus_marker_color
@@ -442,10 +456,27 @@ class TravelingFocusMarker(QWidget):
     def focus_marker_palette(self): return ",".join(c.name() for c in self._focus_marker_palette)
     @focus_marker_palette.setter
     def focus_marker_palette(self, value: str):
-        colors = [QColor(part.strip()) for part in value.split(",") if part.strip()]
-        colors = [c for c in colors if c.isValid()]
-        self._focus_marker_palette = colors if len(colors) >= 2 else list(_DEFAULT_ROTATE_PALETTE)
+        self._focus_marker_palette = _parse_palette(value)
         self.update()
+
+    @Property(str)
+    def focus_marker_tab_palette(self):
+        return ",".join(c.name() for c in self._focus_marker_tab_palette)
+    @focus_marker_tab_palette.setter
+    def focus_marker_tab_palette(self, value: str):
+        self._focus_marker_tab_palette = _parse_palette(value)
+        self.update()
+
+    def _active_palette(self) -> list:
+        """Which palette the current target should be drawn with. A settings TAB sits on the tab
+        bar — and, when selected, on its own accent fill — which is a different backdrop from the
+        panel behind the buttons, so a palette that reads well on a button can blend into
+        invisibility on a tab (reported live 2026-09-05). Themes that need it set
+        focus_marker_tab_palette; themes.py defaults that key to focus_marker_palette, so this is
+        a no-op split unless a theme actually overrides it."""
+        if isinstance(self._target, QTabBar):
+            return self._focus_marker_tab_palette
+        return self._focus_marker_palette
 
     # ── public API (called from app.py's focus wiring) ───────────────────────────────
 
@@ -608,10 +639,10 @@ class TravelingFocusMarker(QWidget):
         runs — same ceiling-times-dynamic shape as library.py's _kbd_fill_color()/_kbd_alpha.
 
         `palette_frac` (0..1, or None — the default, meaning "don't use the palette," used only by
-        the "gradient"/"rotate" per-sample shimmer, never by "dot") walks
-        `self._focus_marker_palette` — a real, theme-driven list of 2+ colors (see the
-        focus_marker_palette Qt Property, set via QSS qproperty- from get_base_stylesheet's
-        `t.get('focus_marker_palette', [accent_light, accent_dark])`) — wrapping smoothly from the
+        the "gradient"/"rotate" per-sample shimmer, never by "dot") walks the palette
+        `_active_palette()` selects — a real, theme-driven list of 2+ colors (see the
+        focus_marker_palette / focus_marker_tab_palette Qt Properties, set via QSS qproperty-
+        from get_base_stylesheet) — wrapping smoothly from the
         last color back to the first so a continuous sweep has no seam. None is a deliberate
         sentinel, NOT 0.0 — 0.0 is a legitimate, meaningful sweep position (the very start of the
         palette, i.e. pure palette[0]) and using falsiness to mean "no palette" silently mapped
@@ -625,8 +656,8 @@ class TravelingFocusMarker(QWidget):
         base was pure white, S=0, hue rotation produced the identical color at every angle
         regardless of the shift). Blending between real, separately-saturated theme colors is
         visible regardless of how desaturated any single one of them is."""
-        if palette_frac is not None and len(self._focus_marker_palette) >= 2:
-            pal = self._focus_marker_palette
+        pal = self._active_palette()
+        if palette_frac is not None and len(pal) >= 2:
             pos = max(0.0, min(1.0, palette_frac)) * len(pal)
             i = int(pos) % len(pal)
             frac = pos - int(pos)

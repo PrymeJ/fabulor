@@ -96,7 +96,8 @@ GROUP 10 — MISC UI
 focus_marker:         (Optional) Color of the traveling-border-marker keyboard-focus dot (ui/focus_marker.py, "dot" style only). Fallback: text.
 focus_marker_alpha:   (Optional) Opacity (0.0 to 1.0, NOT 0-255) ceiling for the focus marker dot. Fallback: 1.0.
 focus_marker_palette: (Optional) List of 2+ hex colors the traveling-border-marker's "rotate" style. Fallback: [accent_light, accent_dark]
-focus_audio_tab_reset: (Optional) Background of the Audio tab's "Reset to defaults" button while it holds keyboard focus. Large filled buttons use a FILL SHIFT instead of the traveling border marker, which is a thin-border affordance and reads as noise on a big surface. Fallback: accent_light — the same step this button's own mouse hover uses.
+focus_marker_tab_palette: (Optional) Same, but ONLY for the marker while it traces a settings TAB. The tab sits on a different background from the buttons (the tab bar, and the selected tab's own accent fill), so a palette that reads well on a button can blend into invisibility there. Fallback: focus_marker_palette — set this only for the themes where the tab actually needs it.
+focus_audio_tab_reset: (Optional) Background of the Audio tab's "Reset to defaults" button while it is ACTIVE — either keyboard-focused or mouse-hovered; both read this one key so they cannot drift. Large filled buttons use a FILL SHIFT instead of the traveling border marker, which is a thin-border affordance and reads as noise on a big surface. Fallback: accent_light.
 cover_preview_bg:     Background color for book cover previews in the library. Fallback: bg_deep → #000000.
 
 GROUP 11 — PLACEHOLDER COVERS
@@ -2440,6 +2441,7 @@ THEMES = {
         "streak_grid_outline":           "#574535",
         "streak_grid_dot":               "#EBC27D",
         "tassel_fringe":                 "#A18F69",
+        "focus_marker_tab_palette":     ["#d6b100", "#FFFFFF"],      
         "placeholder_cover":             "#B19863",
         "carousel_stripe":               "#C5B67F",
         "gradient_bg_start":             "#4A3B2D",
@@ -3393,7 +3395,7 @@ def _get_gradient_style(t, prefix, fallback_color, opacity=1.0):
 # or falls back to one of its own other keys (slider_progress -> text_on_light_bg
 # -> text). Letting them inherit from the base template made The Color Purple's
 # explicit value leak into every theme that doesn't set its own.
-_NO_BASE_INHERIT_KEYS = ("bookmark_body", "bookmark_icon", "tassel_cord", "tassel_head", "tassel_fringe", "streak_grid_outline", "streak_grid_dot", "slider_progress", "placeholder_cover", "focus_marker_palette")
+_NO_BASE_INHERIT_KEYS = ("bookmark_body", "bookmark_icon", "tassel_cord", "tassel_head", "tassel_fringe", "streak_grid_outline", "streak_grid_dot", "slider_progress", "placeholder_cover", "focus_marker_palette", "focus_marker_tab_palette")
 
 
 # Panel-backdrop alpha override (2026-07-28). None = use each theme's own
@@ -3520,6 +3522,7 @@ def get_base_stylesheet(theme_name="default"):
             qproperty-focus_marker_color: "{t.get('focus_marker', t['text'])}";
             qproperty-focus_marker_alpha: {t.get('focus_marker_alpha', 1.0)};
             qproperty-focus_marker_palette: "{','.join(t.get('focus_marker_palette', [t['accent_light'], t['accent_dark']]))}";
+            qproperty-focus_marker_tab_palette: "{','.join(t.get('focus_marker_tab_palette', t.get('focus_marker_palette', [t['accent_light'], t['accent_dark']])))}";
         }}
         QLabel#percentage_label {{
             color: rgba({_hex_to_rgb(t.get('slider_progress', t.get('text_on_light_bg', t['text'])))}, 0.85);
@@ -4218,13 +4221,16 @@ def get_settings_stylesheet(theme_name="default"):
            reach this button, because the ID selector above outranks a plain type selector on
            specificity and simply wins. That is why this button had no hover response at all
            (pre-existing, found 2026-09-05 — not caused by the keyboard-focus work below).
-           accent_light is the same color the generic rule intended.
 
-           Deliberately NOT extended to #disable_sleep_btn, which has the identical gap: this
-           family of "reset/destructive action" buttons is explicitly un-unified (see
+           Reads the SAME focus_audio_tab_reset key as the keyboard focus fill below, so the two
+           can never drift: "this button is active" is one state here, whether you arrived by
+           mouse or by keyboard. Overriding the key in a theme moves both together.
+
+           Deliberately NOT extended to #disable_sleep_btn, which has the identical hover gap:
+           this family of "reset/destructive action" buttons is explicitly un-unified (see
            get_sleep_stylesheet's docstring) and unifying them is its own TODO item. */
         #reset_audio_btn:hover {{
-            background: {t['accent_light']};
+            background: {t.get('focus_audio_tab_reset', t['accent_light'])};
         }}
         /* Keyboard focus on the Reset button is shown as a FILL SHIFT, not the traveling
            border marker (ui/focus_marker.py skips it — see _FILL_FOCUS_OBJECT_NAMES). The
