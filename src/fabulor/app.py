@@ -108,18 +108,22 @@ _KBDNAV_CURSOR_POLL_MS = 60
 # sub-pixel/±1px OS-level cursor jitter, the same concern _MOUSE_JITTER_PX handles for the
 # Themes-tab swatch leave check (ui/theme_manager.py).
 _KBDNAV_CURSOR_JITTER_PX = 3
-# Keys that assert keyboard mode on press (see MainWindow.eventFilter's KeyPress branch). These
-# are the keys that MOVE THE SELECTION — pressing one means the user is navigating, whether or
-# not it happens to generate a focus event Qt labels TabFocusReason.
 # Value step for Left/Right on a keyboard-focused settings slider (Audio's L/R balance, range
 # -100..100). 5 gives 40 presses end-to-end — fine-grained enough to land on a deliberate value,
 # coarse enough to cross the range without holding the key forever. The slider snaps to centre on
 # its own (snap_to_center), so 0 stays easy to hit.
 _BALANCE_ARROW_STEP = 5
 
+# Keys that assert keyboard mode on press (see MainWindow.eventFilter's KeyPress branch). The
+# keys that MOVE THE SELECTION or ACT ON IT — pressing one means the user is driving with the
+# keyboard, whether or not it happens to generate a focus event Qt labels TabFocusReason.
+# Return/Enter are included because activating a control is as much "I am using the keyboard" as
+# moving between them: without it, pressing Enter while the mouse happened to rest on a control
+# would let hover reassert itself mid-interaction.
 _KBDNAV_ASSERT_KEYS = frozenset((
     Qt.Key.Key_Tab, Qt.Key.Key_Backtab,
     Qt.Key.Key_Up, Qt.Key.Key_Down, Qt.Key.Key_Left, Qt.Key.Key_Right,
+    Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space,
 ))
 
 # Shared dismiss duration for the indicator zone's two transient states: the volume-slider
@@ -3949,6 +3953,9 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         Controls runs 4 and 2), so there is no honest column to preserve and a clamped guess
         would land unpredictably.
 
+        Return/Enter activate the focused control, alongside the Space that Qt already provides
+        (see the branch below for why Enter needed adding and Space did not).
+
         Tab/Shift+Tab are deliberately NOT touched — _handle_tab_escape still owns those, and
         their flat cycle through every control stays exactly as it was.
 
@@ -3958,7 +3965,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         simply not a stop, and a tab is opted in purely by joining _ARROW_NAV_TABS — no
         per-tab code lives here."""
         key = event.key()
-        if key not in (Qt.Key.Key_Up, Qt.Key.Key_Down, Qt.Key.Key_Left, Qt.Key.Key_Right):
+        if key not in (Qt.Key.Key_Up, Qt.Key.Key_Down, Qt.Key.Key_Left, Qt.Key.Key_Right,
+                       Qt.Key.Key_Return, Qt.Key.Key_Enter):
             return False
         if not self._settings_is_active():
             return False
@@ -3968,6 +3976,25 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         rows = self.panel_manager.settings_tab_button_rows()
         if not rows:
             return False
+
+        # Return/Enter activate the focused button, alongside Space. Qt gives a QPushButton
+        # Space for free but ignores Return/Enter unless it is a dialog's default button
+        # (measured 2026-09-05: Space fires clicked(), Return and Enter do not; autoDefault and
+        # isDefault are both False here, and there is no dialog to set them). So Enter was doing
+        # nothing at all, and accepting it costs no existing behaviour.
+        #
+        # Matches every other keyboard-navigable surface in the app — chapter_list, library and
+        # book_detail_panel all already treat Space/Return/Enter as one activation set; Settings
+        # was the outlier. Space is deliberately NOT handled here: Qt's own handling is correct
+        # and intercepting it would only risk diverging from it.
+        # Only for things that can actually be clicked: the balance slider is a row member too,
+        # and ClickSlider has no click() — Enter on it would raise. A slider has no "activate"
+        # meaning anyway; its keyboard affordance is Left/Right, below.
+        if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            if any(focus is w for row in rows for w in row) and hasattr(focus, "click"):
+                focus.click()
+                return True
+            return False  # not clickable, or not one of our controls — leave it to Qt
         tab_bar = self.tabs.tabBar()
 
         # On the tab bar: Down enters the buttons. Left/Right must stay native so they keep
@@ -4005,6 +4032,13 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         if isinstance(focus, ClickSlider):
             step = -_BALANCE_ARROW_STEP if key == Qt.Key.Key_Left else _BALANCE_ARROW_STEP
             focus.setValue(max(focus.minimum(), min(focus.maximum(), focus.value() + step)))
+            # Keep the marker awake. Everywhere else an arrow MOVES focus, and arriving on the
+            # new target restarts the dwell as a side effect; here focus stays put, so without
+            # this the marker would slow, stop and fade while the user was still actively
+            # adjusting the value.
+            marker = getattr(self, 'focus_marker', None)
+            if marker is not None:
+                marker.keep_awake()
             return True
 
         if key == Qt.Key.Key_Left and row_i == 0 and col_i == 0:

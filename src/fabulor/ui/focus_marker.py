@@ -518,6 +518,24 @@ class TravelingFocusMarker(QWidget):
         self._rebuild_perimeter()      # keeps self._t (relative-position carryover)
         self._enter_patrol()
 
+    def keep_awake(self) -> None:
+        """Restart the idle dwell on the CURRENT target, as if the user had just arrived on it —
+        without rebuilding the perimeter or moving the marker.
+
+        For controls where a keypress acts on the control itself rather than moving to another
+        one, so the normal "no input for a while, therefore slow to a stop and fade" reading is
+        wrong: the user is demonstrably still there. Audio's L/R balance slider is the case that
+        prompted this — Left/Right adjust its value instead of changing focus, so without this
+        the marker would settle and fade while the user was actively dragging the value.
+
+        Deliberately reuses _enter_patrol wholesale rather than poking the idle timer directly:
+        it is the same path a fresh Tab-arrival takes, so it also interrupts an in-flight
+        slow/wait/fade and restores full alpha and speed — exactly what "the user is still here"
+        should mean, and already well exercised. A no-op when nothing is being shown."""
+        if self._target is None or self._perimeter is None:
+            return
+        self._enter_patrol()
+
     def clear(self) -> None:
         """Focus left the scope (or the panel closed). Stop everything, hide."""
         self._target = None
