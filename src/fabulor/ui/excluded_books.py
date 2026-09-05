@@ -54,7 +54,7 @@ def _derive_subdued(hex_color: str) -> str:
     if not c.isValid():
         return hex_color
     h, s, v, a = c.getHsv()
-    new_v = max(0, int(v * 0.7)) if v >= 0 else 150
+    new_v = max(0, int(v * 0.75)) if v >= 0 else 200
     return QColor.fromHsv(h, s, new_v, a).name()
 
 
