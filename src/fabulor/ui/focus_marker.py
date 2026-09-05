@@ -470,6 +470,16 @@ class TravelingFocusMarker(QWidget):
         # themes.py defaults it to focus_marker_palette, so the two are identical unless a theme
         # deliberately overrides the tab one.
         self._focus_marker_tab_palette: list[QColor] = list(_DEFAULT_ROTATE_PALETTE)
+        # Separate palette used only while the target is a SELECTED button (any #pattern_button-
+        # shaped control with the "selected" dynamic property true — see _active_palette). A
+        # selected button fills with `accent`, and the default palette's accent_light/accent_dark
+        # pairing can read as barely perceptible against that fill on themes where those colors
+        # sit close to accent itself (reported live 2026-09-05, screenshots: marker plainly
+        # visible on an unselected "Transparent" button, nearly invisible on the selected "Frosty
+        # glass" button, same theme, same marker). themes.py defaults it to focus_marker_palette,
+        # so this is a no-op split unless a theme actually overrides it — same shape as
+        # focus_marker_tab_palette above.
+        self._focus_marker_selected_palette: list[QColor] = list(_DEFAULT_ROTATE_PALETTE)
 
     @Property(QColor)
     def focus_marker_color(self): return self._focus_marker_color
@@ -496,15 +506,43 @@ class TravelingFocusMarker(QWidget):
         self._focus_marker_tab_palette = _parse_palette(value)
         self.update()
 
+    @Property(str)
+    def focus_marker_selected_palette(self):
+        return ",".join(c.name() for c in self._focus_marker_selected_palette)
+    @focus_marker_selected_palette.setter
+    def focus_marker_selected_palette(self, value: str):
+        self._focus_marker_selected_palette = _parse_palette(value)
+        self.update()
+
     def _active_palette(self) -> list:
         """Which palette the current target should be drawn with. A settings TAB sits on the tab
         bar — and, when selected, on its own accent fill — which is a different backdrop from the
         panel behind the buttons, so a palette that reads well on a button can blend into
         invisibility on a tab (reported live 2026-09-05). Themes that need it set
         focus_marker_tab_palette; themes.py defaults that key to focus_marker_palette, so this is
-        a no-op split unless a theme actually overrides it."""
+        a no-op split unless a theme actually overrides it.
+
+        A SELECTED button (any #pattern_button-shaped toggle across Look/Controls/Audio — the
+        "selected" dynamic property is true) has the same problem for the same reason: it fills
+        with `accent`, a different backdrop from an unselected button's transparent background,
+        so a palette tuned for the latter can vanish against the former (reported live
+        2026-09-05, screenshots: same marker, plainly visible on unselected "Transparent",
+        barely visible on selected "Frosty glass"). Checked via `property("selected")` rather
+        than a QSS/style query — call sites across the codebase set it as either the string
+        "true" or a raw bool, so this compares against both forms rather than assuming one."""
         if isinstance(self._target, QTabBar):
             return self._focus_marker_tab_palette
+        try:
+            is_selected = self._target is not None and self._target.property("selected") in ("true", True)
+        except RuntimeError:
+            # Target's C++ object was deleted between the last successful _rebuild_perimeter and
+            # this paint (e.g. a panel rebuild) — same stale-widget window _rebuild_perimeter
+            # already guards against. Fall back to the plain palette; the next paintEvent will see
+            # _perimeter is None (set by _rebuild_perimeter's own matching guard) and skip drawing
+            # entirely, so this value is never actually used for long.
+            is_selected = False
+        if is_selected:
+            return self._focus_marker_selected_palette
         return self._focus_marker_palette
 
     # ── public API (called from app.py's focus wiring) ───────────────────────────────
