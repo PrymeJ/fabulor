@@ -610,11 +610,22 @@ class ExcludedBooksPopup(QListWidget):
             return
         if self.currentRow() != 0:
             self.setCurrentRow(0)  # fires currentRowChanged -> _on_current_row_changed
-        elif self._kbdnav_row_widget is None:
-            # Already row 0 (either super() just set it, or a prior visit left it there) but
-            # nothing is currently tracked as revealed — reveal it. Guarded on
-            # _kbdnav_row_widget being None so this never double-fires when super() already
-            # triggered the reveal via a genuine currentRowChanged this same call.
+        else:
+            # Already row 0 (either super() just set it, or a prior visit left it there) —
+            # setCurrentRow above would be a same-value no-op here and currentRowChanged would
+            # never fire, so this path calls _on_current_row_changed(0) directly. Unconditional,
+            # NOT guarded on _kbdnav_row_widget being None: entering the box must take over row
+            # 0 from the MOUSE too, not just from a stale keyboard reveal — the mouse can be
+            # independently holding a DIFFERENT row open via _mouse_hovered_row_widget, and
+            # _on_current_row_changed retracts both trackers unconditionally before revealing
+            # row 0, so calling it again when row 0 is already the sole open row is a safe
+            # no-op. The previous `elif _kbdnav_row_widget is None` guard skipped this whenever
+            # that tracker was non-None for any reason, which would silently leave a genuinely
+            # mouse-held row open with row 0 dark — a real gap in the logic even though the
+            # specific live report that prompted this turned out, on the reporter's own
+            # re-examination, to describe correct behavior rather than this bug (2026-09-06:
+            # "Down highlights the second row" was the FIRST keyboard action after a mouse-only
+            # expand, with no focusInEvent re-entry involved at all — nothing wrong there).
             self._on_current_row_changed(0)
 
     def focusOutEvent(self, event):
