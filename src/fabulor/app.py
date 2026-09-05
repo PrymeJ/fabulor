@@ -6,7 +6,7 @@ import os
 from datetime import datetime, timedelta
 from PySide6.QtWidgets import (
     QFileDialog,
-    QWidget, QPushButton, QVBoxLayout, QListWidgetItem,
+    QWidget, QPushButton, QVBoxLayout, QListWidget, QListWidgetItem,
     QApplication, QGraphicsBlurEffect, QGraphicsOpacityEffect, QLineEdit,
 )
 from PySide6.QtCore import (
@@ -1479,6 +1479,15 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             item = QListWidgetItem(loc)
             item.setToolTip(loc)  # full path on hover, since long paths now elide instead of scrolling
             self.folder_list_widget.addItem(item)
+        # Remove and Rescan mean nothing with no folders configured. Disabling rather than
+        # hiding: hiding would strand Add alone on the left, and stretching it across the row
+        # would make the layout jump as folders come and go. setEnabled also does the whole job
+        # in one step — Qt dims via the :disabled QSS rule, drops :hover/:pressed, ignores
+        # clicks, and takes them out of Tab and arrow navigation so the keyboard skips straight
+        # past them (see _handle_settings_arrows, which filters on isEnabled()).
+        has_folders = bool(paths)
+        self.remove_folder_btn.setEnabled(has_folders)
+        self.refresh_library_btn.setEnabled(has_folders)
 
     def _get_selected_folder_path(self):
         item = self.folder_list_widget.currentItem()
@@ -3925,7 +3934,10 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 # Current focus isn't one of the panel's widgets: enter at the first (Tab) or
                 # last (Backtab).
                 nxt = widgets[0] if forward else widgets[-1]
-            nxt.setFocus(Qt.FocusReason.TabFocusReason)
+            # Via _focus_settings_control so a list box lands ON a path rather than merely
+            # focusing the empty box — same reason the arrow navigation routes through it.
+            # Backtab arrives from below, so it should land on the box's LAST path.
+            self._focus_settings_control(nxt, from_below=backward)
             return True
         # tags / book_detail / chapter_list / no panel open: Tab is a full no-op. Swallow it so
         # (together with the NoFocus chrome buttons) it can never move focus anywhere.
@@ -4001,7 +4013,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # switching tabs (via _ThemesTabBarInterceptor), and Up has nowhere above to go.
         if focus is tab_bar:
             if key == Qt.Key.Key_Down:
-                rows[0][0].setFocus(Qt.FocusReason.TabFocusReason)
+                self._focus_settings_control(rows[0][0])
                 return True
             return False
 
@@ -4012,14 +4024,58 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             return False  # focus is on some other control — leave it to Qt
         row_i, col_i = pos
 
+        # A focused LIST BOX owns Up/Down for its own row selection (Library's Manage folders).
+        # Only hand the key onward at the ends: Up on the first item leaves upward, Down on the
+        # last item leaves downward. Everything in between is Qt's to handle, so return False and
+        # let the widget move its own selection.
+        #
+        # Qt reports accepted=False for a boundary arrow (measured), but that cannot be relied on
+        # here: this runs from the app-wide eventFilter, BEFORE the widget sees the key at all,
+        # so the boundary has to be detected up front rather than inferred from propagation.
+        if isinstance(focus, QListWidget):
+            row = focus.currentRow()
+            if row < 0:
+                # Focus arrived without a selection — Qt leaves currentRow() at -1 when a list
+                # is focused programmatically, so the box was "entered" with nothing highlighted
+                # and the very first arrow was read as a boundary. Select the end the user is
+                # arriving from and consume this keypress as the act of entering: Down from
+                # above lands on the first path, Up from below lands on the last.
+                #
+                # This was invisible with several paths (Down happened to fall through to Qt,
+                # which moved -1 to 0) but fatal with exactly ONE, where -1 satisfied both
+                # boundary tests and every arrow bounced straight back out (reported live
+                # 2026-09-05: "when there is one path remaining, I can never activate it").
+                focus.setCurrentRow(0 if key == Qt.Key.Key_Down else focus.count() - 1)
+                self._keep_marker_awake()
+                return True
+            at_top = row == 0
+            at_bottom = row == focus.count() - 1
+            if ((key == Qt.Key.Key_Down and not at_bottom)
+                    or (key == Qt.Key.Key_Up and not at_top)):
+                # Move the selection HERE and consume the key, rather than returning False and
+                # letting Qt do it. The marker traces the selected ROW, so it has to re-map
+                # after the row changes — deferring to Qt would run _keep_marker_awake against
+                # the OLD selection and leave the marker a row behind. Focus stays on the box,
+                # so this also supplies the keep-awake the slider needs for the same reason.
+                focus.setCurrentRow(row + (1 if key == Qt.Key.Key_Down else -1))
+                self._keep_marker_awake()
+                return True
+            # Genuinely at an end: leave the box. Drop the selection on the way out, matching
+            # what a click on empty space already does (_PathListEventFilter) — a highlighted
+            # path left behind while focus sits elsewhere reads as still-selected, and Remove
+            # acts on the selection.
+            focus.clearSelection()
+            focus.setCurrentRow(-1)
+
         if key == Qt.Key.Key_Down:
             if row_i + 1 < len(rows):
-                rows[row_i + 1][0].setFocus(Qt.FocusReason.TabFocusReason)
+                self._focus_settings_control(rows[row_i + 1][0])
                 return True
             return True  # last row: swallow, so Down can't fall out of the grid
         if key == Qt.Key.Key_Up:
             if row_i > 0:
-                rows[row_i - 1][0].setFocus(Qt.FocusReason.TabFocusReason)
+                # from_below: arriving upward, so a list box should land on its LAST path.
+                self._focus_settings_control(rows[row_i - 1][0], from_below=True)
             else:
                 tab_bar.setFocus(Qt.FocusReason.TabFocusReason)
             return True
@@ -4032,13 +4088,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         if isinstance(focus, ClickSlider):
             step = -_BALANCE_ARROW_STEP if key == Qt.Key.Key_Left else _BALANCE_ARROW_STEP
             focus.setValue(max(focus.minimum(), min(focus.maximum(), focus.value() + step)))
-            # Keep the marker awake. Everywhere else an arrow MOVES focus, and arriving on the
-            # new target restarts the dwell as a side effect; here focus stays put, so without
-            # this the marker would slow, stop and fade while the user was still actively
-            # adjusting the value.
-            marker = getattr(self, 'focus_marker', None)
-            if marker is not None:
-                marker.keep_awake()
+            self._keep_marker_awake()
             return True
 
         if key == Qt.Key.Key_Left and row_i == 0 and col_i == 0:
@@ -4046,6 +4096,30 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             return True
         # Left elsewhere, and Right anywhere: native within-row stepping is already correct.
         return False
+
+    def _focus_settings_control(self, widget, from_below: bool = False) -> None:
+        """Give `widget` keyboard focus as a settings-navigation step, selecting a row first if
+        it is a list box.
+
+        A QListWidget focused programmatically has currentRow() == -1 — focused but with nothing
+        highlighted, so the marker traces the BOX and the user has to press an extra arrow before
+        anything is actually selected (reported live 2026-09-05: entering "selects the box, not
+        the first item", and Tab "skips the items"). Every path that moves focus during settings
+        navigation goes through here so they all behave the same; `from_below` picks the end being
+        arrived from, so Up from the buttons lands on the LAST path rather than the first."""
+        if isinstance(widget, QListWidget) and widget.count():
+            widget.setCurrentRow(widget.count() - 1 if from_below else 0)
+        widget.setFocus(Qt.FocusReason.TabFocusReason)
+
+    def _keep_marker_awake(self) -> None:
+        """Restart the traveling marker's idle dwell without moving it — for keys that act on
+        the focused control instead of moving to another one, where the usual "focus arrived
+        somewhere new" reset never happens and the marker would otherwise fade under an actively
+        working user. Used by the balance slider's Left/Right and by selecting a row inside a
+        list box. Safe no-op before the marker exists."""
+        marker = getattr(self, 'focus_marker', None)
+        if marker is not None:
+            marker.keep_awake()
 
     def _set_keyboard_nav_active(self, active: bool) -> None:
         """Single owner of `_keyboard_nav_active` AND its visual consequences.

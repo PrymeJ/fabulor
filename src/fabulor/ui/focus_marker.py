@@ -44,7 +44,7 @@ same convention as Library's keyboard-selection highlight alpha (`library_item_k
 import math
 from enum import Enum, auto
 
-from PySide6.QtWidgets import QWidget, QTabBar
+from PySide6.QtWidgets import QWidget, QTabBar, QListWidget
 from PySide6.QtCore import (Qt, QRect, QPoint, QPointF, QTimer, QVariantAnimation, QElapsedTimer,
                              Property)
 from PySide6.QtGui import QPainter, QColor, QPen
@@ -68,6 +68,12 @@ _DOT_RADIUS = 3.0        # px
 # edge). If either QSS radius ever changes, update the matching constant here too.
 _BUTTON_CORNER_RADIUS = 4.0   # px — QPushButton (and #pattern_button, which doesn't override it)
 _TAB_CORNER_RADIUS = 2.0      # px — QTabBar::tab's top-left/top-right radius
+_LIST_ITEM_CORNER_RADIUS = 0.0
+                              # px — a selected list row paints a plain rectangular block
+                              # (QListWidget#settings_folder_list::item:selected sets only a
+                              # background-color, no border-radius), so the marker is square
+                              # around it. Named rather than a literal 0 so the reason is
+                              # recorded and it tracks the QSS if that ever gains a radius.
 _CORNER_ARC_SEGMENTS = 6      # polyline segments per rounded corner; higher = smoother arc
 
 # Keyboard-navigable controls that paint SQUARE corners, so the marker must not round them (see
@@ -534,6 +540,13 @@ class TravelingFocusMarker(QWidget):
         should mean, and already well exercised. A no-op when nothing is being shown."""
         if self._target is None or self._perimeter is None:
             return
+        # Re-map first: for a list box the traced rect is the SELECTED ROW, not the widget, so
+        # the thing being kept awake may also have moved (arrowing between paths). Rebuilding is
+        # cheap and a no-op for targets whose geometry did not change.
+        self._rebuild_perimeter()
+        if self._perimeter is None:
+            self.clear()
+            return
         self._enter_patrol()
 
     def clear(self) -> None:
@@ -653,6 +666,22 @@ class TravelingFocusMarker(QWidget):
                 # inset=0: the path follows the raw border line so the marker sits centered ON it
                 # (straddling it half-in/half-out), not tucked inside the perimeter.
                 self._perimeter = _tab_top_edge_perimeter(rect)
+            elif isinstance(w, QListWidget) and w.currentRow() >= 0:
+                # Trace the SELECTED ITEM, not the box. The keyboard's unit of selection inside a
+                # list is the row, so a marker around the whole box says nothing about which path
+                # is actually selected — and read as "the box is selected, not the item"
+                # (reported live 2026-09-05).
+                item = w.item(w.currentRow())
+                vr = w.visualItemRect(item)
+                if not vr.isValid() or vr.isEmpty():
+                    self._perimeter = None
+                    return
+                # visualItemRect is in VIEWPORT coordinates, so map from the viewport — mapping
+                # from the list widget itself would be off by the frame and any scroll offset.
+                top_left = w.viewport().mapTo(self.main_window, vr.topLeft())
+                rect = QRect(top_left, vr.size())
+                self._perimeter = _rect_perimeter(
+                    rect, inset=_HALF_PIXEL, radius=_LIST_ITEM_CORNER_RADIUS)
             else:
                 top_left = w.mapTo(self.main_window, QPoint(0, 0))
                 rect = QRect(top_left, w.size())

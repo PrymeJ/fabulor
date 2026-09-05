@@ -5,7 +5,7 @@ import os
 import pstats
 import time
 from PySide6.QtWidgets import QWidget, QLabel, QPushButton, QHBoxLayout, QVBoxLayout, QGridLayout
-from PySide6.QtWidgets import QLineEdit, QApplication
+from PySide6.QtWidgets import QLineEdit, QApplication, QListWidget
 from PySide6.QtCore import QPoint, QRect, QPropertyAnimation, QAbstractAnimation, QTimer, Qt, QObject, QEvent
 from PySide6.QtGui import QCursor
 from .title_bar import ThemeItem
@@ -88,12 +88,14 @@ _SNAPBACK_SETTLE_GAP_MS = 150
 # are QHBoxLayout rows and/or single full-width widgets needs nothing else. Audio qualifies
 # because its balance slider and Reset button become one-item rows (see settings_tab_button_rows).
 #
-# The remaining tabs are excluded because they are NOT that shape, each needing its own design:
-#   Library — button rows PLUS two list boxes (Manage folders, Excluded books), which own arrows
-#             for their own row selection, so they are Tab-entered rather than arrow-entered
+# Library qualifies too: its Manage-folders QListWidget is a one-item row like Audio's slider,
+# and _handle_settings_arrows hands Up/Down back to the widget except at its first/last item, so
+# the box owns its own path selection while the row grid owns entering and leaving it.
+#
+# Still excluded:
 #   Themes  — a swatch grid, deliberately deferred to its own arrows+space design (see
 #             panel_tab_widgets, which already excludes ThemeItem for the same reason)
-_ARROW_NAV_TABS = frozenset(("Look", "Controls", "Audio"))
+_ARROW_NAV_TABS = frozenset(("Look", "Controls", "Audio", "Library"))
 
 
 class _ThemesTabBarInterceptor(QObject):
@@ -2501,6 +2503,12 @@ class PanelManager:
                 continue  # deferred: theme swatches get their own arrows+space nav later
             if not w.isVisibleTo(root):
                 continue
+            if not w.isEnabled():
+                # Qt's own Tab order skips disabled widgets; this cycle is hand-rolled, so it
+                # has to skip them explicitly or Tab would land on something unusable (Library's
+                # Remove/Rescan while no folders are configured). Keeps Tab and arrow navigation
+                # agreeing — settings_tab_button_rows applies the same rule.
+                continue
             if not (w.focusPolicy() & Qt.FocusPolicy.TabFocus):
                 continue
             result.append(w)
@@ -2550,9 +2558,21 @@ class PanelManager:
             return []
 
         def _navigable(w) -> bool:
-            return (w is not None
-                    and w.isVisibleTo(root)
-                    and bool(w.focusPolicy() & Qt.FocusPolicy.TabFocus))
+            # isEnabled matters as much as visibility: Library disables Remove/Rescan while no
+            # folders are configured (app.py's _update_folder_list_widget), and Qt already skips
+            # disabled widgets in Tab order — arrow navigation has to agree, or the marker would
+            # stop on a dimmed control that cannot be activated.
+            if (w is None
+                    or not w.isVisibleTo(root)
+                    or not w.isEnabled()
+                    or not (w.focusPolicy() & Qt.FocusPolicy.TabFocus)):
+                return False
+            # An EMPTY list box is not worth stopping on — there is nothing in it to select, so
+            # the keyboard should pass straight over it (Library's Manage folders with no
+            # folders added). It becomes a stop again the moment it has content.
+            if isinstance(w, QListWidget) and w.count() == 0:
+                return False
+            return True
 
         rows = []
         for i in range(layout.count()):

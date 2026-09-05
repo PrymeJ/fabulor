@@ -4211,6 +4211,20 @@ def get_settings_stylesheet(theme_name="default"):
             color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
             font-weight: bold;
         }}
+        /* Remove and Rescan are disabled while no folders are configured (app.py's
+           _update_folder_list_widget). Dim the label and the border rather than hiding the
+           buttons, which would strand Add alone on the left. These buttons are transparent, so
+           there is no fill to dim — the text and border ARE the button.
+           Listed after :hover/:pressed so it wins for a disabled button at equal specificity;
+           Qt does not deliver those states to a disabled widget anyway, but source order makes
+           that explicit rather than incidental. */
+        QPushButton#library_add_folder_btn:disabled, QPushButton#library_remove_folder_btn:disabled,
+        QPushButton#library_rescan_btn:disabled {{
+            background: transparent;
+            color: rgba({_hex_to_rgb(t['text'])}, 0.35);
+            border: 1px solid rgba({_hex_to_rgb(t['accent_dark'])}, 0.35);
+            font-weight: bold;
+        }}
         #reset_audio_btn {{
             background: {accent_style};
             color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
