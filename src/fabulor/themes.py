@@ -2844,7 +2844,9 @@ THEMES = {
         "streak_grid_outline":           "#28363D",
         "streak_grid_dot":               "#E8F0F2",
         "bookmark_body":                 "#E8F0F2",
-        "tassel_head":                   "#ECD386"
+        "tassel_head":                   "#ECD386",
+        "focus_marker_tab_palette":     ["#1ccf00", "#EEEEEE"],
+        "focus_marker_selected_palette": ["#CF00C3", "#EEEEEE"],
     },
     "The Overlook": {
         "bg_deep":                       "#2E1E14",

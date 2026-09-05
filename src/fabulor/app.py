@@ -178,7 +178,7 @@ class BrowserInterface:
     def __init__(self, main):
         self._main = main
 
-    def get_selected_folder(self): return self._main._get_selected_folder_path()
+    def get_current_folder(self): return self._main._get_current_folder_path()
     def get_selected_folders(self): return self._main._get_selected_folder_paths()
     def pick_folder(self): return self._main._get_new_folder_path()
 
@@ -393,7 +393,6 @@ class UICallbackInterface:
     def __init__(self, main):
         self._main = main
     def set_folder_list(self, folders): self._main._update_folder_list_widget(folders)
-    def get_selected_folder_path(self): return self._main._get_selected_folder_path()
     def open_folder_dialog(self): return self._main._get_new_folder_path()
     def update_status_banner(self, *a, **kw): self._main._update_status_banner_ui(*a, **kw)
     def update_metadata(self, *a, **kw): self._main._update_metadata_ui(*a, **kw)
@@ -1501,7 +1500,14 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         for Remove's enabled state, called on selection change and on any list repopulation."""
         self.remove_folder_btn.setEnabled(bool(self.folder_list_widget.selectedItems()))
 
-    def _get_selected_folder_path(self):
+    def _get_current_folder_path(self):
+        """The CURRENT-ROW path (Qt's currentItem()), independent of selection — a path can be
+        highlighted while unselected, or while OTHER rows are separately selected. Named
+        distinctly from _get_selected_folder_paths (plural, the real multi-selection) since a
+        2026-09-05 design pass split cursor position and selection into two genuinely different
+        facts (see _move_list_current_row's docstring); the old name here used to say "selected"
+        for what was always actually the current row, which read as a duplicate of the plural
+        method rather than the different thing it is."""
         item = self.folder_list_widget.currentItem()
         return item.text() if item else None
 
@@ -3997,7 +4003,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         per-tab code lives here."""
         key = event.key()
         if key not in (Qt.Key.Key_Up, Qt.Key.Key_Down, Qt.Key.Key_Left, Qt.Key.Key_Right,
-                       Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space):
+                       Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space, Qt.Key.Key_Delete):
             return False
         if not self._settings_is_active():
             return False
@@ -4024,6 +4030,17 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 item = focus.item(row)
                 if item is not None:
                     item.setSelected(not item.isSelected())
+            return True
+
+        # Del removes the CURRENT-ROW path immediately — deliberately independent of the
+        # selection Space/Enter builds above. Requiring a Space-select first before Del could act
+        # would be redundant with a dedicated delete key's whole purpose (reported live
+        # 2026-09-05: "it should delete the highlighted path without requiring the user to select
+        # it with Space first"). Routes through the same _remove_folders core the Remove button
+        # uses, just with a single-path list built from the cursor instead of from selection —
+        # see LibraryController._remove_folder_at_cursor.
+        if focus is self.folder_list_widget and key == Qt.Key.Key_Delete:
+            self.library_controller._remove_folder_at_cursor()
             return True
 
         # Return/Enter activate the focused button, alongside Space. Qt gives a QPushButton
