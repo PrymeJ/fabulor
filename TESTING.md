@@ -52,13 +52,73 @@ Run these on **each** participating tab; the handler is generic, so a break on o
 - [ ] Its mouse hover works (this was broken pre-existing) and matches the keyboard focus colour
 - [ ] Both follow `focus_audio_tab_reset` if a theme overrides it
 
-### Library — Manage folders list
-- [ ] **Down** from the tab bar enters the box **on the first path**, not merely on the box
-- [ ] **Up** from the Add row enters the box **on the last path**
-- [ ] Arrows step between paths; the marker follows the **selected row**, not the box outline
-- [ ] With exactly **ONE** path: Down selects it (it must not bounce straight back out)
-- [ ] Up on the first path / Down on the last leaves the box, clearing the selection on the way out
-- [ ] Tab/Shift+Tab into the box also land on a path, not the bare box
+### Library — Manage folders list (cursor and selection are independent facts)
+No traveling marker here — the current row is shown as a small dot at the row's right edge
+(`_FolderListItemDelegate`), separate from the accent fill a selected row gets. Arrow keys never
+change selection, on entry, mid-list, or exit; Space/Enter is the only thing that does.
+- [ ] **Down** from the tab bar enters the box **on the first path**, with **nothing selected** —
+  the dot shows on row 0, no accent fill anywhere
+- [ ] **Up** from the Add row enters the box **on the last path**, same: dot only, nothing selected
+- [ ] Arrow through several rows with nothing selected: only the dot moves, no row ever gets an
+  accent fill from arrowing alone
+- [ ] **Space** (or **Enter**) toggles the current row's selection on; press it again on the same
+  row and it toggles back off — both keys must behave IDENTICALLY, never split add/remove
+- [ ] Select two or three non-adjacent rows with Space, then arrow through the whole list: the
+  dot moves freely and the selected rows' accent fill is undisturbed the entire time
+- [ ] With exactly **ONE** path: Down enters it (must not bounce straight back out)
+- [ ] Up on the first path / Down on the last leaves the box — **whatever is selected stays
+  selected** (this used to clear on the way out; it must not anymore, since Remove needs to act on
+  it after Tabbing away)
+- [ ] Tab/Shift+Tab into the box also land on a path (dot on row 0/last, nothing selected), not the
+  bare box
+- [ ] **Del** removes the CURRENT-ROW path immediately, with no selection required first — works
+  identically whether or not that row happens to also be selected, and never touches other selected
+  rows
+- [ ] **Remove** button is dimmed/unclickable whenever nothing is selected, and enables live the
+  instant a row is Space-selected — including right after a scan finishes (it must not silently
+  re-enable itself with no selection)
+- [ ] A plain click on the sole selected path deselects it (toggle-off) instead of re-selecting the
+  same path; Ctrl+click's own toggle behavior is unaffected
+- [ ] **Left** anywhere inside the box goes to the tab bar; **Right** anywhere inside the box is a
+  no-op (neither has a native meaning for a folder-path row)
+- [ ] The folder list's own scrollbar has **square** corners, matching its border-radius override
+  (a themed scrollbar rule elsewhere in Settings sets 4px and can silently win if this one's value
+  is ever merely omitted rather than set to 0px)
+
+### Excluded Books popup (Settings → Library, below Persist search filter)
+Self-managed overlay with its own `keyPressEvent` — mirrors `ChapterList`'s conventions rather than
+`_handle_settings_arrows`'s button-row model. No separate marker/fill/dot: the row's own hover-
+reveal eye slide IS the "you are here" indicator, driven by keyboard exactly like a real mouse hover
+would.
+- [ ] **Down** from any Persist search filter button enters the box on row 0, eye revealed
+- [ ] **Right** from Persist search filter's rightmost button also enters the box on row 0
+- [ ] With 0 excluded books, the box is invisible and never becomes a keyboard stop at all
+- [ ] Up/Down move the eye one row at a time; scrolling happens automatically once past the visible
+  window, including past the 7-row expanded cap if there are more than 7 excluded books
+- [ ] **Left/Right** (either key) toggle expand/collapse, same as `ChapterList`'s own convention —
+  not tied to scroll position, a deliberate action only
+- [ ] **Space/Enter** on the current row restores it — same effect as clicking its eye
+- [ ] **Up** at row 0 always exits to Persist search filter's row, collapsing the box first if it
+  was expanded (never a no-op, regardless of expand state)
+- [ ] Collapsing while the eye is on a row beyond the default 3 (only reachable while expanded)
+  scrolls that row back into view rather than resetting the cursor to row 0
+- [ ] Shift+Tab away from the box, or a mouse click landing on any other Settings control, also
+  collapses an expanded box — not just the Up-at-row-0 path
+- [ ] **Mouse and keyboard, "most recent move wins":** rest the mouse on one row while arrowing the
+  keyboard to a different row — only ONE eye is ever open at a time, and it always follows whichever
+  input moved most recently
+- [ ] With the transport-bar blur enabled and the panel open, rest the mouse motionless on a row and
+  press an arrow key repeatedly: the keyboard's eye must stay put on the new row, not flash and
+  immediately revert to the mouse's row (this was a real, confirmed bug — the blur's hide/show grab
+  cycle delivers a real, matched leave+enter pair to a perfectly stationary mouse roughly every
+  200ms)
+- [ ] Expand the box with the MOUSE while a Persist search filter button holds keyboard focus: focus
+  moves into the box (row 0) rather than staying stranded under the now-covered button
+- [ ] Arrow (Left/Right) across Persist search filter's own buttons while the box is ALREADY
+  expanded: same redirect, focus moves into the box instead of landing on a covered PSF button
+- [ ] The scrollbar handle is a distinct, darker shade from `ExcludedBooksSection`'s expand arrow
+  directly above it (both used to be plain `accent` and visually merged at their shared edge), and
+  has square corners like the folder list's
 
 ### Marker shape (per control type)
 - [ ] Small buttons: rounded corners traced, all four corners intact — no corner cut off as a diagonal

@@ -1,3 +1,114 @@
+## Session Summary — 2026-09-05/06 Session 1 — Library's folder-list toggle model rebuilt around a keyboard cursor separate from selection; full keyboard navigation added to the Excluded Books popup; a real transport-bar-blur interference bug found and fixed along the way. `d130dea`→`f482d8c` on `feature/traveling-focus-marker`
+
+Closed both of the previous session's "next session" items — folder-list multi-selection
+discoverability and the Excluded Books marker problem — and along the way found a genuine,
+previously-undiagnosed interference bug between the transport-bar blur effect and any hover-driven
+UI element, not specific to this branch's own code.
+
+**Folder-list selection model, rebuilt from a live correction.** The first attempt (Space=add,
+Enter=deselect) was flatly rejected — *"I want Space and Enter to act the same way. They are to
+work as toggle."* Landed on a design where cursor movement and selection are two fully independent
+facts: arrowing never touches selection, on entry, mid-list, or exit; Space/Enter is the *only* way
+selection changes, toggling whichever row the cursor is on. This meant `QListWidget.setCurrentRow()`
+had to go — it silently does `ClearAndSelect`, so a plain cursor move was clobbering a multi-row
+selection built by hand. Replaced with `QItemSelectionModel.setCurrentIndex(idx, NoUpdate)`
+throughout (`_move_list_current_row`), which moves the cursor and leaves selection alone. Auto-
+selecting the entry row was tried and rejected too — reaching row 3 without ever touching row 1
+meant either living with a stray selection or explicitly clearing it first, exactly the
+discoverability problem this was fixing, just relocated.
+
+The visual side needed two iterations. A current-row FILL shade (mirroring `focus_audio_tab_reset`)
+was built first, then abandoned once multiple rows were actually selected — a second fill color
+can't stay legible next to the real selected-accent fill, and there is no `::item:focus` QSS
+selector to hook one to anyway (`:focus` is a widget-level pseudo-state, not per-row; confirmed live
+by setting one to solid white and seeing no change). Replaced with a small dot painted at the row's
+right edge by a dedicated delegate (`_FolderListItemDelegate`), independent of selection — a dot
+can't be mistaken for a fill, so cursor position and selection stay visually separable at any
+selection size. `focus_folder_list_row` was renamed to `focus_folder_list_dot` mid-flight once the
+mechanism changed under it.
+
+**Mouse-driven bugs, found and fixed alongside:** a plain click on the sole selected row re-selected
+it instead of toggling it off (`_PathListEventFilter` now intercepts a no-modifier left-click on an
+already-sole-selected row); Remove stayed clickable with nothing selected (`_update_remove_folder_btn_enabled`
+is now the single source of truth for its enabled state, wired to `itemSelectionChanged` and to
+every path that repopulates the list or re-enables buttons after a scan); the folder list's own
+scrollbar had rounded corners despite an obsolete override attempt — omitting a property doesn't
+beat an ancestor rule that sets one explicitly, only a contradicting value does (same lesson
+resurfaced for the Excluded Books scrollbar, below). Del now removes the current-ROW folder
+immediately, independent of selection, via a new `LibraryController._remove_folders` core shared
+with the selection-based Remove button.
+
+**Excluded Books got a full keyboard model, mirroring ChapterList's own conventions rather than
+inventing new ones:** `ExcludedBooksPopup` now owns its own `keyPressEvent` (Up/Down scroll natively
+under `NoSelection` with no clobbering trap to route around; Left/Right toggle expand/collapse,
+either key, matching `ChapterList`; Space/Enter fires the same restore the eye click does). No
+separate marker, fill, or dot here — the row's own hover-reveal eye slide already means "you are
+here," so a second affordance would be redundant, and it is now driven programmatically wherever
+the keyboard cursor moves (`_ExcludedRow.set_hovered`). Entered from Persist search filter's row
+(Down from any button, Right from the rightmost — the one row-to-row transition needing a Right
+addition, since it is the tab's last row). A live design correction while building this: "should we
+auto-expand on Down at the visible-row boundary?" — no; scrolling already reaches every book past
+`MAX_EXPANDED_ROWS`, and expand/collapse stays Left/Right, the same split ChapterList already uses.
+
+**The transport-bar blur bug — the one genuinely new finding this session, not specific to this
+branch.** `TransportBarBlurOverlay._grab_and_blur` hides and re-shows the active panel roughly every
+200ms whenever blur is enabled and any panel is open (a known, already-documented mechanism — see
+CLAUDE.md's own "hover-flicker" section) — and that hide/show cycle delivers a REAL, matched
+leaveEvent+enterEvent pair to whatever widget the mouse happens to be resting on, with the cursor
+never having moved. Reported live as "the mouse always wins": the keyboard's row reveal would flash
+on then vanish on every single arrow press while the mouse rested anywhere in the Excluded Books
+box. The first fix attempt suppressed only the leave half, via a `QCursor.pos()`-vs-the-row's-rect
+check (same shape as the Themes-tab swatch-leave backstop) — this closed roughly half the bug and
+*opened a worse one*: an early version of that same check compared LOCAL coordinates
+(`mapFromGlobal` against a bare `rect()`), which cannot distinguish "cursor is in this row" from
+"cursor is in the row directly below/above," since every row shares the same height. That shipped
+briefly as a regression (multiple rows stuck open simultaneously, accumulating across a session) and
+was caught the same session — fixed by comparing GLOBAL rects instead, and independently backstopped
+with `enforce_single_hover`, a structural invariant (at most one row may ever show as `hover`,
+enforced by sweep on every reveal) that makes that whole failure class self-correcting regardless of
+which specific check is at fault. The actual "mouse always wins" fix was a second, distinct half:
+the leave-suppression check alone still let the matched spurious ENTER through unfiltered, and
+`_leave_suppressed_recently` (set on a suppressed leave, read once by the very next enterEvent on
+that same row) closes it — confirmed live, and independently confirmed live by the reporter
+disabling the blur effect and watching the symptom disappear.
+
+**Two false leads worth recording, both self-corrected before shipping:** treating "one eye at a
+time now" as confirmation the mouse-wins bug (not just the multi-eye regression) was fixed — it
+wasn't, and needed the report re-asked plainly. And treating "Down highlights the second row" (after
+a mouse-driven expand, then an immediate arrow press) as a missed reveal-of-row-0 step — on the
+reporter's own re-examination, a mouse action legitimately owns the state until a keyboard action
+actually happens, and the very first arrow press correctly acting relative to `currentRow()` is not
+evidence anything was skipped. The `focusInEvent` fix that first correction motivated
+(`_on_current_row_changed(0)` unconditional rather than guarded on `_kbdnav_row_widget is None`) was
+kept anyway — a real, narrower gap on its own merits (a genuinely mouse-held row could stay open
+across an unrelated focus-out/focus-in cycle) — but the commit says plainly that it does not explain
+the report that prompted it.
+
+**Also this session, smaller and independent:** a `focus_marker_selected_palette` theme key (mirrors
+`focus_marker_tab_palette`'s shape) for themes where the default rotate palette blends into a
+*selected* button's accent fill, the same problem the tab palette solves for the tab bar; and the
+Excluded Books scrollbar handle recolored off plain `accent` (which visually merged with
+`ExcludedBooksSection`'s expand arrow directly above it) to a derived, same-hue-darkened tint
+(`_derive_subdued`) — desaturating was tried first and read as muddy across themes, live-rejected in
+favor of a pure value cut.
+
+Focus ownership needed one more app-wide rule, not just Excluded-Books-local ones: Persist search
+filter's row can end up physically covered when the box expands upward past its default 3 rows,
+with a PSF button still holding keyboard focus. Fixed with a `FocusIn`-observing redirect
+(`eventFilter`) for the "focus lands on a covered PSF button" direction, plus a symmetric check in
+`_on_excluded_toggle_clicked` for the "box expands out from under an already-focused PSF button"
+direction (mouse-driven, no focus event to hook at all) — both redirect straight into the box's own
+normal entry point rather than building separate arbitration for the concurrent-mouse-hover case,
+since the box's existing coordination already handles that.
+
+TODO.md's two items for this arc (folder-list discoverability, Excluded Books marker) are both
+closed and removed. Left open: the Themes tab's own arrows+space design, and `#disable_sleep_btn`'s
+unrelated pre-existing hover gap.
+
+`pytest tests/ -q` green throughout (504 tests).
+
+---
+
 ## Session Summary — 2026-09-05 Session 1 — Keyboard navigation extended from Look to Controls, Audio and Library; large controls get a fill shift instead of the marker. `0570dbb`→`73df657` on `feature/traveling-focus-marker`
 
 Continued the previous session's work, which had wired arrow navigation for Settings > Look only.

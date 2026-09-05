@@ -12,16 +12,6 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
 ### Settings keyboard navigation — remaining surfaces
 Branch `feature/traveling-focus-marker` (not merged). Look, Controls, Audio and Library are done;
 these are the pieces deliberately left for the next pass.
-- [2026-09-05] **Folder-list multi-selection is not discoverable.** `folder_list_widget` is
-  `ExtendedSelection`, and by keyboard Space adds to the selection but never removes — deselecting
-  is possible with arrows but the interaction is hard to work out. Decide the intended model
-  (Space as a toggle? Ctrl+Space? explicit "clear selection"?) and make deselect reachable the same
-  way select is.
-- [2026-09-05] **Excluded-books box: the marker lands on hidden eye icons outside the box.** Those
-  icons are per-row hover affordances, so they are focusable/traceable while off-screen or not yet
-  revealed. Reported live; needs the box's own arrow model anyway (Tab in/out, arrows for row
-  selection, Left/Right to expand like the chapter list when there are more than 3 books, and the
-  eye icon shown for the arrow-selected row exactly as mouse hover shows it).
 - [2026-09-05] **Themes tab still excluded from `_ARROW_NAV_TABS`.** The swatch grid needs its own
   arrows+space design; `panel_tab_widgets` already excludes `ThemeItem` for the same reason.
 - [2026-09-05] `#disable_sleep_btn` has the same missing-`:hover` gap that was fixed for

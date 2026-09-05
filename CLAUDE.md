@@ -1752,7 +1752,27 @@ Any `QWidget` subclass (not `QFrame`, not `QLabel`) that owns a background-color
 
 *Reorganization note (2026-07-13): the "Critical Architecture Rules" section was restructured to remove repetition — it previously existed as two passes (a full-prose section and a later condensed second pass covering many of the same rules). The two were merged: rules that appeared in both now appear once, under whichever fact they share, with no information dropped. Rules unique to either pass are unchanged. See the note directly under the "Critical Architecture Rules" heading for detail.*
 
-*Last updated: 2026-09-05 — Keyboard navigation extended from Look to Controls, Audio and Library
+*Last updated: 2026-09-05/06 — Library's folder-list keyboard model rebuilt (branch
+`feature/traveling-focus-marker`, still NOT merged): cursor position and selection are now fully
+independent — arrows never touch selection, Space/Enter is the only thing that does, toggling
+(never splitting into add/remove keys). `QListWidget.setCurrentRow()` is banned from this codebase's
+own arrow-nav paths for exactly this widget's `ExtendedSelection` mode — it silently does
+`ClearAndSelect`; `_move_list_current_row` (`QItemSelectionModel.setCurrentIndex(idx, NoUpdate)`) is
+the only correct way to move the cursor alone. The current row shows as a small dot
+(`_FolderListItemDelegate`, `focus_folder_list_dot`), not the traveling marker or a second fill —
+a fill couldn't stay legible once real selection existed alongside it. Excluded Books
+(`ExcludedBooksPopup`) gained a full keyboard model of its own, mirroring `ChapterList`'s
+Up/Down-scroll / Left-Right-expand / Space-Enter-activate split, with the per-row hover-reveal eye
+itself standing in for a marker. Along the way: a genuine, branch-independent interference bug
+between `transport_bar_blur`'s hide/show grab cycle and any hover-driven UI (a real, matched
+leave+enter pair delivered to a perfectly stationary mouse, confirmed live) — see that file's
+`_grab_and_blur` docstring and the "Hover-flicker" section above, and `_leave_suppressed_recently`
+in `excluded_books.py` for the fix shape (suppressing only half of a spurious pair is not enough;
+the matching half needs its own flag). Full narrative in SESSION.md 2026-09-05/06; live checks in
+TESTING.md; both TODO.md items this closed are removed (only the Themes tab and
+`#disable_sleep_btn`'s pre-existing hover gap remain open for this branch).
+
+*Previously: 2026-09-05 — Keyboard navigation extended from Look to Controls, Audio and Library
 (branch `feature/traveling-focus-marker`, still NOT merged). Adding a button-row tab is now one
 line in `panels._ARROW_NAV_TABS`; row membership goes by focus policy, and a widget in a tab's own
 column becomes a one-item row (Audio's slider, Library's folder list). Large filled controls show

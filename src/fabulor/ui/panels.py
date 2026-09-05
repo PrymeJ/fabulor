@@ -2545,8 +2545,14 @@ class PanelManager:
         being special-cased here. Non-focusable decoration (header QLabels, the trailing
         stretch) is skipped for free.
 
-        Still NOT covered, and needing their own design: Library's two list boxes, which own the
-        arrow keys for their own row selection and so are Tab-entered rather than arrow-entered."""
+        Two Library list boxes are deliberately NOT in `rows` at all, even though both are fully
+        arrow-navigable: `folder_list_widget` (a real member of `lib_layout`, but handled entirely
+        by `_handle_settings_arrows`'s own `isinstance(focus, QListWidget)` branch once focus
+        reaches it — Up/Down inside it must never be treated as a row-to-row grid move) and
+        `excluded_books_popup` (not even in `lib_layout` — it's an absolutely-positioned overlay
+        parented to `library_tab` — with its own self-contained `keyPressEvent`, entered via a
+        special-cased Down/Right from Persist search filter's row in `_handle_settings_arrows`).
+        Both are still real Tab stops via `panel_tab_widgets`'s separate `findChildren` walk."""
         tabs = getattr(self.main_window, 'tabs', None)
         if tabs is None or tabs.tabText(tabs.currentIndex()) not in _ARROW_NAV_TABS:
             return []
