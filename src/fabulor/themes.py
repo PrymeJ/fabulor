@@ -98,7 +98,7 @@ focus_marker_alpha:   (Optional) Opacity (0.0 to 1.0, NOT 0-255) ceiling for the
 focus_marker_palette: (Optional) List of 2+ hex colors the traveling-border-marker's "rotate" style. Fallback: [accent_light, accent_dark]
 focus_marker_tab_palette: (Optional) Same, but ONLY for the marker while it traces a settings TAB. The tab sits on a different background from the buttons (the tab bar, and the selected tab's own accent fill), so a palette that reads well on a button can blend into invisibility there. Fallback: focus_marker_palette — set this only for the themes where the tab actually needs it.
 focus_audio_tab_reset: (Optional) Background of the Audio tab's "Reset to defaults" button while it is ACTIVE — either keyboard-focused or mouse-hovered; both read this one key so they cannot drift. Large filled buttons use a FILL SHIFT instead of the traveling border marker, which is a thin-border affordance and reads as noise on a big surface. Fallback: accent_light.
-focus_folder_list_row: (Optional) Color of the small keyboard-cursor dot _FolderListItemDelegate paints on the Library folder list's current row (right edge, independent of selection — see that class's docstring for why a dot rather than a fill). Fallback: accent_light.
+focus_folder_list_dot: (Optional) Color of the small keyboard-cursor dot _FolderListItemDelegate paints on the Library folder list's current row (right edge, independent of selection — see that class's docstring for why a dot rather than a fill). Fallback: accent_light.
 cover_preview_bg:     Background color for book cover previews in the library. Fallback: bg_deep → #000000.
 
 GROUP 11 — PLACEHOLDER COVERS
@@ -4148,7 +4148,7 @@ def get_settings_stylesheet(theme_name="default"):
            _FILL_FOCUS_OBJECT_NAMES). See _FolderListItemDelegate's docstring for why a dot,
            not a fill: an earlier version tried the current row as a distinct FILL shade instead,
            and live use of it surfaced exactly the ambiguity a single fill-based affordance can't
-           resolve once several rows are actually selected. focus_folder_list_row (GROUP 10,
+           resolve once several rows are actually selected. focus_folder_list_dot (GROUP 10,
            above) still names the dot's color. */
         QPushButton#theme_item, QPushButton#theme_interval_btn {{
             background: transparent;

@@ -69,7 +69,7 @@ class _FolderListItemDelegate(QStyledItemDelegate):
         if is_current_row and getattr(self._mw, "_keyboard_nav_active", False):
             from ..themes import _resolve_theme
             theme = _resolve_theme(self._mw.theme_manager.get_committed_theme())
-            color = theme.get("focus_folder_list_row", theme.get("accent_light", "#ffffff"))
+            color = theme.get("focus_folder_list_dot", theme.get("accent_light", "#ffffff"))
             r = option.rect
             cx = r.right() - self._DOT_MARGIN - self._DOT_RADIUS
             cy = r.center().y()
