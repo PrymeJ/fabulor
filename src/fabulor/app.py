@@ -4097,12 +4097,25 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 self._move_list_current_row(focus, row + (1 if key == Qt.Key.Key_Down else -1))
                 self._keep_marker_awake()
                 return True
-            # Genuinely at an end: leave the box. Drop the selection on the way out, matching
-            # what a click on empty space already does (_PathListEventFilter) — a highlighted
-            # path left behind while focus sits elsewhere reads as still-selected, and Remove
-            # acts on the selection.
-            focus.clearSelection()
-            focus.setCurrentRow(-1)
+            # Genuinely at an end: leave the box. Selection is deliberately left exactly as the
+            # user built it — a live design pass 2026-09-05 settled on Space/Enter as the ONLY
+            # way selection ever changes (cursor movement, including entry and exit, never
+            # touches it), specifically so the user can select rows, leave the box, and Tab to
+            # Remove and have it act on what was actually chosen. This used to clearSelection()
+            # unconditionally on exit, from back when leaving the box and "losing the selection"
+            # was assumed harmless; it is no longer harmless — it would silently make Remove a
+            # no-op every time it's reached via keyboard.
+
+            # Left/Right have no meaning INSIDE a list box (no horizontal concept for a folder
+            # path row) — Left leaves the box for the tab bar (same as Up on the first row/Left
+            # on any other row-0 control), Right is swallowed as a plain no-op rather than left
+            # to Qt's own native handling, which is not guaranteed to be a no-op either (reported
+            # live 2026-09-05: both keys were doing something inside the box instead of nothing).
+            if key == Qt.Key.Key_Left:
+                tab_bar.setFocus(Qt.FocusReason.TabFocusReason)
+                return True
+            if key == Qt.Key.Key_Right:
+                return True
 
         if key == Qt.Key.Key_Down:
             if row_i + 1 < len(rows):
@@ -4135,17 +4148,25 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         return False
 
     def _focus_settings_control(self, widget, from_below: bool = False) -> None:
-        """Give `widget` keyboard focus as a settings-navigation step, selecting a row first if
-        it is a list box.
+        """Give `widget` keyboard focus as a settings-navigation step, positioning the cursor
+        first if it is a list box.
 
-        A QListWidget focused programmatically has currentRow() == -1 — focused but with nothing
-        highlighted, so the marker traces the BOX and the user has to press an extra arrow before
-        anything is actually selected (reported live 2026-09-05: entering "selects the box, not
-        the first item", and Tab "skips the items"). Every path that moves focus during settings
-        navigation goes through here so they all behave the same; `from_below` picks the end being
-        arrived from, so Up from the buttons lands on the LAST path rather than the first."""
+        A QListWidget focused programmatically has currentRow() == -1 — focused with no cursor
+        position at all, so the marker traced the BOX and the user needed an extra arrow before
+        anything showed as current (reported live 2026-09-05: entering "selects the box, not the
+        first item", and Tab "skips the items"). Every path that moves focus during settings
+        navigation goes through here so they all behave the same; `from_below` picks the end
+        being arrived from, so Up from the buttons lands on the LAST path rather than the first.
+
+        Deliberately does NOT select the landing row — only moves the cursor (see
+        _move_list_current_row). Entering the list is itself a cursor move, and cursor moves
+        never touch selection, on entry or afterward; auto-selecting the entry row was tried and
+        rejected live (2026-09-05): reaching row 3 without acting on row 1 meant either living
+        with a stray auto-selected row 1 or explicitly deselecting it first, which is exactly the
+        "cumbersome" cost this design avoids. Nothing is selected until the user explicitly
+        presses Space/Enter on a row — see the toggle branch in _handle_settings_arrows."""
         if isinstance(widget, QListWidget) and widget.count():
-            widget.setCurrentRow(widget.count() - 1 if from_below else 0)
+            self._move_list_current_row(widget, widget.count() - 1 if from_below else 0)
         widget.setFocus(Qt.FocusReason.TabFocusReason)
 
     def _move_list_current_row(self, list_widget: QListWidget, row: int) -> None:
@@ -4161,10 +4182,11 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
         `QItemSelectionModel.setCurrentIndex(idx, NoUpdate)` moves the same current-row cursor
         (currentRow() reads it identically either way) while leaving `selectedItems()` completely
-        untouched — the actual primitive this method needs. Used for every arrow-driven cursor
-        move; `_focus_settings_control`'s entry-point `setCurrentRow` is deliberately NOT routed
-        through this, since establishing the very first selection on a freshly-entered list is
-        the one place the selecting behavior is wanted."""
+        untouched — the actual primitive this method needs. Used for EVERY cursor move on this
+        list, including the entry point (`_focus_settings_control`): a live design pass
+        2026-09-05 settled on cursor movement never touching selection under any circumstance,
+        entry included — see that method's docstring for why an entry-row auto-select was tried
+        and rejected."""
         idx = list_widget.model().index(row, 0)
         list_widget.selectionModel().setCurrentIndex(idx, QItemSelectionModel.SelectionFlag.NoUpdate)
 

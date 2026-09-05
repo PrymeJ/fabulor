@@ -14,10 +14,10 @@ import os
 
 from PySide6.QtWidgets import (
     QWidget, QLabel, QPushButton, QHBoxLayout, QVBoxLayout, QStackedWidget,
-    QSizePolicy, QGraphicsOpacityEffect, QTabWidget, QListWidget, QStyledItemDelegate, QStyle,
+    QSizePolicy, QGraphicsOpacityEffect, QTabWidget, QListWidget, QStyledItemDelegate,
 )
-from PySide6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, QSize, QObject, QEvent
-from PySide6.QtGui import QPixmap, QFont, QFontMetrics, QColor
+from PySide6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, QSize, QObject, QEvent, QPointF
+from PySide6.QtGui import QPixmap, QFont, QFontMetrics, QColor, QPainter
 
 from .title_bar import TitleBar, RightClickButton, ThemeItem
 from .controls import ClickSlider, ScrollingLabel, HoverButton, FreezableLabel, ShimmerButton, RevertButton
@@ -32,49 +32,53 @@ from .ui_helpers import COVER_AREA_HEIGHT, _load_svg_icon
 
 
 class _FolderListItemDelegate(QStyledItemDelegate):
-    """Paints the folder list's current-row fill directly, bypassing QSS for that one case only.
+    """Paints a small keyboard-cursor dot on the folder list's current row, independent of
+    selection.
 
-    Qt has no `::item:focus` (or any per-item "this is the current row" ) pseudo-state — `:focus`
-    in QSS applies to the WIDGET as a whole, not a row, so a `QListWidget::item:focus` rule is
-    silently a no-op (confirmed live 2026-09-05: set to solid white on a theme, zero visual
-    change). The current row and the selection are also genuinely different Qt concepts —
-    `currentRow()`/`currentIndex()` is the keyboard cursor, `selectedItems()` is the multi-select
-    set, and they can disagree (arrowing onto an unselected row while other rows stay selected).
-    There is no selector that means "current but not selected."
+    Selection (accent fill, ::item:selected in QSS) and cursor position (currentRow()) are
+    genuinely different things here and can disagree by design: a 2026-09-05 live design pass
+    settled on arrow keys moving ONLY the cursor, never touching selection (on entry, mid-list,
+    or exit) — Space/Enter is the sole way selection ever changes. A prior version of this tried
+    showing the current row as a distinct FILL shade instead of a dot; live use of that surfaced
+    exactly the ambiguity a single fill-based affordance can't resolve: once several rows were
+    selected, arrowing among them left no way to see where the cursor currently was, since the
+    selected-fill and cursor-fill looked confusable in practice. A DOT is deliberately not a
+    background fill (it can never be mistaken for a selection state) and paints on top of
+    whatever else the row is doing — selected or not — via a single delegate pass. (There is
+    also no `::item:focus` QSS pseudo-state for a plain fill to hook into in the first
+    place — `:focus` applies to the whole WIDGET, not a row — confirmed live 2026-09-05: set to
+    solid white on a theme, zero visual change.)
 
-    So this delegate paints ONLY the current-row-while-unselected fill itself, in
-    `focus_folder_list_row` (a distinct shade from the plain mouse-click accent selected fill —
-    the point of this whole delegate is to make "keyboard cursor is here" read differently from
-    "this row is part of the selection"), and defers everything else (selected fill, text, hover)
-    to the base QStyledItemDelegate so the existing QSS rules keep doing their job unchanged.
+    Gated on the list ACTUALLY having Qt focus (not just currentRow() >= 0, which can be a stale
+    leftover position from before focus moved on) and on `mw._keyboard_nav_active` (so a mouse
+    click that merely leaves the box focused doesn't also draw a dot the user never arrowed to)."""
 
-    Gated on `mw._keyboard_nav_active` (not just `hasFocus()`/`State_HasFocus`) so this fill only
-    appears while the keyboard is actually driving — same `kbdnav` scoping every other keyboard
-    focus affordance in Settings uses, so a mouse click that merely leaves the box focused doesn't
-    also light up a row the user never arrowed to."""
+    _DOT_RADIUS = 3.0
+    _DOT_MARGIN = 6.0
 
     def __init__(self, mw, parent=None):
         super().__init__(parent)
         self._mw = mw
 
     def paint(self, painter, option, index):
+        super().paint(painter, option, index)
         list_widget = self.parent()
         is_current_row = (list_widget is not None
+                           and list_widget.hasFocus()
                            and index.row() == list_widget.currentRow())
-        is_selected = bool(option.state & QStyle.State_Selected)
-        if (is_current_row and not is_selected
-                and getattr(self._mw, "_keyboard_nav_active", False)):
+        if is_current_row and getattr(self._mw, "_keyboard_nav_active", False):
             from ..themes import _resolve_theme
             theme = _resolve_theme(self._mw.theme_manager.get_committed_theme())
             color = theme.get("focus_folder_list_row", theme.get("accent_light", "#ffffff"))
+            r = option.rect
+            cx = r.right() - self._DOT_MARGIN - self._DOT_RADIUS
+            cy = r.center().y()
             painter.save()
-            painter.fillRect(option.rect, QColor(color))
+            painter.setRenderHint(QPainter.Antialiasing, True)
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QColor(color))
+            painter.drawEllipse(QPointF(cx, cy), self._DOT_RADIUS, self._DOT_RADIUS)
             painter.restore()
-            # Base paint would otherwise draw its own focus-rect decoration (and, on some styles,
-            # an unselected-background fill) on top of the fill just drawn — strip the state flag
-            # it keys that on before handing off, so it only paints text/icon.
-            option.state &= ~QStyle.State_HasFocus
-        super().paint(painter, option, index)
 
 
 class _PathListEventFilter(QObject):

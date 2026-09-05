@@ -98,7 +98,7 @@ focus_marker_alpha:   (Optional) Opacity (0.0 to 1.0, NOT 0-255) ceiling for the
 focus_marker_palette: (Optional) List of 2+ hex colors the traveling-border-marker's "rotate" style. Fallback: [accent_light, accent_dark]
 focus_marker_tab_palette: (Optional) Same, but ONLY for the marker while it traces a settings TAB. The tab sits on a different background from the buttons (the tab bar, and the selected tab's own accent fill), so a palette that reads well on a button can blend into invisibility there. Fallback: focus_marker_palette — set this only for the themes where the tab actually needs it.
 focus_audio_tab_reset: (Optional) Background of the Audio tab's "Reset to defaults" button while it is ACTIVE — either keyboard-focused or mouse-hovered; both read this one key so they cannot drift. Large filled buttons use a FILL SHIFT instead of the traveling border marker, which is a thin-border affordance and reads as noise on a big surface. Fallback: accent_light.
-focus_folder_list_row: (Optional) Background of the Library folder list's current row while keyboard-focused. A different shade from the plain mouse-click ::item:selected fill (accent), so the keyboard cursor position reads distinctly from an actual multi-selection — same fill-shift-instead-of-marker treatment as focus_audio_tab_reset, for the same reason (a marker traced around a filled list row read as noise, live judgement 2026-09-05). Fallback: accent_light.
+focus_folder_list_row: (Optional) Color of the small keyboard-cursor dot _FolderListItemDelegate paints on the Library folder list's current row (right edge, independent of selection — see that class's docstring for why a dot rather than a fill). Fallback: accent_light.
 cover_preview_bg:     Background color for book cover previews in the library. Fallback: bg_deep → #000000.
 
 GROUP 11 — PLACEHOLDER COVERS
@@ -934,7 +934,6 @@ THEMES = {
         "placeholder_library":           "#D87A37",
         "carousel_bg":                   "#56275A",
         "carousel_stripe":               "#D06A8A",
-        
     },
     "Dorian Grey": {
         "bg_deep":                       "#222222",
@@ -4140,19 +4139,17 @@ def get_settings_stylesheet(theme_name="default"):
             background-color: {t['accent']};
             color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
         }}
-        /* Keyboard focus on the current row is shown as a distinct fill shade, not the traveling
-           border marker (ui/focus_marker.py skips it — see _FILL_FOCUS_OBJECT_NAMES). A marker
-           traced around a filled list row read as noise, same reasoning as the Audio tab's Reset
-           button (see focus_audio_tab_reset above). It also needs to look DIFFERENT from a plain
-           mouse-click ::item:selected fill (accent) — this row is the keyboard's current
-           position, which may or may not also be part of the multi-selection, and the two facts
-           were unreadable when both used the same accent fill (reported live 2026-09-05: "we'll
-           use a solid color but a different shade of the highlight").
-           Scoped to kbdnav="true" so it applies only while the keyboard is driving. */
-        QWidget#settings_panel[kbdnav="true"] QListWidget#settings_folder_list::item:focus {{
-            background-color: {t.get('focus_folder_list_row', t['accent_light'])};
-            color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
-        }}
+        /* No QSS rule for the current-row keyboard cursor: Qt has no `::item:focus` (or any
+           per-item "this is the current row") pseudo-state to hook one into — `:focus` in QSS
+           applies to the WIDGET as a whole, not a row (confirmed live 2026-09-05: a rule here
+           set to solid white produced zero visual change). The cursor is instead painted as a
+           small dot by _FolderListItemDelegate (ui/main_window_builders.py), which also isn't
+           traced by the traveling border marker (ui/focus_marker.py skips it — see
+           _FILL_FOCUS_OBJECT_NAMES). See _FolderListItemDelegate's docstring for why a dot,
+           not a fill: an earlier version tried the current row as a distinct FILL shade instead,
+           and live use of it surfaced exactly the ambiguity a single fill-based affordance can't
+           resolve once several rows are actually selected. focus_folder_list_row (GROUP 10,
+           above) still names the dot's color. */
         QPushButton#theme_item, QPushButton#theme_interval_btn {{
             background: transparent;
             color: {panel_dimmed_color};
