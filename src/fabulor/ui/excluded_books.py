@@ -406,7 +406,7 @@ class ExcludedBooksPopup(QListWidget):
             f"QListWidget#excluded_popup QScrollBar:vertical {{ width: 8px; "
             f"background: {bg_deep}; border: none; margin: 0px; }}"
             f"QListWidget#excluded_popup QScrollBar::handle:vertical {{ "
-            f"background: {accent}; min-height: 20px; border-radius: 4px; }}"
+            f"background: {accent}; min-height: 20px; }}"
             f"QListWidget#excluded_popup QScrollBar::add-line:vertical, "
             f"QListWidget#excluded_popup QScrollBar::sub-line:vertical {{ height: 0px; }}"
             f"QListWidget#excluded_popup QScrollBar::add-page:vertical, "
