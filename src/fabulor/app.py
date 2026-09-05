@@ -846,6 +846,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # wall (see excluded_books.py's module docstring / NOTES.md).
         self.excluded_books_popup = ExcludedBooksPopup(self.library_tab)
         self.excluded_books_popup.restore_requested.connect(self._on_excluded_book_restored)
+        self.excluded_books_popup.expand_toggle_requested.connect(self._on_excluded_toggle_clicked)
+        self.excluded_books_popup.exit_upward_requested.connect(self._on_excluded_books_exit_upward)
         # The arrow QLabel is parented to library_tab too (not
         # excluded_books_section) so it can travel above the section's own
         # row bounds without being clipped — see ExcludedBooksSection's
@@ -1104,6 +1106,17 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         expanded = not self.excluded_books_popup.is_expanded
         self.excluded_books_popup.set_expanded(expanded)
         self.excluded_books_section.set_expanded(self.excluded_books_popup.is_expanded)
+
+    def _on_excluded_books_exit_upward(self):
+        """Up at row 0 of the Excluded Books popup — moves focus back to Persist search
+        filter's row, the row directly above it in the Library tab (the mirror of how
+        _handle_settings_arrows entered the popup in the first place: Down/Right from that
+        exact row — see the entry logic there). Lands on the row's FIRST button, matching
+        every other row-to-row Up (`from_below=True` is for a list box's own last-item
+        convention, which doesn't apply to a plain button row)."""
+        rows = self.panel_manager.settings_tab_button_rows()
+        if rows:
+            self._focus_settings_control(rows[-1][0])
 
     def _collapse_excluded_books(self):
         """Collapse back to the default view without hiding the list —
@@ -4023,7 +4036,14 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # widgets), so Space is claimed here too instead of left to fall through to Qt.
         # Consumes both keys unconditionally on this widget so neither ever reaches Qt's own
         # (different, non-toggling) handling.
-        if isinstance(focus, QListWidget) and key in (
+        # Scoped to folder_list_widget specifically, NOT any QListWidget: ExcludedBooksPopup is
+        # also a QListWidget (found live 2026-09-05, before it ever reached the user — this
+        # branch would have intercepted Space/Enter meant for the popup's own restore action,
+        # since setSelected is a harmless no-op under its NoSelection mode but the unconditional
+        # `return True` still would have swallowed the key before ExcludedBooksPopup's own
+        # keyPressEvent ever saw it). ExcludedBooksPopup manages its own keys entirely — this
+        # method must never intercept anything meant for it.
+        if focus is self.folder_list_widget and key in (
                 Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space):
             row = focus.currentRow()
             if row >= 0:
@@ -4133,6 +4153,28 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 return True
             if key == Qt.Key.Key_Right:
                 return True
+
+        # Excluded Books is a self-managed overlay (own keyPressEvent, see excluded_books.py) —
+        # not a normal grid row settings_tab_button_rows() ever reports, since it navigates
+        # internally (Up/Down scroll rows, Left/Right expand/collapse) rather than being stepped
+        # through like a button row. It sits directly below Library's LAST row (Persist search
+        # filter), so it's entered from there specifically: Down from any button in that row, or
+        # Right from that row's rightmost button (reported live 2026-09-05: "Down arrow to go
+        # the next row from any button, right arrow to go down from the rightmost button" — the
+        # same convention every other row-to-row Down already follows, plus the Right addition
+        # this one specific row needs since it's the last row with nothing below it otherwise).
+        # `is_expandable`'s underlying count also gates this — an empty popup (0 excluded books)
+        # is entirely hidden (see reposition()) and must never become a keyboard stop, same as
+        # folder_list_widget skipping itself when count()==0 (settings_tab_button_rows'
+        # _navigable).
+        is_library_last_row = (row_i == len(rows) - 1
+                                and self.tabs.tabText(self.tabs.currentIndex()) == "Library")
+        excluded_popup_available = self.excluded_books_popup.book_count > 0
+        if is_library_last_row and excluded_popup_available and (
+                key == Qt.Key.Key_Down
+                or (key == Qt.Key.Key_Right and col_i == len(rows[row_i]) - 1)):
+            self.excluded_books_popup.setFocus(Qt.FocusReason.TabFocusReason)
+            return True
 
         if key == Qt.Key.Key_Down:
             if row_i + 1 < len(rows):
