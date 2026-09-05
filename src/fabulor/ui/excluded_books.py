@@ -43,20 +43,19 @@ from ..themes import _hex_to_rgb
 
 
 def _derive_subdued(hex_color: str) -> str:
-    """Same hue, desaturated + darkened — a subdued tint of `hex_color`, distinct enough from
-    the plain accent it's usually called with to read as a different element rather than
-    blending into one. Same math as StreakGrid._derive_longest_fill (stats_panel.py), inverted
-    (darker/less saturated here instead of lighter — this needs to recede, not pop): used for
-    the scrollbar handle, which otherwise shares plain `accent` with ExcludedBooksSection's
-    expand arrow sitting directly above it and visually merges into it at their shared edge
-    (reported live 2026-09-05)."""
+    """Same hue AND saturation, only darkened — distinct enough from the plain accent it's
+    usually called with to read as a different element rather than blending into one, without
+    the muddy/washed-out look desaturating it produced (tried first, rejected live 2026-09-05
+    across multiple themes: pulling saturation down toward gray read as worse than the plain-
+    accent blending problem it was meant to fix). Used for the scrollbar handle, which otherwise
+    shares plain `accent` with ExcludedBooksSection's expand arrow sitting directly above it and
+    visually merges into it at their shared edge (reported live 2026-09-05)."""
     c = QColor(hex_color)
     if not c.isValid():
         return hex_color
     h, s, v, a = c.getHsv()
-    new_s = max(0, int(s * 0.5)) if s else 0
     new_v = max(0, int(v * 0.7)) if v >= 0 else 150
-    return QColor.fromHsv(h if h >= 0 else 0, new_s, new_v, a).name()
+    return QColor.fromHsv(h, s, new_v, a).name()
 
 
 class _ExcludedRow(QWidget):
