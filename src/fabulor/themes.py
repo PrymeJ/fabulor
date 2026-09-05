@@ -100,6 +100,7 @@ focus_marker_tab_palette: (Optional) Same, but ONLY for the marker while it trac
 focus_marker_selected_palette: (Optional) Same, but ONLY for the marker while it traces a SELECTED button (any #pattern_button-shaped toggle across Look/Controls/Audio whose "selected" dynamic property is true). A selected button fills with accent, a different backdrop from an unselected button's transparent one, so a palette tuned for the latter can vanish against the former (reported live 2026-09-05: marker plainly visible on an unselected button, barely visible on the selected one, same theme). Fallback: focus_marker_palette — set this only for the themes where the selected state actually needs it.
 focus_audio_tab_reset: (Optional) Background of the Audio tab's "Reset to defaults" button while it is ACTIVE — either keyboard-focused or mouse-hovered; both read this one key so they cannot drift. Large filled buttons use a FILL SHIFT instead of the traveling border marker, which is a thin-border affordance and reads as noise on a big surface. Fallback: accent_light.
 focus_folder_list_dot: (Optional) Color of the small keyboard-cursor dot _FolderListItemDelegate paints on the Library folder list's current row (right edge, independent of selection — see that class's docstring for why a dot rather than a fill). Fallback: accent_light.
+excluded_scrollbar: (Optional) Background of the Excluded Books popup's scrollbar handle (ui/excluded_books.py). Plain accent blended visually into ExcludedBooksSection's expand arrow directly above it (also accent) — falls back to a derived subdued tint (see _derive_subdued in excluded_books.py) rather than accent itself. Fallback: a desaturated/darkened accent, not accent.
 cover_preview_bg:     Background color for book cover previews in the library. Fallback: bg_deep → #000000.
 
 GROUP 11 — PLACEHOLDER COVERS
@@ -3399,7 +3400,7 @@ def _get_gradient_style(t, prefix, fallback_color, opacity=1.0):
 # or falls back to one of its own other keys (slider_progress -> text_on_light_bg
 # -> text). Letting them inherit from the base template made The Color Purple's
 # explicit value leak into every theme that doesn't set its own.
-_NO_BASE_INHERIT_KEYS = ("bookmark_body", "bookmark_icon", "tassel_cord", "tassel_head", "tassel_fringe", "streak_grid_outline", "streak_grid_dot", "slider_progress", "placeholder_cover", "focus_marker_palette", "focus_marker_tab_palette", "focus_marker_selected_palette")
+_NO_BASE_INHERIT_KEYS = ("bookmark_body", "bookmark_icon", "tassel_cord", "tassel_head", "tassel_fringe", "streak_grid_outline", "streak_grid_dot", "slider_progress", "placeholder_cover", "focus_marker_palette", "focus_marker_tab_palette", "focus_marker_selected_palette", "excluded_scrollbar")
 
 
 # Panel-backdrop alpha override (2026-07-28). None = use each theme's own

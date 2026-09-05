@@ -33,13 +33,30 @@ off-screen-right child overlay), substituting eye.svg for the X icon.
 Restore is immediate and silent — no confirm panel.
 """
 from PySide6.QtCore import Qt, Signal, QPropertyAnimation, QEasingCurve, QRect, QSize
-from PySide6.QtGui import QIcon, QFontMetrics
+from PySide6.QtGui import QIcon, QFontMetrics, QColor
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QLabel, QToolButton, QListWidget, QListWidgetItem,
 )
 
 from .icon_utils import load_currentcolor_icon
 from ..themes import _hex_to_rgb
+
+
+def _derive_subdued(hex_color: str) -> str:
+    """Same hue, desaturated + darkened — a subdued tint of `hex_color`, distinct enough from
+    the plain accent it's usually called with to read as a different element rather than
+    blending into one. Same math as StreakGrid._derive_longest_fill (stats_panel.py), inverted
+    (darker/less saturated here instead of lighter — this needs to recede, not pop): used for
+    the scrollbar handle, which otherwise shares plain `accent` with ExcludedBooksSection's
+    expand arrow sitting directly above it and visually merges into it at their shared edge
+    (reported live 2026-09-05)."""
+    c = QColor(hex_color)
+    if not c.isValid():
+        return hex_color
+    h, s, v, a = c.getHsv()
+    new_s = max(0, int(s * 0.5)) if s else 0
+    new_v = max(0, int(v * 0.7)) if v >= 0 else 150
+    return QColor.fromHsv(h if h >= 0 else 0, new_s, new_v, a).name()
 
 
 class _ExcludedRow(QWidget):
@@ -395,6 +412,12 @@ class ExcludedBooksPopup(QListWidget):
         self._theme = theme
         bg_deep = theme.get('bg_deep', '#1a1a1a')
         accent = theme.get('accent', '#888888')
+        # A subdued tint of accent, not accent itself — ExcludedBooksSection's expand arrow
+        # (directly above this list) is also plain accent, and the two blended into one shape
+        # at their shared edge (reported live 2026-09-05, screenshot). Optional theme override
+        # via excluded_scrollbar; falls back to a derived value so no theme needs to set it
+        # explicitly (see _derive_subdued).
+        scrollbar_color = theme.get('excluded_scrollbar', _derive_subdued(accent))
         # Scrollbar styling copied from chapter_dropdown's (ChapterList) QSS —
         # same popover surface pattern, same slim themed handle instead of
         # the default unthemed OS scrollbar. No ::item:selected rule needed —
@@ -406,7 +429,7 @@ class ExcludedBooksPopup(QListWidget):
             f"QListWidget#excluded_popup QScrollBar:vertical {{ width: 8px; "
             f"background: {bg_deep}; border: none; margin: 0px; }}"
             f"QListWidget#excluded_popup QScrollBar::handle:vertical {{ "
-            f"background: {accent}; min-height: 20px; border-radius: 0px; }}"
+            f"background: {scrollbar_color}; min-height: 20px; border-radius: 0px; }}"
             f"QListWidget#excluded_popup QScrollBar::add-line:vertical, "
             f"QListWidget#excluded_popup QScrollBar::sub-line:vertical {{ height: 0px; }}"
             f"QListWidget#excluded_popup QScrollBar::add-page:vertical, "
