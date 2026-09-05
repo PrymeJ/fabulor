@@ -25,15 +25,47 @@ test. Do not treat green tests or a clean render as coverage here.
 - [ ] Arrow around the **Themes** tab, return to Look: hover still works on both tabs and buttons
 - [ ] Type an arrow key inside a text field (Library search, sleep custom minutes): modality unaffected, no marker
 
-### Look-tab arrow navigation
-- [ ] From the tab bar, **Down** enters the buttons at the first row's first button
-- [ ] **Down**/**Up** move between rows, always landing on the row's **first** button
+### Arrow navigation — all button-row tabs (Look, Controls, Audio, Library)
+Run these on **each** participating tab; the handler is generic, so a break on one is likely a break on all.
+- [ ] From the tab bar, **Down** enters the controls at the first row's first control
+- [ ] **Down**/**Up** move between rows, always landing on the row's **first** control
 - [ ] **Up** from the first row returns to the tab bar
-- [ ] **Left** at the first row's first button returns to the tab bar
+- [ ] **Left** at the first row's first control returns to the tab bar
 - [ ] **Left**/**Right** otherwise step within the row (native behaviour, unchanged)
 - [ ] **Down** on the last row does nothing (swallowed — it must not fall out of the grid)
 - [ ] Tab/Shift+Tab still cycle through every control exactly as before
-- [ ] Set **Chapter notches** to Off: the Animation On/Off pair disappears and is no longer an arrow-key stop; set it On and they are reachable again (rows are derived live per keypress)
+- [ ] **Space** and **Return/Enter** both activate the focused control (Qt gives Space for free; Enter is ours)
+- [ ] Themes tab is deliberately NOT arrow-navigable yet — arrows there should do nothing new
+
+### Live row membership (controls that appear and disappear)
+- [ ] Look: set **Chapter notches** Off — the Animation pair disappears and stops being a stop; On again and it returns
+- [ ] Audio: with every audio setting at default, **Reset to defaults** is hidden and is not a stop; change any setting and it becomes reachable
+- [ ] Library with **no folders**: the folder box is skipped entirely (Down from the tab lands on **Add**), and Remove/Rescan are dimmed, unhoverable, unclickable and skipped by both Tab and arrows
+- [ ] Library after adding a folder: the box becomes a stop and Remove/Rescan come back
+
+### Audio — slider and Reset button
+- [ ] **Left/Right** on the focused balance slider change its value instead of moving focus
+- [ ] Holding Left/Right keeps the marker awake indefinitely — it must not fade mid-adjustment
+- [ ] The marker stops and fades normally a couple of seconds after you stop pressing
+- [ ] **Enter** on the slider does nothing (no crash — it has no click())
+- [ ] **Reset to defaults** shows a FILL SHIFT when focused, not a traveling marker
+- [ ] Its mouse hover works (this was broken pre-existing) and matches the keyboard focus colour
+- [ ] Both follow `focus_audio_tab_reset` if a theme overrides it
+
+### Library — Manage folders list
+- [ ] **Down** from the tab bar enters the box **on the first path**, not merely on the box
+- [ ] **Up** from the Add row enters the box **on the last path**
+- [ ] Arrows step between paths; the marker follows the **selected row**, not the box outline
+- [ ] With exactly **ONE** path: Down selects it (it must not bounce straight back out)
+- [ ] Up on the first path / Down on the last leaves the box, clearing the selection on the way out
+- [ ] Tab/Shift+Tab into the box also land on a path, not the bare box
+
+### Marker shape (per control type)
+- [ ] Small buttons: rounded corners traced, all four corners intact — no corner cut off as a diagonal
+- [ ] Balance slider: a crisp **square** rectangle sitting on the bar, not rounded and not spilling past its right/bottom edge
+- [ ] Settings tabs: one flat sweep along the top edge only, stopping short of the rounded corners, not slanting at the ends
+- [ ] Selected folder path: square outline around the **row**
+- [ ] If a theme's tab marker blends into the tab bar, `focus_marker_tab_palette` overrides it for tabs alone
 
 ### Theme preview revert on tab switch
 - [ ] Hover a theme swatch to preview, then switch tabs **with the mouse**: the preview reverts fully, *then* the tab switches — the snapback must not play over the newly-arrived tab

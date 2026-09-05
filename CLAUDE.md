@@ -119,6 +119,17 @@ The real library used for day-to-day testing has been ~400 books. That is not re
   top-level widget's own cursor property, not the platform's actual visible cursor
   state. Don't use it as a proxy for "what does the user currently see."
 - **Qt's `QRect.right()`/`.bottom()` are inclusive (last pixel), not the true edge** — documented historical quirk, not a bug. Use `x()+width()`/`y()+height()`. Suspect first for any single-pixel boundary hit-test mismatch.
+- **A 1px antialiased stroke on an INTEGER coordinate straddles two pixel lines at ~50% each; on a
+  half-integer it fills one crisply** (measured 2026-09-05: `#7f7f7f`/`#808080` vs. one `#ffffff`
+  row). Qt puts pixel centres at half-integers, so a hand-drawn 1px outline wants `+0.5`. Invisible
+  on short/diagonal runs, unmissable on a long axis-aligned one — it presents as a horizontal line
+  "slanting" at its ends, not as blur. Combined with the `QRect` rule above, the same half-pixel
+  inset is also what pulls a right/bottom stroke back ONTO the widget.
+- **A QSS ID selector (`#name`) outranks a plain type selector (`QPushButton:hover`), so a widget
+  with an `#id` background rule silently has NO hover** unless given its own ID-level `:hover`.
+  Found 2026-09-05 on `#reset_audio_btn`, which had never responded to the mouse; `#disable_sleep_btn`
+  still has the same gap. Suspect this whenever a styled-by-id control ignores a generically
+  defined state rule.
 - **A mouse click on a QTabBar tab arrives as `TabFocusReason`, not `MouseFocusReason`** (measured
   2026-09-03) — the reason describes focus moving *to a tab*, not the Tab key. `OtherFocusReason` is
   no better: it covers both a tab click AND the legitimate keyboard hop where Tab lands on the tab
@@ -1269,6 +1280,12 @@ Consequences of this shared fact, each independently load-bearing:
 self-manage focus like Library/ChapterList) in its open/close flow — nothing else in the codebase
 enforces this per-panel; skipping it silently reintroduces the bleed-through bug.
 
+**1a. The settings Tab cycle is HAND-ROLLED, so it inherits none of Qt's own skip rules.**
+`panel_tab_widgets` and `settings_tab_button_rows` (arrow navigation) each filter membership
+themselves — `isVisibleTo`, `focusPolicy`, `isEnabled`. **A filter added to one must be mirrored
+in the other**, or Tab and the arrows disagree about what is reachable (2026-09-05: Tab landed on
+a disabled button the arrows correctly skipped).
+
 **2. The NoFocus sweep must stay complete — this entire mechanism depends on it.**
 `_focus_allows_global_shortcuts()`'s "not None, not MainWindow ⇒ panel-local" equivalence is only
 true because every always-on chrome widget outside a panel is `Qt.NoFocus`. **Any new always-on
@@ -1735,7 +1752,14 @@ Any `QWidget` subclass (not `QFrame`, not `QLabel`) that owns a background-color
 
 *Reorganization note (2026-07-13): the "Critical Architecture Rules" section was restructured to remove repetition — it previously existed as two passes (a full-prose section and a later condensed second pass covering many of the same rules). The two were merged: rules that appeared in both now appear once, under whichever fact they share, with no information dropped. Rules unique to either pass are unchanged. See the note directly under the "Critical Architecture Rules" heading for detail.*
 
-*Last updated: 2026-09-04 — Traveling focus marker (branch `feature/traveling-focus-marker`, NOT
+*Last updated: 2026-09-05 — Keyboard navigation extended from Look to Controls, Audio and Library
+(branch `feature/traveling-focus-marker`, still NOT merged). Adding a button-row tab is now one
+line in `panels._ARROW_NAV_TABS`; row membership goes by focus policy, and a widget in a tab's own
+column becomes a one-item row (Audio's slider, Library's folder list). Large filled controls show
+focus as a QSS fill shift instead of the marker (`_FILL_FOCUS_OBJECT_NAMES`). Full narrative in
+SESSION.md 2026-09-05; live checks in TESTING.md; open items in TODO.md.
+
+*Previously: 2026-09-04 — Traveling focus marker (branch `feature/traveling-focus-marker`, NOT
 merged): rebased onto current `main` after being parked since 2026-07-10, geometry corrected, made
 keyboard-only, given row-aware arrow navigation on Settings > Look, and paired with mouse-hover
 suppression so only one affordance answers "where am I?" at a time. Two new Qt gotchas added to

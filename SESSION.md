@@ -1,3 +1,92 @@
+## Session Summary — 2026-09-05 Session 1 — Keyboard navigation extended from Look to Controls, Audio and Library; large controls get a fill shift instead of the marker. `0570dbb`→`73df657` on `feature/traveling-focus-marker`
+
+Continued the previous session's work, which had wired arrow navigation for Settings > Look only.
+Three more tabs now participate. Still local-only on the branch; nothing merged to `main`.
+
+**The generalization was mostly renaming, because the mechanism was already generic.** Only the
+Look-specific gate was hardcoded: `look_tab_button_rows` → `settings_tab_button_rows`, gated on a
+new `_ARROW_NAV_TABS` set, and `_handle_look_arrows` → `_handle_settings_arrows`. Adding a
+button-row tab is now one line in that set. Row membership is decided by FOCUS POLICY rather than
+widget class, which is what lets a slider and a non-`pattern_button` button join without being
+special-cased, and skips header labels for free.
+
+**Two row shapes, because the tabs genuinely have two.** A `QHBoxLayout` of controls is the common
+case; a widget added straight to the tab's own column becomes a ONE-ITEM ROW. That is what makes
+Audio's balance slider and its full-width Reset button reachable, and it is the same mechanism
+Library's list box then reused — built once rather than three times.
+
+**Large filled controls do not get the marker at all.** The traveling marker is a thin-border
+affordance: it reads well crawling a small button or a tab, and as noise around a big filled
+surface where the border is not what the eye tracks. Audio's "Reset to defaults" now shows focus
+as a QSS fill shift instead (`focus_audio_tab_reset`, defaulting to `accent_light`), and
+`_FILL_FOCUS_OBJECT_NAMES` keeps the marker off it so the two affordances never appear together.
+Library's list boxes are the expected next members. Tabs kept the marker but now trace only the
+FLAT part of their top edge — the sides read as noise on a small target, and a full-width run
+squared off the rounded corners.
+
+**Four rendering bugs, each found by measurement after a live report, none by reading the code:**
+1. *Slider corners clipped.* The marker traced everything at the button radius; `ClickSlider`
+   paints square. Radius is now per-widget (`_corner_radius_for`), keyed on objectName so it
+   tracks the QSS that sets it.
+2. *Tab sweep looked slanted.* Not geometry — every tab reported `top=0` and all samples shared
+   one y. A 1px antialiased stroke on an INTEGER coordinate renders as two rows at ~50% each
+   (`#7f7f7f`/`#808080`); at y+0.5 it is one crisp `#ffffff` row. Measured directly, then applied
+   as `_HALF_PIXEL` to every traced perimeter — which also pulled the right/bottom strokes back
+   inside the widget, since `left()+width()` is one PAST the last painted pixel.
+3. *Marker cut two corners of the slider, "always the top right and bottom left".* That pairing
+   was the clue: even arc-length sampling never guarantees a sample LANDS on a corner, so a
+   segment straddling one draws a diagonal shortcut across it. Which corners depends purely on
+   the width/height ratio. Fixed by merging the perimeter's own vertices into the sample list.
+4. *Reset button had no mouse hover at all.* Pre-existing, and pure CSS specificity: an ID
+   selector outranks the generic `QPushButton:hover`, so the base rule always won. `#disable_sleep_btn`
+   has the identical gap and was deliberately LEFT ALONE — that family of reset/destructive
+   buttons is explicitly un-unified (see `get_sleep_stylesheet`'s docstring).
+
+**Library needed real interaction design, not just inclusion.** Its Manage-folders `QListWidget`
+owns Up/Down for its own path selection, so the arrow handler hands the key back except at the
+first/last item. Two bugs surfaced live and both had the same root cause — Qt leaves
+`currentRow()` at -1 when a list is focused programmatically, so the box was entered with nothing
+selected:
+* With ONE path, -1 satisfied both boundary tests and every arrow bounced straight back out.
+* With any count, entry focused the BOX rather than a path, needing an extra keypress; Tab
+  skipped the items entirely; and the marker traced the box because it had no notion of a list's
+  internal selection.
+Fixed by routing every focus move through `_focus_settings_control` (which selects a row on
+arrival, choosing the end being arrived from) and by having the marker trace the SELECTED ROW,
+mapped from the VIEWPORT — the widget's own coordinates are off by the frame and scroll offset.
+Within-list moves are now handled in the handler rather than deferred to Qt, because the marker
+has to re-map after the row changes and deferring left it a row behind.
+
+**Remove/Rescan are disabled while no folders are configured** — `setEnabled(False)` rather than
+hiding, which would strand Add alone on the left, and rather than manual dimming, since one call
+covers the dim (`:disabled` QSS), dead hover, ignored clicks, and removal from navigation. An
+empty list box is skipped entirely, so Down from the tab lands on Add. This also exposed that
+`panel_tab_widgets` never checked `isEnabled()`: Qt's NATIVE Tab order skips disabled widgets, but
+this cycle is hand-rolled, so Tab would have landed on a disabled button while arrows correctly
+skipped it.
+
+**Return/Enter now activate a focused control**, alongside the Space Qt already provides. Measured
+first: a focused `QPushButton` fires `clicked()` for Space and ignores Return/Enter outside a
+dialog default button, so Enter was genuinely dead and accepting it displaced nothing. Space is
+deliberately left to Qt rather than reimplemented. `keep_awake()` was added for controls where a
+key acts on the control instead of moving focus — the balance slider was the one place the marker
+could fade while the user was still actively adjusting it.
+
+**One scoping correction worth remembering:** the modality flag's setter and its hand-back check
+must recognise the SAME set of controls, or the flag strands. Widening it to the Settings panel
+(not one tab) is what satisfies both, since the tab bar is navigable on every tab while only the
+button rows are per-tab.
+
+**Next session:** multi-selection in the folder list needs work (Space selects but does not
+deselect; arrows do, but the interaction is not discoverable). Then the Excluded-books box, where
+the marker currently lands on hidden eye icons outside the box. Then the Themes tab, still
+deliberately excluded from `_ARROW_NAV_TABS` pending its own arrows+space design for the swatch
+grid.
+
+`pytest tests/ -q` green throughout (504 tests).
+
+---
+
 ## Session Summary — 2026-09-03/04 Session 1 — Traveling focus marker unparked: rebased onto `main`, geometry fixed, made keyboard-only, row-aware arrow nav on Look, and mouse-hover suppression while the keyboard drives. `4b76695`→`f383f8c` on `feature/traveling-focus-marker`
 
 Resumed the traveling-focus-marker branch, parked since 2026-07-10 with 446 commits of `main`
