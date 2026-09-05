@@ -574,6 +574,20 @@ class ExcludedBooksPopup(QListWidget):
         self._expanded = expanded and self.is_expandable
         self._resize_to_row_count()
         self._reposition_vertically()
+        # Collapsing shrinks the visible window back to DEFAULT_VISIBLE_ROWS (3) without moving
+        # the keyboard cursor — if it was sitting on row 4+ (only reachable while expanded), it
+        # is now scrolled out of view entirely while still being the row Space/Enter would act
+        # on (reported live 2026-09-05). Scroll it back into view rather than relocating the
+        # cursor to row 0: the user's actual keyboard position should never silently change
+        # just because the box visually shrank around it — same principle as every other cursor
+        # move in this app leaving selection/position alone unless the user explicitly acted.
+        # A no-op when already visible or when nothing is current (currentRow() == -1).
+        if not self._expanded:
+            row = self.currentRow()
+            if row >= 0:
+                item = self.item(row)
+                if item is not None:
+                    self.scrollToItem(item, QListWidget.ScrollHint.EnsureVisible)
 
     def _resize_to_row_count(self):
         # Fixed at exactly two sizes — DEFAULT_VISIBLE_ROWS (3) collapsed,
