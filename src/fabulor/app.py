@@ -1108,12 +1108,15 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.excluded_books_section.set_expanded(self.excluded_books_popup.is_expanded)
 
     def _on_excluded_books_exit_upward(self):
-        """Up at row 0 of the Excluded Books popup — moves focus back to Persist search
-        filter's row, the row directly above it in the Library tab (the mirror of how
-        _handle_settings_arrows entered the popup in the first place: Down/Right from that
-        exact row — see the entry logic there). Lands on the row's FIRST button, matching
-        every other row-to-row Up (`from_below=True` is for a list box's own last-item
-        convention, which doesn't apply to a plain button row)."""
+        """Up at row 0 of the Excluded Books popup — collapses it if expanded (so its footprint
+        never overlaps whatever focus lands on above it — a live design pass 2026-09-05 settled
+        on exit ALWAYS succeeding with collapse as a side effect, not "must collapse before you
+        may leave") and moves focus back to Persist search filter's row, the row directly above
+        it in the Library tab (the mirror of how _handle_settings_arrows entered the popup in
+        the first place: Down/Right from that exact row — see the entry logic there). Lands on
+        the row's FIRST button, matching every other row-to-row Up (`from_below=True` is for a
+        list box's own last-item convention, which doesn't apply to a plain button row)."""
+        self._collapse_excluded_books()
         rows = self.panel_manager.settings_tab_button_rows()
         if rows:
             self._focus_settings_control(rows[-1][0])
@@ -3972,6 +3975,15 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 # Current focus isn't one of the panel's widgets: enter at the first (Tab) or
                 # last (Backtab).
                 nxt = widgets[0] if forward else widgets[-1]
+            # Leaving the Excluded Books popup via Tab/Shift+Tab must collapse it too, same as
+            # the arrow-key exit path (ExcludedBooksPopup.keyPressEvent's Up-at-row-0 ->
+            # _on_excluded_books_exit_upward) — Tab-cycling is a second, independent way to
+            # leave this widget that bypassed that collapse entirely (reported live 2026-09-05:
+            # an expanded popup stayed expanded, covering ground the next Tab stop's own focus
+            # then shared the screen with). `nxt is not focus` guards the pathological
+            # single-widget-panel case where Tab/Backtab would otherwise "leave" onto itself.
+            if focus is self.excluded_books_popup and nxt is not focus:
+                self._collapse_excluded_books()
             # Via _focus_settings_control so a list box lands ON a path rather than merely
             # focusing the empty box — same reason the arrow navigation routes through it.
             # Backtab arrives from below, so it should land on the box's LAST path.

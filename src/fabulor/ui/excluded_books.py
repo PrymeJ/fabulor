@@ -114,6 +114,16 @@ class _ExcludedRow(QWidget):
         self._eye_btn = QToolButton(self._overlay)
         self._eye_btn.setObjectName("excluded_row_eye_btn")
         self._eye_btn.setFixedSize(self._EYE_W - 4, self.ROW_H - 4)
+        # QToolButton defaults to TabFocus (a documented Qt gotcha — see CLAUDE.md's "Keyboard
+        # focus ownership" consequence 2). Without this override, EVERY row's eye button — most
+        # of them invisible off-screen at any given time, only revealed on hover — became its
+        # own individual Tab stop (reported live 2026-09-05: "Tab goes to invisible eyes"), and
+        # each one was also a fresh, unexcluded target for the traveling focus marker (it has no
+        # entry in focus_marker.py's _FILL_FOCUS_OBJECT_NAMES, so it traced normally — this is
+        # what the earlier "marker inside the popup" screenshot actually was, not a residual bug
+        # in that fix). ExcludedBooksPopup itself is the sole intended Tab stop for this whole
+        # list (see its own keyPressEvent for Space/Enter reaching the same restore action).
+        self._eye_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self._eye_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._eye_btn.setToolTip("Restore this book to the library")
         self._eye_btn.clicked.connect(lambda: self.restore_requested.emit(self._path))
@@ -512,17 +522,16 @@ class ExcludedBooksPopup(QListWidget):
                 # box in the Library tab, same as a plain grid row's own "last row: swallow"
                 # rule) — consume it.
                 #
-                # Up at the top leaves the box for whatever sits above it (Persist search
-                # filter's row) — BUT ONLY when collapsed. While expanded, the box's own visible
-                # rect covers ground beyond its collapsed footprint (up to MAX_EXPANDED_ROWS,
-                # growing upward — see _resize_to_row_count/_reposition_vertically); leaving
-                # focus there while the box stays visually expanded put the exited-to focus and
-                # the still-expanded list in the same screen space (reported live 2026-09-05).
-                # Deliberately a no-op rather than auto-collapsing on the way out — the user
-                # must collapse explicitly (Left/Right, below) before Up can leave, exactly
-                # mirroring how Down/Up never auto-expand either. See exit_upward_requested's
-                # own docstring for why this is a signal rather than event.ignore().
-                if key == Qt.Key.Key_Up and not self._expanded:
+                # Up at the top always leaves the box for whatever sits above it (Persist search
+                # filter's row) — the owner's exit_upward_requested handler collapses the popup
+                # FIRST if it's expanded (see app.py's _on_excluded_books_exit_upward), so the
+                # exited-to focus and the box's own footprint never overlap. A no-op-while-
+                # expanded variant was tried first and rejected live (2026-09-05): the user's own
+                # framing was "go to Persist search filter row AND collapse the list," i.e. exit
+                # always succeeds, collapsing is a side effect of leaving — not "you must
+                # collapse before you may leave." See exit_upward_requested's own docstring for
+                # why this is a signal rather than event.ignore().
+                if key == Qt.Key.Key_Up:
                     self.exit_upward_requested.emit()
                 return
             # Native Qt cursor movement — scrolls the viewport as needed (including past
