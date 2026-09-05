@@ -99,9 +99,10 @@ _HALF_PIXEL = 0.5
 # as "you are here" (live judgement 2026-09-04, after the marker was tried on Audio's Reset
 # button and on Library's list boxes).
 #
-# Their focus appearance lives entirely in themes.py (search the object name); this module's only
-# job is to stay out of the way.
-_FILL_FOCUS_OBJECT_NAMES = frozenset(("reset_audio_btn", "settings_folder_list"))
+# Their focus appearance lives entirely in themes.py (search the object name) or, for
+# excluded_popup, in its own per-row hover-reveal eye animation (ui/excluded_books.py,
+# _ExcludedRow.set_hovered) — this module's only job is to stay out of the way.
+_FILL_FOCUS_OBJECT_NAMES = frozenset(("reset_audio_btn", "settings_folder_list", "excluded_popup"))
 
 # Live-observed 1px horizontal misalignment specific to the QTabBar path — confirmed live
 # 2026-08-19 to affect ONLY the tab bar, not #pattern_button rectangles (which render correctly at

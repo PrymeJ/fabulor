@@ -57,10 +57,15 @@ class _ExcludedRow(QWidget):
     _ANIM_MS = 250
     ROW_H    = 24    # matches ChapterList.ROW_HEIGHT for visual consistency
 
-    def __init__(self, path: str, title: str, author: str, index: int, parent=None):
+    def __init__(self, path: str, title: str, author: str, index: int, parent=None,
+                 owner: "ExcludedBooksPopup | None" = None):
         super().__init__(parent)
         self._path = path
         self._row_index = index
+        self._owner = owner  # the ExcludedBooksPopup this row belongs to — used only to
+            # coordinate mouse-vs-keyboard "last one wins" (see enterEvent/leaveEvent below).
+            # NOT Qt parenting (this widget is parented into the list later via setItemWidget,
+            # independent of this reference).
         self._state = 'idle'   # idle | hover
         self._anim: QPropertyAnimation | None = None
         self._eye_color = '#cccccc'
@@ -179,10 +184,22 @@ class _ExcludedRow(QWidget):
 
     def enterEvent(self, event):
         super().enterEvent(event)
+        # Mouse and keyboard drive the SAME reveal on potentially DIFFERENT rows independently
+        # (the keyboard's own reveal lives in ExcludedBooksPopup._kbdnav_row_widget) — without
+        # this notification, hovering row A with the mouse while the keyboard cursor sits on row
+        # B left BOTH rows visibly revealed at once, since set_hovered's own idempotency guard
+        # only protects a single row against itself, not two rows against each other (reported
+        # live 2026-09-05: "the mouse/keyboard last to win logic is required here too as in
+        # other places" — same shape as library.py's _on_view_entered yielding the keyboard
+        # highlight to a real mouse hover). The mouse arriving always wins immediately.
+        if self._owner is not None:
+            self._owner.on_mouse_hover_row(self)
         self.set_hovered(True)
 
     def leaveEvent(self, event):
         super().leaveEvent(event)
+        if self._owner is not None:
+            self._owner.on_mouse_leave_row(self)
         self.set_hovered(False)
 
     def set_hovered(self, hovered: bool) -> None:
@@ -287,8 +304,11 @@ class ExcludedBooksPopup(QListWidget):
             # shifts every later row up one index and fires currentRowChanged again pointing at
             # whatever widget now OCCUPIES the old index — retracting by index there would
             # incorrectly un-reveal a row the keyboard never actually touched. Tracking the
-            # widget itself sidesteps that entirely (and also means this can never touch a row a
-            # real mouse hover is independently showing).
+            # widget itself also makes on_mouse_hover_row's own retract-if-different check exact
+            # (identity, not index) when the mouse takes over mid-navigation — see that method.
+        self._mouse_hovered_row_widget: "_ExcludedRow | None" = None  # the _ExcludedRow a real
+            # mouse enterEvent last reported — see on_mouse_hover_row/on_mouse_leave_row and
+            # _on_current_row_changed's own retract-the-other-side check.
         # Drives the keyboard-cursor indicator (the eye reveal itself — see
         # _ExcludedRow.set_hovered's docstring for why there's no separate marker/fill/dot).
         # currentRowChanged fires for BOTH the keyboard's own native Up/Down (see keyPressEvent)
@@ -299,10 +319,40 @@ class ExcludedBooksPopup(QListWidget):
         # signal when the row genuinely changed.
         self.currentRowChanged.connect(self._on_current_row_changed)
 
+    def on_mouse_hover_row(self, row: "_ExcludedRow") -> None:
+        """Called by _ExcludedRow.enterEvent on every genuine mouse hover — the mouse arriving
+        always wins immediately over whatever the keyboard was showing, mirroring library.py's
+        _on_view_entered yielding a keyboard highlight to a real mouse hover. Without this, the
+        keyboard cursor and the mouse could independently reveal two DIFFERENT rows' eyes at
+        once, since _ExcludedRow.set_hovered's own idempotency guard only protects a single row
+        against itself, never coordinates across rows (reported live 2026-09-05)."""
+        if self._kbdnav_row_widget is not None and self._kbdnav_row_widget is not row:
+            self._kbdnav_row_widget.set_hovered(False)
+            self._kbdnav_row_widget = None
+        self._mouse_hovered_row_widget = row
+
+    def on_mouse_leave_row(self, row: "_ExcludedRow") -> None:
+        """Called by _ExcludedRow.leaveEvent — clears the mouse-hover tracking used by
+        _on_current_row_changed's own retract-the-other-side check below. Guarded on identity
+        (only clear if THIS row is the one currently tracked) since a fast pointer move can
+        deliver a new row's enterEvent before the old row's leaveEvent, and the stale leaveEvent
+        must not clobber the newer row's already-current tracking."""
+        if self._mouse_hovered_row_widget is row:
+            self._mouse_hovered_row_widget = None
+
     def _on_current_row_changed(self, row: int) -> None:
         if self._kbdnav_row_widget is not None:
             self._kbdnav_row_widget.set_hovered(False)
             self._kbdnav_row_widget = None
+        # The reverse direction of on_mouse_hover_row's guard: the keyboard cursor moving must
+        # ALSO yield over whatever the mouse is independently showing, or the same two-rows-open
+        # bug reopens from this side (mouse resting on row X, keyboard cursor arrives on row Y —
+        # no real leaveEvent ever fires for X since the cursor never physically moved, so X's
+        # reveal would otherwise persist unnoticed). The keyboard arriving here also wins
+        # immediately, matching the framing of "last one wins" from whichever side moved last.
+        if self._mouse_hovered_row_widget is not None:
+            self._mouse_hovered_row_widget.set_hovered(False)
+            self._mouse_hovered_row_widget = None
         if row < 0:
             return
         item = self.item(row)
@@ -364,7 +414,7 @@ class ExcludedBooksPopup(QListWidget):
             self._add_row(path, title, author, i)
 
     def _add_row(self, path, title, author, index):
-        row = _ExcludedRow(path, title, author, index)
+        row = _ExcludedRow(path, title, author, index, owner=self)
         row.set_colors(self._theme)
         row.restore_requested.connect(self._on_row_restore)
         item = QListWidgetItem()
@@ -460,11 +510,19 @@ class ExcludedBooksPopup(QListWidget):
             if (key == Qt.Key.Key_Up and at_top) or (key == Qt.Key.Key_Down and at_bottom):
                 # Genuinely at an end. Down at the bottom has nowhere to go (nothing below this
                 # box in the Library tab, same as a plain grid row's own "last row: swallow"
-                # rule) — consume it. Up at the top leaves the box for whatever sits above it
-                # (Persist search filter's row) — see exit_upward_requested for why this is a
-                # signal rather than event.ignore(), mirroring folder_list_widget's own
-                # top-boundary exit.
-                if key == Qt.Key.Key_Up:
+                # rule) — consume it.
+                #
+                # Up at the top leaves the box for whatever sits above it (Persist search
+                # filter's row) — BUT ONLY when collapsed. While expanded, the box's own visible
+                # rect covers ground beyond its collapsed footprint (up to MAX_EXPANDED_ROWS,
+                # growing upward — see _resize_to_row_count/_reposition_vertically); leaving
+                # focus there while the box stays visually expanded put the exited-to focus and
+                # the still-expanded list in the same screen space (reported live 2026-09-05).
+                # Deliberately a no-op rather than auto-collapsing on the way out — the user
+                # must collapse explicitly (Left/Right, below) before Up can leave, exactly
+                # mirroring how Down/Up never auto-expand either. See exit_upward_requested's
+                # own docstring for why this is a signal rather than event.ignore().
+                if key == Qt.Key.Key_Up and not self._expanded:
                     self.exit_upward_requested.emit()
                 return
             # Native Qt cursor movement — scrolls the viewport as needed (including past
