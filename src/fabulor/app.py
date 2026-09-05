@@ -11,7 +11,8 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import (
     Qt, QTimer, QPoint, QRect, QEvent, QPropertyAnimation, QEasingCurve, QModelIndex,
-    QRegularExpression, Signal, QObject, QElapsedTimer, QSize, QVariantAnimation, QThreadPool
+    QRegularExpression, Signal, QObject, QElapsedTimer, QSize, QVariantAnimation, QThreadPool,
+    QItemSelectionModel,
 )
 from PySide6.QtGui import QPixmap, QColor, QIntValidator, QRegularExpressionValidator, QIcon, QPainter, QKeyEvent, QCursor
 
@@ -571,6 +572,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.scan_now_btn.clicked.connect(self.library_controller._on_scan_now_clicked)
         self.add_folder_btn.clicked.connect(self.library_controller._on_scan_now_clicked)
         self.remove_folder_btn.clicked.connect(self.library_controller._on_remove_folder_clicked)
+        self.folder_list_widget.itemSelectionChanged.connect(self._update_remove_folder_btn_enabled)
         self.refresh_library_btn.clicked.connect(self.library_controller._on_rescan_clicked)
 
         self.scanner.progress.connect(self.library_controller._on_scan_progress)
@@ -1479,15 +1481,25 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             item = QListWidgetItem(loc)
             item.setToolTip(loc)  # full path on hover, since long paths now elide instead of scrolling
             self.folder_list_widget.addItem(item)
-        # Remove and Rescan mean nothing with no folders configured. Disabling rather than
-        # hiding: hiding would strand Add alone on the left, and stretching it across the row
-        # would make the layout jump as folders come and go. setEnabled also does the whole job
-        # in one step — Qt dims via the :disabled QSS rule, drops :hover/:pressed, ignores
-        # clicks, and takes them out of Tab and arrow navigation so the keyboard skips straight
-        # past them (see _handle_settings_arrows, which filters on isEnabled()).
-        has_folders = bool(paths)
-        self.remove_folder_btn.setEnabled(has_folders)
-        self.refresh_library_btn.setEnabled(has_folders)
+        # Rescan means nothing with no folders configured. Disabling rather than hiding: hiding
+        # would strand Add alone on the left, and stretching it across the row would make the
+        # layout jump as folders come and go. setEnabled also does the whole job in one step —
+        # Qt dims via the :disabled QSS rule, drops :hover/:pressed, ignores clicks, and takes
+        # them out of Tab and arrow navigation so the keyboard skips straight past them (see
+        # _handle_settings_arrows, which filters on isEnabled()).
+        self.refresh_library_btn.setEnabled(bool(paths))
+        # Remove additionally needs an actual SELECTION, not just a non-empty list — reload just
+        # emptied/repopulated the widget, which drops any prior selection, so this must be
+        # re-evaluated here too, not only from itemSelectionChanged.
+        self._update_remove_folder_btn_enabled()
+
+    def _update_remove_folder_btn_enabled(self):
+        """Remove is a no-op with nothing selected (`_on_remove_folder_clicked` already guards
+        it), but it stayed clickable and undimmed the whole time regardless — reported live
+        2026-09-05 as misleading, since an empty selection also changes what Rescan does (it
+        rescans every configured path rather than just the selected one). Single source of truth
+        for Remove's enabled state, called on selection change and on any list repopulation."""
+        self.remove_folder_btn.setEnabled(bool(self.folder_list_widget.selectedItems()))
 
     def _get_selected_folder_path(self):
         item = self.folder_list_widget.currentItem()
@@ -1896,7 +1908,14 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         """Enable/disable the Library panel's folder-management buttons.
         Disabled (but still visible) while a scan is in progress."""
         self.add_folder_btn.setEnabled(enabled)
-        self.remove_folder_btn.setEnabled(enabled)
+        # Remove is additionally gated on selection (_update_remove_folder_btn_enabled) — re-
+        # enabling it unconditionally here on scan-finish would undo that gate and make it
+        # clickable again with nothing selected. Disabling for the scan-in-progress case is still
+        # unconditional, same as the other two buttons.
+        if enabled:
+            self._update_remove_folder_btn_enabled()
+        else:
+            self.remove_folder_btn.setEnabled(False)
         self.refresh_library_btn.setEnabled(enabled)
 
     def _set_chapter_ui_active(self, active):
@@ -3978,7 +3997,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         per-tab code lives here."""
         key = event.key()
         if key not in (Qt.Key.Key_Up, Qt.Key.Key_Down, Qt.Key.Key_Left, Qt.Key.Key_Right,
-                       Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                       Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space):
             return False
         if not self._settings_is_active():
             return False
@@ -3988,6 +4007,24 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         rows = self.panel_manager.settings_tab_button_rows()
         if not rows:
             return False
+
+        # Space AND Return/Enter both toggle the current row's selection on a focused LIST BOX —
+        # deliberately the SAME action on both keys, not split into "add"/"remove". A live report
+        # (2026-09-05) said as much directly after an earlier version tried the split: Qt's own
+        # native Space on this widget only ever grows the selection (confirmed live, never
+        # verified to reproduce this specific widget's real behaviour in an offscreen harness —
+        # see the CLAUDE.md scope note on trusting headless verification for settings-panel
+        # widgets), so Space is claimed here too instead of left to fall through to Qt.
+        # Consumes both keys unconditionally on this widget so neither ever reaches Qt's own
+        # (different, non-toggling) handling.
+        if isinstance(focus, QListWidget) and key in (
+                Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space):
+            row = focus.currentRow()
+            if row >= 0:
+                item = focus.item(row)
+                if item is not None:
+                    item.setSelected(not item.isSelected())
+            return True
 
         # Return/Enter activate the focused button, alongside Space. Qt gives a QPushButton
         # Space for free but ignores Return/Enter unless it is a dialog's default button
@@ -4045,19 +4082,19 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 # which moved -1 to 0) but fatal with exactly ONE, where -1 satisfied both
                 # boundary tests and every arrow bounced straight back out (reported live
                 # 2026-09-05: "when there is one path remaining, I can never activate it").
-                focus.setCurrentRow(0 if key == Qt.Key.Key_Down else focus.count() - 1)
+                self._move_list_current_row(focus, 0 if key == Qt.Key.Key_Down else focus.count() - 1)
                 self._keep_marker_awake()
                 return True
             at_top = row == 0
             at_bottom = row == focus.count() - 1
             if ((key == Qt.Key.Key_Down and not at_bottom)
                     or (key == Qt.Key.Key_Up and not at_top)):
-                # Move the selection HERE and consume the key, rather than returning False and
-                # letting Qt do it. The marker traces the selected ROW, so it has to re-map
-                # after the row changes — deferring to Qt would run _keep_marker_awake against
-                # the OLD selection and leave the marker a row behind. Focus stays on the box,
-                # so this also supplies the keep-awake the slider needs for the same reason.
-                focus.setCurrentRow(row + (1 if key == Qt.Key.Key_Down else -1))
+                # Move the CURSOR here and consume the key, rather than returning False and
+                # letting Qt do it. The marker traces the current ROW, so it has to re-map after
+                # the row changes — deferring to Qt would run _keep_marker_awake against the OLD
+                # row and leave the marker a row behind. Focus stays on the box, so this also
+                # supplies the keep-awake the slider needs for the same reason.
+                self._move_list_current_row(focus, row + (1 if key == Qt.Key.Key_Down else -1))
                 self._keep_marker_awake()
                 return True
             # Genuinely at an end: leave the box. Drop the selection on the way out, matching
@@ -4110,6 +4147,26 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         if isinstance(widget, QListWidget) and widget.count():
             widget.setCurrentRow(widget.count() - 1 if from_below else 0)
         widget.setFocus(Qt.FocusReason.TabFocusReason)
+
+    def _move_list_current_row(self, list_widget: QListWidget, row: int) -> None:
+        """Move `list_widget`'s current-row CURSOR to `row` without touching its selection.
+
+        `QListWidget.setCurrentRow(row)` looks like plain cursor movement but is not: it calls
+        `setCurrentIndex` with Qt's default `ClearAndSelect` command, which replaces the ENTIRE
+        selection with just `row` — confirmed live and reproduced synthetically 2026-09-05
+        (select rows 2 and 4, then `setCurrentRow(3)`: selection becomes {2, 3}, row 4 silently
+        dropped). That is a real bug for `folder_list_widget` specifically now that Space/Enter
+        toggle selection on the current row (see the toggle branch above): arrowing after
+        building a multi-selection was destroying it as a side effect of merely moving.
+
+        `QItemSelectionModel.setCurrentIndex(idx, NoUpdate)` moves the same current-row cursor
+        (currentRow() reads it identically either way) while leaving `selectedItems()` completely
+        untouched — the actual primitive this method needs. Used for every arrow-driven cursor
+        move; `_focus_settings_control`'s entry-point `setCurrentRow` is deliberately NOT routed
+        through this, since establishing the very first selection on a freshly-entered list is
+        the one place the selecting behavior is wanted."""
+        idx = list_widget.model().index(row, 0)
+        list_widget.selectionModel().setCurrentIndex(idx, QItemSelectionModel.SelectionFlag.NoUpdate)
 
     def _keep_marker_awake(self) -> None:
         """Restart the traveling marker's idle dwell without moving it — for keys that act on

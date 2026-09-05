@@ -14,10 +14,10 @@ import os
 
 from PySide6.QtWidgets import (
     QWidget, QLabel, QPushButton, QHBoxLayout, QVBoxLayout, QStackedWidget,
-    QSizePolicy, QGraphicsOpacityEffect, QTabWidget, QListWidget,
+    QSizePolicy, QGraphicsOpacityEffect, QTabWidget, QListWidget, QStyledItemDelegate, QStyle,
 )
 from PySide6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, QSize, QObject, QEvent
-from PySide6.QtGui import QPixmap, QFont, QFontMetrics
+from PySide6.QtGui import QPixmap, QFont, QFontMetrics, QColor
 
 from .title_bar import TitleBar, RightClickButton, ThemeItem
 from .controls import ClickSlider, ScrollingLabel, HoverButton, FreezableLabel, ShimmerButton, RevertButton
@@ -31,6 +31,52 @@ from .excluded_books import ExcludedBooksSection
 from .ui_helpers import COVER_AREA_HEIGHT, _load_svg_icon
 
 
+class _FolderListItemDelegate(QStyledItemDelegate):
+    """Paints the folder list's current-row fill directly, bypassing QSS for that one case only.
+
+    Qt has no `::item:focus` (or any per-item "this is the current row" ) pseudo-state — `:focus`
+    in QSS applies to the WIDGET as a whole, not a row, so a `QListWidget::item:focus` rule is
+    silently a no-op (confirmed live 2026-09-05: set to solid white on a theme, zero visual
+    change). The current row and the selection are also genuinely different Qt concepts —
+    `currentRow()`/`currentIndex()` is the keyboard cursor, `selectedItems()` is the multi-select
+    set, and they can disagree (arrowing onto an unselected row while other rows stay selected).
+    There is no selector that means "current but not selected."
+
+    So this delegate paints ONLY the current-row-while-unselected fill itself, in
+    `focus_folder_list_row` (a distinct shade from the plain mouse-click accent selected fill —
+    the point of this whole delegate is to make "keyboard cursor is here" read differently from
+    "this row is part of the selection"), and defers everything else (selected fill, text, hover)
+    to the base QStyledItemDelegate so the existing QSS rules keep doing their job unchanged.
+
+    Gated on `mw._keyboard_nav_active` (not just `hasFocus()`/`State_HasFocus`) so this fill only
+    appears while the keyboard is actually driving — same `kbdnav` scoping every other keyboard
+    focus affordance in Settings uses, so a mouse click that merely leaves the box focused doesn't
+    also light up a row the user never arrowed to."""
+
+    def __init__(self, mw, parent=None):
+        super().__init__(parent)
+        self._mw = mw
+
+    def paint(self, painter, option, index):
+        list_widget = self.parent()
+        is_current_row = (list_widget is not None
+                           and index.row() == list_widget.currentRow())
+        is_selected = bool(option.state & QStyle.State_Selected)
+        if (is_current_row and not is_selected
+                and getattr(self._mw, "_keyboard_nav_active", False)):
+            from ..themes import _resolve_theme
+            theme = _resolve_theme(self._mw.theme_manager.get_committed_theme())
+            color = theme.get("focus_folder_list_row", theme.get("accent_light", "#ffffff"))
+            painter.save()
+            painter.fillRect(option.rect, QColor(color))
+            painter.restore()
+            # Base paint would otherwise draw its own focus-rect decoration (and, on some styles,
+            # an unselected-background fill) on top of the fill just drawn — strip the state flag
+            # it keys that on before handing off, so it only paints text/icon.
+            option.state &= ~QStyle.State_HasFocus
+        super().paint(painter, option, index)
+
+
 class _PathListEventFilter(QObject):
     def __init__(self, list_widget):
         super().__init__(list_widget)
@@ -41,6 +87,23 @@ class _PathListEventFilter(QObject):
             index = self.list_widget.indexAt(event.pos())
             if not index.isValid():
                 self.list_widget.clearSelection()
+                return super().eventFilter(obj, event)
+            # A plain (no-modifier) left-click on the row that is ALREADY the sole selection
+            # should deselect it — Qt's own default ExtendedSelection click handling never does
+            # this: a bare click always does ClearAndSelect regardless of prior state, so
+            # clicking an already-selected lone row just reselects the same row instead of
+            # toggling it off. Ctrl+click already does the real Toggle command and is untouched
+            # (this only intercepts the plain, no-modifier case). Reported live 2026-09-05: no
+            # way to deselect the last/only path with a single click, which matters because an
+            # empty selection changes what Rescan does (rescans every configured path instead of
+            # just the selected one).
+            if (event.button() == Qt.MouseButton.LeftButton
+                    and event.modifiers() == Qt.KeyboardModifier.NoModifier):
+                selected = self.list_widget.selectedIndexes()
+                if len(selected) == 1 and selected[0].row() == index.row():
+                    self.list_widget.clearSelection()
+                    self.list_widget.setCurrentRow(-1)
+                    return True  # consume — do not let Qt's own press handling re-select it
         return super().eventFilter(obj, event)
 
 
@@ -982,6 +1045,8 @@ def build_library_tab(mw):
     mw.folder_list_widget.setTextElideMode(Qt.TextElideMode.ElideRight)
     mw._path_list_ef = _PathListEventFilter(mw.folder_list_widget)
     mw.folder_list_widget.viewport().installEventFilter(mw._path_list_ef)
+    mw._folder_list_delegate = _FolderListItemDelegate(mw, mw.folder_list_widget)
+    mw.folder_list_widget.setItemDelegate(mw._folder_list_delegate)
     lib_layout.addWidget(mw.folder_list_widget)
 
     folder_btns_layout = QHBoxLayout()

@@ -100,8 +100,8 @@ _HALF_PIXEL = 0.5
 # button and on Library's list boxes).
 #
 # Their focus appearance lives entirely in themes.py (search the object name); this module's only
-# job is to stay out of the way. Library's two list boxes are the expected next additions.
-_FILL_FOCUS_OBJECT_NAMES = frozenset(("reset_audio_btn",))
+# job is to stay out of the way.
+_FILL_FOCUS_OBJECT_NAMES = frozenset(("reset_audio_btn", "settings_folder_list"))
 
 # Live-observed 1px horizontal misalignment specific to the QTabBar path — confirmed live
 # 2026-08-19 to affect ONLY the tab bar, not #pattern_button rectangles (which render correctly at
