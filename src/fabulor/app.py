@@ -848,6 +848,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.excluded_books_popup.restore_requested.connect(self._on_excluded_book_restored)
         self.excluded_books_popup.expand_toggle_requested.connect(self._on_excluded_toggle_clicked)
         self.excluded_books_popup.exit_upward_requested.connect(self._on_excluded_books_exit_upward)
+        self.excluded_books_popup.collapse_requested.connect(self._collapse_excluded_books)
         # The arrow QLabel is parented to library_tab too (not
         # excluded_books_section) so it can travel above the section's own
         # row bounds without being clipped — see ExcludedBooksSection's
