@@ -1107,6 +1107,17 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         expanded = not self.excluded_books_popup.is_expanded
         self.excluded_books_popup.set_expanded(expanded)
         self.excluded_books_section.set_expanded(self.excluded_books_popup.is_expanded)
+        # Mouse-driven expand can cover Persist search filter's row while a PSF button already
+        # holds keyboard focus (no FocusIn fires here at all — focus doesn't move, only the
+        # box's geometry does), which the FocusIn-based redirect in eventFilter cannot see.
+        # Same fix, same reasoning, different trigger — see that branch's own comment. Only
+        # relevant for the expand direction; collapsing never covers anything new.
+        if expanded:
+            focus = QApplication.focusWidget()
+            psf_buttons = (set(self.persist_filter_buttons.values())
+                           | set(self.persist_filter_sub_buttons.values()))
+            if focus in psf_buttons:
+                self.excluded_books_popup.setFocus(Qt.FocusReason.OtherFocusReason)
 
     def _on_excluded_books_exit_upward(self):
         """Up at row 0 of the Excluded Books popup — collapses it if expanded (so its footprint
@@ -4697,6 +4708,28 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                     and event.key() in self.library_panel._LIST_KEY_HANDLED_KEYS):
                 if self._handle_library_nothing_focused_key(event):
                     return True
+
+        # Persist search filter's row can end up COVERED by the Excluded Books popup when it's
+        # expanded (it grows upward from a fixed bottom anchor, past DEFAULT_VISIBLE_ROWS —
+        # see excluded_books.py) — reachable two ways: arriving fresh while already expanded
+        # (native Left/Right stepping between PSF's own buttons never routes through
+        # _handle_settings_arrows at all, so there's no key-press hook to catch it there), or
+        # the box expanding out from under focus that was already sitting on a PSF button
+        # (mouse-driven, no keypress at all). Both were reported live 2026-09-06 as the marker
+        # showing up visually behind/under the expanded list. Checked here — right before the
+        # marker would otherwise be pointed at the newly-focused control — rather than in
+        # _handle_settings_arrows, since that method only ever sees keys, not every path focus
+        # can actually move by. Redirecting INTO the box (its own normal entry point) rather
+        # than just declining to show the marker: the box's own mouse/keyboard "most recent
+        # move wins" coordination (see excluded_books.py) already handles a mouse hover
+        # happening at the same moment, so this doesn't need its own separate arbitration.
+        if event.type() == QEvent.Type.FocusIn and hasattr(self, 'excluded_books_popup'):
+            focus = QApplication.focusWidget()
+            psf_buttons = (set(getattr(self, 'persist_filter_buttons', {}).values())
+                           | set(getattr(self, 'persist_filter_sub_buttons', {}).values()))
+            if (focus in psf_buttons and self.excluded_books_popup.is_expanded):
+                self.excluded_books_popup.setFocus(Qt.FocusReason.OtherFocusReason)
+                return True
 
         # Traveling-border-marker keyboard-focus indicator (ui/focus_marker.py). Observe focus
         # changes app-wide and (re)point the marker at the focused control ONLY while it's in
