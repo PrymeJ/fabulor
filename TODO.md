@@ -10,10 +10,9 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
 ## Summary index
 
 ### Settings keyboard navigation — remaining surfaces
-Branch `feature/traveling-focus-marker` (not merged). Look, Controls, Audio and Library are done;
-these are the pieces deliberately left for the next pass.
-- [2026-09-05] **Themes tab still excluded from `_ARROW_NAV_TABS`.** The swatch grid needs its own
-  arrows+space design; `panel_tab_widgets` already excludes `ThemeItem` for the same reason.
+Branch `feature/traveling-focus-marker` (not merged). Themes, Look, Controls, Audio and Library
+are all done as of 2026-09-06 Session 2 — the whole Settings panel is now arrow-navigable.
+Moving on to Playback, Sleep and Sprint panels next.
 - [2026-09-05] `#disable_sleep_btn` has the same missing-`:hover` gap that was fixed for
   `#reset_audio_btn` (an ID selector outranks the generic `QPushButton:hover`). Deliberately left
   alone — this family of reset/destructive buttons is explicitly un-unified, and unifying them is

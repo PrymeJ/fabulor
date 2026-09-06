@@ -25,8 +25,10 @@ test. Do not treat green tests or a clean render as coverage here.
 - [ ] Arrow around the **Themes** tab, return to Look: hover still works on both tabs and buttons
 - [ ] Type an arrow key inside a text field (Library search, sleep custom minutes): modality unaffected, no marker
 
-### Arrow navigation — all button-row tabs (Look, Controls, Audio, Library)
+### Arrow navigation — all button-row tabs (Look, Controls, Audio, Library, Themes)
 Run these on **each** participating tab; the handler is generic, so a break on one is likely a break on all.
+Themes has its own additional row shape and internal swatch-grid navigation — see its own
+section below for that part specifically.
 - [ ] From the tab bar, **Down** enters the controls at the first row's first control
 - [ ] **Down**/**Up** move between rows, always landing on the row's **first** control
 - [ ] **Up** from the first row returns to the tab bar
@@ -35,7 +37,69 @@ Run these on **each** participating tab; the handler is generic, so a break on o
 - [ ] **Down** on the last row does nothing (swallowed — it must not fall out of the grid)
 - [ ] Tab/Shift+Tab still cycle through every control exactly as before
 - [ ] **Space** and **Return/Enter** both activate the focused control (Qt gives Space for free; Enter is ours)
-- [ ] Themes tab is deliberately NOT arrow-navigable yet — arrows there should do nothing new
+
+### Settings → Themes tab (added 2026-09-06 Session 2)
+Row-to-row nav is the generic mechanism above (mode row, swatch grid as one stop, bulk row,
+interval row); this section covers the swatch grid's own internal navigation and the tab's
+shortcuts, which are Themes-specific.
+
+**Swatch grid entry/exit**
+- [ ] **Down** from the mode row lands on the swatch grid's first item (Cover art based theme),
+  and previews it automatically (no extra keypress) — same debounced preview a mouse hover uses
+- [ ] **Up** from the grid's first row leaves to the mode row above; the swatch's preview reverts
+  to the committed theme the instant you leave (no lag, no stuck highlight)
+- [ ] **Down** off the grid's last row leaves to Add all/Remove all/Change now; preview reverts
+- [ ] **Left** off the grid's first column (row 0 only) leaves to the tab bar; preview reverts
+- [ ] **Tab** away from the grid (forward or Shift+Tab backward) also reverts the preview — this
+  was a real bug (2026-09-06): both Tab and every arrow exit initially failed to revert whenever
+  the real mouse cursor happened to be resting near wherever it last hovered a swatch, because
+  the exit path was reusing the MOUSE leaveEvent's jitter-detection heuristic on a keyboard
+  action that has nothing to do with where the mouse physically is
+- [ ] Leave the grid, then re-enter with Down/Up: lands back at row 0/last row (no memory of the
+  previous position — same as folder_list_widget's own exit-and-reenter behaviour)
+
+**Inside the grid**
+- [ ] **Right** from a row's last swatch continues onto the NEXT row's first swatch (reading-order
+  wrap, not a clamp) — confirmed on a genuinely bin-packed row boundary, not just a short row
+- [ ] **Left** from a row's first swatch continues onto the PREVIOUS row's last swatch
+- [ ] **Right** off the grid's very last swatch exits downward (same as Down there)
+- [ ] **Up**/**Down** move to the same column index on the row above/below, clamped to that row's
+  own length if it's shorter — this is a DIFFERENT movement than Left/Right's wrap
+- [ ] Arrival at any swatch shows a visible hover-look highlight (a real QSS property,
+  `kbdnav_hover` — NOT `Qt.WA_UnderMouse`, which was tried first and confirmed live not to
+  actually repaint `:hover` at all) — moving to a new swatch must not leave two swatches
+  highlighted, or none
+- [ ] **Space** toggles the focused swatch's pool membership only (mirrors a LEFT click) —
+  it must NOT also switch the active theme
+- [ ] **Enter/Return** selects the focused swatch AND switches to it immediately (mirrors a
+  RIGHT click) — it must NOT just toggle pool membership
+- [ ] No traveling marker ever appears inside the grid — the hover-look property above is the
+  only "where am I" affordance
+- [ ] Resting the real mouse somewhere outside the grid while navigating with arrows: the preview
+  must hold (this was the periodic-backstop bug, fixed earlier this session — the 500ms
+  swatch-leave-still-hovered check was treating "mouse physically outside the box" as a leave
+  signal even though the keyboard, not the mouse, was driving)
+
+**Interval row**
+- [ ] **Left/Right** move between the interval values (2/5/10/20/30/60/120/Off) — plain `QLabel`s
+  have NO native arrow-key focus chaining (confirmed live and synthetically; unlike QPushButton,
+  which gets this from Qt's own style), so this needs its own explicit handling — a regression
+  here would show Right/Left doing nothing
+- [ ] The focused interval value shows an underline via a bottom border — NOT
+  `text-decoration: underline`, which was tried first and confirmed live not to render on
+  `QLabel` at all (identical output with/without the rule)
+- [ ] **Enter/Space** on the focused interval value sets the rotation interval
+
+**Tab-scoped shortcuts** (work no matter which control on the tab has focus)
+- [ ] `A` and `Ctrl+A` both trigger Add all
+- [ ] `R` triggers Remove all; `Ctrl+D` also triggers Remove all
+- [ ] `T` and `C` both trigger Change now
+- [ ] Typing "20", "30", "60", "120" (as separate keystrokes, quickly) sets that rotation interval
+  after a short pause (buffered, not one-key-per-value — typing "2" then "0" quickly must set
+  20, not land on 2 then separately on 0)
+- [ ] Typing an interval that doesn't exist (e.g. `9`, `121`) does nothing after the pause
+- [ ] None of these letters/digits do anything on any OTHER settings tab, or leak to the global
+  shortcuts (e.g. `T` must not rotate the main-window theme while Settings has focus)
 
 ### Live row membership (controls that appear and disappear)
 - [ ] Look: set **Chapter notches** Off — the Animation pair disappears and stops being a stop; On again and it returns
@@ -957,7 +1021,7 @@ handling (search field, list) is a separate, more specific mechanism — see the
 - [ ] In EVERY context (no panel open; Library; Settings; Speed; Sleep; Tags; Book Detail open) — repeatedly pressing Tab NEVER moves focus to the window's minimize or close button
 - [ ] With no panel open: Tab does nothing
 - [ ] Settings panel open: Tab cycles through the ACTIVE tab's controls in a sensible order, wrapping at the end back to the first; Shift+Tab (Backtab) cycles backward; never lands on minimize/close
-- [ ] Settings → Themes tab specifically: Tab cycles only the mode/bulk buttons — the generated theme swatches and the cover-pool button are skipped entirely (not yet given dedicated keyboard nav)
+- [ ] Settings → Themes tab specifically: Tab cycles the mode row, the swatch grid (as ONE stop), the bulk row, and the interval row — see the dedicated Themes tab section below for what Tab does entering/leaving the swatch grid specifically
 - [ ] Speed panel open: Tab cycles that panel's controls with wrap, same as Settings
 - [ ] Sleep panel open: Tab cycles that panel's controls with wrap, same as Settings
 - [ ] Tags panel open: Tab does nothing (no controls wired for cycling yet)

@@ -1752,25 +1752,58 @@ Any `QWidget` subclass (not `QFrame`, not `QLabel`) that owns a background-color
 
 *Reorganization note (2026-07-13): the "Critical Architecture Rules" section was restructured to remove repetition — it previously existed as two passes (a full-prose section and a later condensed second pass covering many of the same rules). The two were merged: rules that appeared in both now appear once, under whichever fact they share, with no information dropped. Rules unique to either pass are unchanged. See the note directly under the "Critical Architecture Rules" heading for detail.*
 
-*Last updated: 2026-09-05/06 — Library's folder-list keyboard model rebuilt (branch
-`feature/traveling-focus-marker`, still NOT merged): cursor position and selection are now fully
-independent — arrows never touch selection, Space/Enter is the only thing that does, toggling
-(never splitting into add/remove keys). `QListWidget.setCurrentRow()` is banned from this codebase's
-own arrow-nav paths for exactly this widget's `ExtendedSelection` mode — it silently does
-`ClearAndSelect`; `_move_list_current_row` (`QItemSelectionModel.setCurrentIndex(idx, NoUpdate)`) is
-the only correct way to move the cursor alone. The current row shows as a small dot
-(`_FolderListItemDelegate`, `focus_folder_list_dot`), not the traveling marker or a second fill —
-a fill couldn't stay legible once real selection existed alongside it. Excluded Books
-(`ExcludedBooksPopup`) gained a full keyboard model of its own, mirroring `ChapterList`'s
-Up/Down-scroll / Left-Right-expand / Space-Enter-activate split, with the per-row hover-reveal eye
-itself standing in for a marker. Along the way: a genuine, branch-independent interference bug
-between `transport_bar_blur`'s hide/show grab cycle and any hover-driven UI (a real, matched
-leave+enter pair delivered to a perfectly stationary mouse, confirmed live) — see that file's
-`_grab_and_blur` docstring and the "Hover-flicker" section above, and `_leave_suppressed_recently`
-in `excluded_books.py` for the fix shape (suppressing only half of a spurious pair is not enough;
-the matching half needs its own flag). Full narrative in SESSION.md 2026-09-05/06; live checks in
-TESTING.md; both TODO.md items this closed are removed (only the Themes tab and
-`#disable_sleep_btn`'s pre-existing hover gap remain open for this branch).
+*Last updated: 2026-09-06 Session 2 — Full keyboard navigation added to Settings' Themes tab
+(branch `feature/traveling-focus-marker`, still NOT merged), closing out keyboard nav for the
+whole Settings panel — Themes was the one tab deferred across every prior pass because its swatch
+grid is bin-packed (a variable item count per row), not a fixed button row. `PanelManager.
+themes_tab_rows()` is a Themes-specific row source (the generic `settings_tab_button_rows()` walk
+can't see inside `pool_container`, which nests the bulk/interval rows); the swatch grid itself is
+ONE opaque row (`swatch_box`, same shape as `folder_list_widget`) that owns its own internal
+Left/Right/Up/Down (`MainWindow._handle_themes_swatch_arrows`) once focus reaches it. Left/Right
+wrap in reading order across rows; Up/Down move by column, clamped — deliberately different
+gestures. Arrival at a swatch previews it automatically through the existing 150ms hover-debounce
+pipeline; Space toggles pool membership (left-click equivalent), Enter selects and activates
+immediately (right-click equivalent) — these were briefly built identical and split apart after a
+live design correction. **Two new "plausible QSS property, silently inert on this widget" gotchas
+found by direct pixel comparison, joining the QComboBox/QListWidget ones already documented**:
+`Qt.WA_UnderMouse` (even paired with `unpolish`/`polish`, even via a real dispatched
+`QEnterEvent`) does NOT drive `:hover` QSS matching — confirmed by identical before/after
+screenshots; fixed with a plain QSS property (`kbdnav_hover`) instead, the same mechanism
+`selected`/`active_display` already use successfully in this file. `text-decoration: underline`
+does NOT render on `QLabel` via QSS at all (same pixel-comparison method) — fixed with
+`border-bottom` instead. A third bug needed log tracing rather than pixel comparison: the grid's
+row model could silently diverge from the real on-screen layout, because `build_themes_tab` bin-
+packs the swatch rows ONCE against `settings_panel`'s pre-layout width, while the keyboard-nav
+code was recomputing that same limit from the panel's CURRENT (wider, post-layout) width on every
+call — invalidating `get_packed_themes()`'s limit-keyed cache and returning a different packing
+than what was actually painted; fixed by reading the cache directly. A fourth needed the same
+category-error framing as the transport-bar-blur bug below it in this file: the keyboard exit path
+was reusing `swatch_box`'s real MOUSE leaveEvent handler (`_on_themes_tab_left`), whose entire job
+is telling a genuine mouse leave apart from a stationary-cursor/blur-grab artifact by comparing the
+mouse's CURRENT position against where it last hovered — a keyboard exit never moves the mouse, so
+a resting cursor near its last real hover position silently swallowed every arrow/Tab exit as
+spurious jitter; fixed by calling the revert directly, bypassing mouse-specific disambiguation a
+keyboard action doesn't need. Full narrative, including the exact live reports that caught each of
+these, in SESSION.md 2026-09-06 Session 2; live checks in TESTING.md; the TODO.md item this closed
+is removed — next up: Playback, Sleep and Sprint panels.
+
+*Previously: 2026-09-05/06 Session 1 — Library's folder-list keyboard model rebuilt: cursor
+position and selection are now fully independent — arrows never touch selection, Space/Enter is
+the only thing that does, toggling (never splitting into add/remove keys).
+`QListWidget.setCurrentRow()` is banned from this codebase's own arrow-nav paths for exactly this
+widget's `ExtendedSelection` mode — it silently does `ClearAndSelect`; `_move_list_current_row`
+(`QItemSelectionModel.setCurrentIndex(idx, NoUpdate)`) is the only correct way to move the cursor
+alone. The current row shows as a small dot (`_FolderListItemDelegate`, `focus_folder_list_dot`),
+not the traveling marker or a second fill — a fill couldn't stay legible once real selection
+existed alongside it. Excluded Books (`ExcludedBooksPopup`) gained a full keyboard model of its
+own, mirroring `ChapterList`'s Up/Down-scroll / Left-Right-expand / Space-Enter-activate split,
+with the per-row hover-reveal eye itself standing in for a marker. Along the way: a genuine,
+branch-independent interference bug between `transport_bar_blur`'s hide/show grab cycle and any
+hover-driven UI (a real, matched leave+enter pair delivered to a perfectly stationary mouse,
+confirmed live) — see that file's `_grab_and_blur` docstring and the "Hover-flicker" section
+above, and `_leave_suppressed_recently` in `excluded_books.py` for the fix shape (suppressing only
+half of a spurious pair is not enough; the matching half needs its own flag). Full narrative in
+SESSION.md 2026-09-05/06 Session 1; live checks in TESTING.md.
 
 *Previously: 2026-09-05 — Keyboard navigation extended from Look to Controls, Audio and Library
 (branch `feature/traveling-focus-marker`, still NOT merged). Adding a button-row tab is now one

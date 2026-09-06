@@ -1,4 +1,108 @@
-## Session Summary — 2026-09-05/06 Session 1 — Library's folder-list toggle model rebuilt around a keyboard cursor separate from selection; full keyboard navigation added to the Excluded Books popup; a real transport-bar-blur interference bug found and fixed along the way. `d130dea`→`f482d8c` on `feature/traveling-focus-marker`
+## Session Summary — 2026-09-06 Session 2 — Full keyboard navigation added to the Settings → Themes tab, closing out keyboard nav for the whole Settings panel. `3015945`→`44990c0` on `feature/traveling-focus-marker`
+
+This finishes the Settings panel's keyboard-navigation work started across the prior three
+sessions (Look/Controls/Audio, then Library, then Excluded Books) — Themes was the one tab
+deliberately deferred each time, because its swatch grid is a genuinely different shape (a
+bin-packed layout with a variable number of items per row) than every other tab's fixed button
+rows. Next up: Playback, Sleep and Sprint panels.
+
+**Design, laid out up front by Pryme before any code was written.** Down from the tab bar enters
+the mode row (Off/With pool/Exclusive); arrow navigation continues down into the swatch grid,
+which then owns its own internal movement; Tab from the grid goes to Add all/Remove all/Change
+now, then the interval row. Arriving at a swatch previews it automatically, the same way hovering
+it with the mouse does — reusing the existing 150ms debounce rather than building a second one.
+Enter/Space activate. Letter shortcuts for the bulk actions (`A`/`Ctrl+A` Add all, `R`/`Ctrl+D`
+Remove all, `T`/`C` Change now) and a digit buffer for the rotation interval, scoped to the tab.
+Three follow-up questions were asked before implementation to pin down the exact shapes (mode row
+as one item, swatch grid as a real 2-D grid vs. linear order, whether the grid gets its own marker
+or a hover look) — all three were confirmed as the "Recommended" option, keeping the design
+entirely Pryme's rather than something arrived at through iteration.
+
+**Two structural pieces the design required, both mirroring an existing pattern rather than
+inventing a new one.** `PanelManager.themes_tab_rows()` is a Themes-specific row source —
+`settings_tab_button_rows()`'s generic per-tab-layout walk can't see the bulk/interval rows at
+all, since they sit nested inside `pool_container`, a single opaque `QWidget` from that walk's
+point of view. The swatch grid itself is represented as ONE opaque row (`swatch_box`) in that row
+list — same shape `folder_list_widget` already has — which then owns its own internal
+Left/Right/Up/Down once focus reaches it (`MainWindow._handle_themes_swatch_arrows`), rather than
+trying to flatten a bin-packed grid into the generic row-of-buttons model.
+
+**Every one of the four visual/interaction bugs reported live this session traced back to a
+provably wrong assumption, not a typo — each was pinned down by pixel comparison or log tracing
+before being fixed, not patched on a guess:**
+
+- *The grid's own hover-look highlight was invisible or flickered on and off.* The first attempt
+  drove `Qt.WA_UnderMouse` directly plus `unpolish()`/`polish()`, on the theory that this is what
+  Qt's style engine actually consults for `:hover` matching. A direct offscreen pixel comparison —
+  before vs. after setting the attribute, on a widget with a real, working `:hover` QSS rule —
+  showed byte-identical output. Even dispatching a real `QEnterEvent` via `sendEvent()` didn't
+  move it. Replaced with a plain QSS property (`kbdnav_hover`), the same mechanism
+  `update_theme_list_visuals`'s `selected`/`active_display` properties already use successfully in
+  this exact file — confirmed by the same kind of pixel comparison that it actually paints.
+- *Right/Left inside a row appeared to skip themes.* Traced via log lines showing the swatch
+  grid's row model (`ThemeManager.swatch_grid_rows()`) disagreeing with what was actually on
+  screen. Root cause: `build_themes_tab` bin-packs the swatch rows ONCE, at construction time,
+  against `settings_panel`'s width at that moment (270px, pre-layout) — but `swatch_grid_rows()`
+  was recomputing that same limit from the panel's CURRENT width on every call, which by the time
+  the tab was actually visible was wider, so `get_packed_themes()`'s limit-keyed cache silently
+  returned a DIFFERENT, differently-packed set of rows. Fixed by reading `_packed_themes_cache`
+  directly instead of recomputing the limit — always the packing the widgets were actually built
+  and displayed with.
+- *Right/Left at a row's end did nothing, reported as "it doesn't go down to the next row from the
+  rightmost theme."* This was not a bug in the code as written — it was the wrong design. The
+  first implementation clamped Left/Right at each row's own ends (no wrap); Pryme's actual
+  expectation was reading-order wrapping (rightmost swatch → next row's first, leftmost → previous
+  row's last), which Up/Down (same-column, clamped) deliberately does NOT do — the two directions
+  are meant to be different gestures, not the same one twice.
+- *Arrow and Tab exits from the grid didn't revert the preview at all* ("neither works... the
+  previewed theme not reverting"). The exit method was routing through `_on_themes_tab_left` —
+  `swatch_box`'s real MOUSE leaveEvent handler, whose entire job is disambiguating a genuine mouse
+  leave from a blur-grab artifact or stationary-cursor jitter by comparing the real cursor's
+  current position against where it last genuinely entered the box. A keyboard exit never moves
+  the mouse, so if the cursor happened to be resting anywhere near its last real hover position —
+  a completely ordinary state, e.g. after clicking into the panel with the mouse before switching
+  to arrow keys — every keyboard exit was silently swallowed as spurious jitter. Fixed by calling
+  `_on_theme_unhovered()` directly on a keyboard exit, which needs none of that mouse-specific
+  disambiguation; a keyboard action is unambiguous on its own. The same call was also missing
+  entirely from the Tab-away path (Tab/Shift+Tab cycling out of the panel), added alongside the
+  fix, mirroring the existing Excluded-Books-collapses-on-Tab-away precedent.
+
+**Two narrower fixes found the same way — reported live, confirmed by direct measurement before
+touching anything, not guessed at:**
+
+- *The interval row was "stuck," Right doing nothing.* Confirmed live and synthetically that a
+  plain `QLabel` (used here instead of `QPushButton`, driven by a `mousePressEvent` monkeypatch)
+  has NO native arrow-key focus chaining even with `Qt.FocusPolicy.TabFocus` set — unlike
+  `QPushButton`, which gets this behavior for free from Qt's own style. Added explicit Left/Right
+  handling for this one row shape.
+- *The interval row's keyboard-focus underline never appeared*, once the row became reachable.
+  `text-decoration: underline` on `QLabel:focus` — the first attempt, mirroring an existing working
+  rule on `QPushButton` elsewhere in the same file — was confirmed by pixel comparison to not
+  render on `QLabel` at all (identical output with/without the rule, despite genuine focus).
+  Replaced with `border-bottom`, confirmed to actually paint.
+- *"Off" in the interval row was clipped 1-2px when bold* (a pre-existing bug, not introduced this
+  session, but caught during this pass). `QFontMetrics.horizontalAdvance("Off")` measured 19px
+  while `boundingRect("Off").width()` measured 20px — bold hinting/antialiasing painting slightly
+  past the logical advance the label's fixed width was sized to. Every other interval label's two
+  measurements happened to already agree. Fixed by sizing off the max of the two.
+
+**Design correction from Pryme after live-testing the shipped behavior**, applied the same session
+rather than deferred: Enter and Space had been built to do the same thing (toggle pool membership)
+— Pryme's original design intent, overlooked during implementation, was that they should mirror
+the mouse exactly: Space toggles membership (left-click equivalent), Enter selects and switches to
+the theme immediately (right-click equivalent). Split into `kbdnav_toggle_swatch`/
+`kbdnav_select_swatch`.
+
+Every fix in this session was verified against the FULL 504-test suite (no regressions throughout)
+plus live testing for every visual/interaction claim — several of the "obviously correct by
+inspection" first attempts (`WA_UnderMouse`, `text-decoration` on `QLabel`, the reused mouse-leave
+jitter guard) were caught specifically because a live report contradicted them, then confirmed
+wrong by direct pixel/log evidence before being replaced — not by re-reading the code and deciding
+it looked fine.
+
+---
+
+## Session Summary — 2026-09-06 Session 1 — Library's folder-list toggle model rebuilt around a keyboard cursor separate from selection; full keyboard navigation added to the Excluded Books popup; a real transport-bar-blur interference bug found and fixed along the way. `d130dea`→`f482d8c` on `feature/traveling-focus-marker`
 
 Closed both of the previous session's "next session" items — folder-list multi-selection
 discoverability and the Excluded Books marker problem — and along the way found a genuine,
