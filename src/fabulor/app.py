@@ -4308,9 +4308,13 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
         Arrival at any new position re-previews via ThemeManager.kbdnav_enter_swatch — the
         same debounced pipeline a mouse hover uses (2026-09-06 design: keyboard arrival
-        previews automatically, no separate keypress needed). Enter/Space ACTIVATE (toggle
-        pool membership) via kbdnav_activate_swatch — deliberately never the right-click
-        "select and switch now" action, which has no keyboard equivalent here."""
+        previews automatically, no separate keypress needed).
+
+        Space and Enter are DELIBERATELY different actions, mirroring the mouse exactly —
+        corrected live 2026-09-06 after an earlier version made them identical: Space toggles
+        pool membership (the left-click action, kbdnav_toggle_swatch), Enter/Return selects
+        the swatch AND activates it immediately (the right-click action,
+        kbdnav_select_swatch). Do not merge these back into one branch."""
         rows = self.theme_manager.swatch_grid_rows()
         if not rows:
             return True  # nothing to navigate; swallow so the key doesn't leak anywhere
@@ -4324,8 +4328,11 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self.theme_manager._kbdnav_swatch_pos = (new_row, new_col)
             self.theme_manager.kbdnav_enter_swatch(rows[new_row][new_col])
 
-        if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space):
-            self.theme_manager.kbdnav_activate_swatch(rows[row_i][col_i])
+        if key == Qt.Key.Key_Space:
+            self.theme_manager.kbdnav_toggle_swatch(rows[row_i][col_i])
+            return True
+        if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            self.theme_manager.kbdnav_select_swatch(rows[row_i][col_i])
             return True
         if key == Qt.Key.Key_Right:
             # Reading-order wrap (2026-09-06, corrected from an earlier clamp-at-row-end

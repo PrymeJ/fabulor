@@ -2391,15 +2391,28 @@ class ThemeManager(QObject):
         self._set_kbdnav_swatch_hover(None)
         self._on_themes_tab_left(self.swatch_box)
 
-    def kbdnav_activate_swatch(self, widget) -> None:
-        """Enter/Space on a swatch — the keyboard equivalent of a LEFT click (toggle pool
-        membership), never the right-click "select and activate immediately" action. Routes
-        to exactly the same slots the click signals already use (`_on_cover_pool_btn_clicked`,
-        `toggle_theme_selection`) rather than duplicating either's logic."""
+    def kbdnav_toggle_swatch(self, widget) -> None:
+        """Space on a swatch — the keyboard equivalent of a LEFT click (toggle pool
+        membership). Split from Enter (kbdnav_select_swatch, the right-click equivalent) per a
+        live design correction 2026-09-06: both keys originally did this same action, which
+        the user caught as a design gap after the rest of the tab's keyboard nav was already
+        confirmed working — mouse left/right-click are two clearly different actions here, so
+        the two keys should be too. Routes to the same slot the click signal already uses
+        (`_on_cover_pool_btn_clicked`) rather than duplicating its logic."""
         if widget is self.cover_pool_btn:
             self._on_cover_pool_btn_clicked()
         else:
             self.toggle_theme_selection(widget.theme_name)
+
+    def kbdnav_select_swatch(self, widget) -> None:
+        """Enter on a swatch — the keyboard equivalent of a RIGHT click (select this theme AND
+        activate it now), never Space's toggle-membership action. See kbdnav_toggle_swatch's
+        docstring for why these were split. Routes to the same slots the right-click signals
+        already use (`_on_cover_pool_btn_right_clicked`, `_on_theme_right_clicked`)."""
+        if widget is self.cover_pool_btn:
+            self._on_cover_pool_btn_right_clicked()
+        else:
+            self._on_theme_right_clicked(widget.theme_name)
 
     def _on_theme_hovered(self, theme_name):
         """Queue a debounced theme preview. Sweeping across several names only

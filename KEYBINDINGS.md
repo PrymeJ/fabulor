@@ -398,8 +398,11 @@ The tab joins `panels._ARROW_NAV_TABS` like Look/Controls/Audio/Library, but wit
 source (`PanelManager.themes_tab_rows`) and its own internal grid navigation for the swatch
 pool (`MainWindow._handle_themes_swatch_arrows`) — see `app.py` and `theme_manager.py` for the
 full mechanism. No traveling-marker or fill-focus treatment applies inside the swatch grid; the
-grid's own synthetic `:hover` look (`ThemeManager._set_kbdnav_swatch_hover`) is the sole
-"where am I" affordance there, by live design call.
+grid's own hover-look affordance (`ThemeManager._set_kbdnav_swatch_hover`, a QSS property —
+`Qt.WA_UnderMouse` was tried and confirmed not to actually repaint `:hover`, see NOTES) is the
+sole "where am I" indicator there, by live design call. The interval row similarly uses a
+`:focus { border-bottom }` rule instead of the marker (`text-decoration: underline` was tried
+first and confirmed not to render on `QLabel`).
 
 Row-to-row (`Up`/`Down` from the tab bar or between rows), matching every other arrow-nav tab:
 
@@ -413,17 +416,21 @@ Row-to-row (`Up`/`Down` from the tab bar or between rows), matching every other 
 
 Inside the swatch grid:
 
-- `Left`/`Right` — move within the current visual row (a bin-packed layout — rows can hold a
-  different number of swatches — clamped at each row's own ends, no wrap, no row-to-row
-  fall-through)
+- `Left`/`Right` — READING-ORDER wrap through the grid's bin-packed rows (rows can hold a
+  different number of swatches): past a row's last swatch, `Right` continues onto the NEXT
+  row's first; past a row's first swatch, `Left` continues onto the PREVIOUS row's last. Off
+  the grid's last row entirely, `Right` exits downward (same as `Down` there); off row 0
+  (Cover art based theme), `Left` exits to the tab bar.
 - `Up`/`Down` — move to the same column index on the row above/below, clamped to that row's own
-  length; `Up` from the top row (Cover art based theme) leaves to the mode row above; `Down` from
+  length (a DIFFERENT movement than `Left`/`Right`'s wrap — this preserves horizontal position
+  instead of reading through); `Up` from the top row leaves to the mode row above; `Down` from
   the bottom row leaves to Add all/Remove all/Change now
 - Arrival at any swatch previews it automatically, via the SAME 150ms debounced pipeline a mouse
   hover uses (`ThemeManager._on_theme_hovered`/`_fire_pending_hover`) — no separate keypress
   needed to preview
-- `Enter`/`Space` — toggle the focused swatch's pool membership (the LEFT-click action); there is
-  no keyboard equivalent of right-click's "select and switch now"
+- `Space` — toggle the focused swatch's pool membership (the LEFT-click action)
+- `Enter`/`Return` — select the focused swatch AND activate it now (the RIGHT-click action).
+  These were originally the same action on both keys; corrected to mirror the mouse exactly.
 
 Tab-scoped shortcuts (work regardless of which control on the tab currently has focus, same
 pattern as Library's `t`/`a`/`r`/... sort/view-mode letters):
