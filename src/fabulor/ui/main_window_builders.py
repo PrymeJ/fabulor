@@ -793,12 +793,20 @@ def build_themes_tab(mw):
     swatch_box_layout = QVBoxLayout(swatch_box)
     swatch_box_layout.setContentsMargins(0, 0, 0, 0)
     swatch_box_layout.setSpacing(0)
+    # The grid is entered and left as ONE keyboard stop (mirrors folder_list_widget) — see
+    # panels.themes_tab_rows and MainWindow._handle_themes_swatch_arrows. The individual
+    # ThemeItem swatches inside it deliberately stay Qt.FocusPolicy.NoFocus (their default is
+    # StrongFocus from QPushButton) so they never become separate Tab stops or traveling-
+    # marker targets — panel_tab_widgets already excludes them by class for the same reason;
+    # this is what makes that exclusion actually correct rather than just convenient.
+    swatch_box.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
     # Cover art based theme entry — always present, state reflects mode and cover availability
     cover_pool_row = QHBoxLayout()
     cover_pool_row.setContentsMargins(0, 0, 0, 0)
     cover_pool_row.setSpacing(0)
     cover_pool_btn = ThemeItem("Cover art based theme")
+    cover_pool_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
     cover_pool_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
     cover_pool_btn.clicked.connect(lambda: mw.theme_manager._on_cover_pool_btn_clicked())
     cover_pool_btn.rightClicked.connect(lambda: mw.theme_manager._on_cover_pool_btn_right_clicked())
@@ -816,6 +824,7 @@ def build_themes_tab(mw):
 
         for item in row_items:
             btn = ThemeItem(item['name'])
+            btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
             btn.setMinimumWidth(item['width'])
             btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
             btn.clicked.connect(lambda _, n=item['name']: mw.theme_manager.toggle_theme_selection(n))
@@ -880,6 +889,10 @@ def build_themes_tab(mw):
         lbl.setObjectName("theme_interval_label")
         lbl.setCursor(Qt.PointingHandCursor)
         lbl.setAlignment(Qt.AlignCenter)
+        # QLabel defaults to NoFocus; this one acts as a button (see the mousePressEvent
+        # monkeypatch below) and needs to be a real keyboard stop for themes_tab_rows'
+        # interval row (arrow nav + Enter/Space activation, see _handle_settings_arrows).
+        lbl.setFocusPolicy(Qt.FocusPolicy.TabFocus)
         # Fixed at the BOLD variant's width (always >= regular width) so the
         # selected/unselected toggle (font-weight change) never reflows siblings.
         # font-size must match the QSS rule (theme_interval_label, 12px) since the
@@ -887,7 +900,15 @@ def build_themes_tab(mw):
         bold_font = QFont(lbl.font())
         bold_font.setPixelSize(12)
         bold_font.setBold(True)
-        lbl.setFixedWidth(QFontMetrics(bold_font).horizontalAdvance(text))
+        # horizontalAdvance() measures the logical cursor-to-cursor advance, not the glyphs'
+        # actual ink extent — bold hinting/antialiasing can paint slightly past that advance
+        # (confirmed live 2026-09-06: "Off" clipped 1-2px at its bold width specifically).
+        # boundingRect() reports the real painted extent, so use its width instead; it is
+        # always >= horizontalAdvance()'s, never smaller, so this can only add room, never
+        # remove any that was already sufficient for the other labels.
+        bold_metrics = QFontMetrics(bold_font)
+        lbl_width = max(bold_metrics.horizontalAdvance(text), bold_metrics.boundingRect(text).width())
+        lbl.setFixedWidth(lbl_width)
         lbl.mousePressEvent = lambda _, m=mins: mw.theme_manager.set_rotation_interval(m)
         mw.theme_manager.interval_widgets[mins] = lbl
         interval_row.addWidget(lbl)

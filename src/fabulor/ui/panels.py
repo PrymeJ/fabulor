@@ -92,10 +92,19 @@ _SNAPBACK_SETTLE_GAP_MS = 150
 # and _handle_settings_arrows hands Up/Down back to the widget except at its first/last item, so
 # the box owns its own path selection while the row grid owns entering and leaving it.
 #
-# Still excluded:
-#   Themes  — a swatch grid, deliberately deferred to its own arrows+space design (see
-#             panel_tab_widgets, which already excludes ThemeItem for the same reason)
-_ARROW_NAV_TABS = frozenset(("Look", "Controls", "Audio", "Library"))
+# Themes joined 2026-09-06. It does NOT reuse settings_tab_button_rows()'s generic per-row
+# walk — its button rows (mode, bulk, interval) sit nested inside pool_container, a single
+# opaque QWidget item in themes_tab's own top-level layout, so the generic walk (which only
+# ever looks at themes_tab's OWN layout items) can't see inside it; and its swatch grid is a
+# bin-packed, variable-width-per-row layout with its own preview-on-arrival/select semantics
+# that don't fit "a row of clickable buttons" at all. PanelManager.themes_tab_rows() is a
+# second, Themes-specific row source; MainWindow._handle_settings_arrows dispatches to it
+# instead of settings_tab_button_rows() specifically for this tab. The swatch grid itself is
+# a single opaque stop in that row list (like folder_list_widget is in Library's), entered
+# and internally navigated by MainWindow._handle_themes_swatch_arrows — see that method and
+# panel_tab_widgets's ThemeItem exclusion (the swatch grid deliberately never becomes a Tab
+# stop or a traveling-marker target; a real hover-style highlight is the sole affordance).
+_ARROW_NAV_TABS = frozenset(("Look", "Controls", "Audio", "Library", "Themes"))
 
 
 class _ThemesTabBarInterceptor(QObject):
@@ -2552,10 +2561,17 @@ class PanelManager:
         `excluded_books_popup` (not even in `lib_layout` — it's an absolutely-positioned overlay
         parented to `library_tab` — with its own self-contained `keyPressEvent`, entered via a
         special-cased Down/Right from Persist search filter's row in `_handle_settings_arrows`).
-        Both are still real Tab stops via `panel_tab_widgets`'s separate `findChildren` walk."""
+        Both are still real Tab stops via `panel_tab_widgets`'s separate `findChildren` walk.
+
+        Themes is NOT handled by the generic walk below — it delegates to `themes_tab_rows()`
+        instead (see that method's docstring for why the generic shape doesn't fit it). Every
+        caller of this method (the arrow handler, the marker hand-back check) gets Themes' real
+        rows this way with no second call site to remember."""
         tabs = getattr(self.main_window, 'tabs', None)
         if tabs is None or tabs.tabText(tabs.currentIndex()) not in _ARROW_NAV_TABS:
             return []
+        if tabs.tabText(tabs.currentIndex()) == "Themes":
+            return self.themes_tab_rows()
         root = tabs.currentWidget()
         if root is None:
             return []
@@ -2595,6 +2611,51 @@ class PanelManager:
             w = item.widget()
             if _navigable(w):
                 rows.append([w])
+        return rows
+
+    def themes_tab_rows(self) -> list:
+        """Themes-tab-specific row source (see settings_tab_button_rows's docstring for why
+        that generic walk delegates here instead of handling Themes itself). Returns rows in
+        the same shape settings_tab_button_rows produces — a list of left-to-right widget
+        lists, top-to-bottom — so MainWindow._handle_settings_arrows's row-stepping (Up/Down
+        to the next/previous row's first widget, Left/Right native-within-row) works
+        unmodified for everything EXCEPT the swatch grid, which is deliberately represented
+        as a single ONE-ITEM row holding `swatch_box` itself — mirroring exactly how
+        `folder_list_widget` is a one-item row that then owns its own internal Up/Down/Left/
+        Right once focus reaches it (see _handle_settings_arrows's QListWidget branch and,
+        here, MainWindow._handle_themes_swatch_arrows).
+
+        Row order top-to-bottom, matching what's on screen:
+          1. the cover-art mode row (Off / With pool / Exclusive) — always present.
+          2. `swatch_box` as a single opaque stop — only when `pool_container` is visible
+             (hidden entirely in Exclusive mode, along with everything below it).
+          3. the bulk-action row (Add all / Remove all / Change now) — same visibility gate.
+          4. the interval row, as one item per QLabel (they act as buttons via a
+             mousePressEvent monkeypatch, not real QPushButtons, but are keyboard-navigable
+             once given TabFocus — see main_window_builders.build_themes_tab) — same gate.
+
+        `swatch_box` itself needs `Qt.FocusPolicy.StrongFocus` for this to work as a stop;
+        the individual ThemeItem swatches inside it deliberately do NOT participate in Tab
+        order or this row list (see panel_tab_widgets's ThemeItem exclusion) — the grid is
+        entered as one unit and navigated internally, never as N separate stops."""
+        mw = self.main_window
+        tm = mw.theme_manager
+        rows = []
+        mode_row = [btn for btn in tm.cover_art_mode_widgets.values()
+                    if btn.isVisibleTo(mw) and btn.isEnabled()]
+        if mode_row:
+            rows.append(mode_row)
+        if tm.pool_container is not None and tm.pool_container.isVisible():
+            if tm.swatch_box is not None and tm.swatch_box.isVisibleTo(mw):
+                rows.append([tm.swatch_box])
+            bulk_row = [btn for btn in (mw.add_all_btn, mw.remove_all_btn, mw.change_now_btn)
+                        if btn is not None and btn.isVisibleTo(mw) and btn.isEnabled()]
+            if bulk_row:
+                rows.append(bulk_row)
+            interval_row = [lbl for lbl in tm.interval_widgets.values()
+                            if lbl.isVisibleTo(mw) and lbl.isEnabled()]
+            if interval_row:
+                rows.append(interval_row)
         return rows
 
     # ── Panel-local keyboard focus ownership ─────────────────────────────────

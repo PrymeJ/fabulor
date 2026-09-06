@@ -392,30 +392,48 @@ f or / — search/filter in library (Library's own search field exists and can b
 r — toggle remaining/total time
 Escape — dismiss any open panel/overlay
 
-### Theme pool (Settings → Themes tab) — not yet built (2026-07-12)
+### Settings → Themes tab (built 2026-09-06)
 
-Prompted by investigating an intermittent right-click-miss report on the theme pool (traced to
-mouse hardware, not app logic — see NOTES.md "Cover-pool right-click silent no-op" and the
-hover-debounce race fix in `_on_theme_right_clicked`/`_on_cover_pool_btn_right_clicked`,
-`theme_manager.py`). A keyboard path through the pool would sidestep mouse reliability
-entirely, not just diagnose it. None of this is built — no keyboard-selection cursor exists yet
-for the pool grid (unlike Library's `_kbd_selected_path`/`_move_selection_by`, the closest
-existing precedent for this shape of feature). Needs its own selection cursor, not a rehash of
-the "." diagnostic that was used to confirm the mouse theory and then removed (it borrowed
-mouse-hover state as its target, which the real feature can't rely on).
+The tab joins `panels._ARROW_NAV_TABS` like Look/Controls/Audio/Library, but with its own row
+source (`PanelManager.themes_tab_rows`) and its own internal grid navigation for the swatch
+pool (`MainWindow._handle_themes_swatch_arrows`) — see `app.py` and `theme_manager.py` for the
+full mechanism. No traveling-marker or fill-focus treatment applies inside the swatch grid; the
+grid's own synthetic `:hover` look (`ThemeManager._set_kbdnav_swatch_hover`) is the sole
+"where am I" affordance there, by live design call.
 
-- `Up`/`Down`/`Left`/`Right` (or just `Up`/`Down`) — move a keyboard-selection cursor through the
-  pool grid, mirroring Library's arrow-nav pattern
-- `Enter`/`Space` — act as left-click on the selected entry (toggle pool membership / select)
-- Right-click equivalent — **undecided**; candidates not yet chosen. Worth revisiting whether a
-  distinct key is even needed once Enter/Space + letter-jump + `T` exist, since right-click today
-  is mostly "select and activate immediately," which overlaps those
-- Letter keys — jump to / cycle through themes by name (e.g. press `a` to land on "Alzabo," press
-  again to advance to "Anomander," etc.)
-- `Ctrl+A` — Add all (bare `A` reserved for the existing `SHOW_STATS` global shortcut, so this
-  needs the modifier even though it's panel-local, to avoid the same letter meaning two things
-  depending on tab state)
-- Remove all — **undecided modifier**; `Ctrl+D` or `Ctrl+R` are the two candidates, not yet chosen
-- `T` — Change now (already implemented and working: `Action.TOGGLE_THEME`, bare `T`,
-  `GuardKind.COOLDOWN_COALESCE` — see the main-window table above; no change needed here, just
-  confirming it stays as-is when the rest of this is built)
+Row-to-row (`Up`/`Down` from the tab bar or between rows), matching every other arrow-nav tab:
+
+1. Cover-art mode row (Off / With pool / Exclusive) — `Left`/`Right` cycle the three; `Enter`/
+   `Space` picks the focused one, same as a click.
+2. The swatch grid (Cover art based theme entry, then every theme swatch) — a single stop that
+   then owns its own internal `Left`/`Right`/`Up`/`Down`, described below. Hidden (and skipped)
+   entirely in Exclusive mode, same as everything below it.
+3. Add all / Remove all / Change now.
+4. The rotation-interval row (2 / 5 / 10 / 20 / 30 / 60 / 120 / Off).
+
+Inside the swatch grid:
+
+- `Left`/`Right` — move within the current visual row (a bin-packed layout — rows can hold a
+  different number of swatches — clamped at each row's own ends, no wrap, no row-to-row
+  fall-through)
+- `Up`/`Down` — move to the same column index on the row above/below, clamped to that row's own
+  length; `Up` from the top row (Cover art based theme) leaves to the mode row above; `Down` from
+  the bottom row leaves to Add all/Remove all/Change now
+- Arrival at any swatch previews it automatically, via the SAME 150ms debounced pipeline a mouse
+  hover uses (`ThemeManager._on_theme_hovered`/`_fire_pending_hover`) — no separate keypress
+  needed to preview
+- `Enter`/`Space` — toggle the focused swatch's pool membership (the LEFT-click action); there is
+  no keyboard equivalent of right-click's "select and switch now"
+
+Tab-scoped shortcuts (work regardless of which control on the tab currently has focus, same
+pattern as Library's `t`/`a`/`r`/... sort/view-mode letters):
+
+- `A` / `Ctrl+A` — Add all
+- `R` — Remove all
+- `Ctrl+D` — Remove all (second binding)
+- `T` / `C` — Change now (`T` is the SAME letter the main window's `TOGGLE_THEME` global
+  shortcut uses — safe because the focus-ownership invariant above means the global dispatcher
+  never sees `T` while Settings holds real focus)
+- Digits — typed and buffered (800ms, mirrors the Chapter list's own digit-jump debounce) then
+  matched against the eight real interval values (`0`=Off, `2`, `5`, `10`, `20`, `30`, `60`,
+  `120`); an unmatched number (e.g. `9`, `121`) is silently dropped

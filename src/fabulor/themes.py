@@ -149,8 +149,8 @@ THEMES = {
         "slider_overall_fill":           "#C71616",
         "slider_chapter_bg":             "#5D053A",
         "slider_chapter_fill":           "#C90B0B",
-        "slider_vol_bg":                 "#084A84",
-        "slider_vol_fill":               "#7A9BB5",
+        "slider_vol_bg":                 "#5D053A",
+        "slider_vol_fill":               "#A70606",
         "notch_color":                   "#3DE8EB",
         "notch_opacity":                 110,
         "dropdown_curr_chap":            "#942761",
@@ -4178,6 +4178,21 @@ def get_settings_stylesheet(theme_name="default"):
             color: {t['accent_light']};
             background: rgba({_hex_to_rgb(t['accent'])}, 0.1);
         }}
+        /* Keyboard-navigation's synthetic "hover" look for the swatch grid
+           (ThemeManager._set_kbdnav_swatch_hover) — a real PROPERTY, not
+           Qt.WidgetAttribute.WA_UnderMouse. WA_UnderMouse was tried first and does NOT drive
+           :hover QSS matching the way it looks like it should: confirmed by direct offscreen
+           pixel comparison (2026-09-06) that setting it plus unpolish()/polish() — and even
+           dispatching a real QEnterEvent via sendEvent() — produced byte-identical output to
+           the un-hovered state. Same shape as the `[selected="true"]`/`[active_display="true"]`
+           properties directly above/below this rule, which DO reliably repaint via that exact
+           setProperty + unpolish/polish sequence — this reuses that same proven mechanism
+           instead of a second, broken one. */
+        QPushButton#theme_item[kbdnav_hover="true"],
+        QPushButton#theme_interval_btn[kbdnav_hover="true"] {{
+            color: {t['accent_light']};
+            background: rgba({_hex_to_rgb(t['accent'])}, 0.1);
+        }}
         QPushButton#theme_item[active_display="true"] {{
             text-decoration: underline;
             font-weight: bold;
@@ -4190,6 +4205,25 @@ def get_settings_stylesheet(theme_name="default"):
         QLabel#theme_interval_label[selected="true"] {{
             color: {t['accent']};
             font-weight: bold;
+        }}
+        /* Keyboard focus shown as an underline, not the traveling marker (focus_marker.py
+           skips it — see _FILL_FOCUS_OBJECT_NAMES). Same "border marker doesn't read well on
+           this control" reasoning as #reset_audio_btn's fill above, confirmed live 2026-09-06
+           on this widget specifically (too small/plain a QLabel for the marker to read
+           clearly). Scoped to kbdnav="true" so it only shows while the keyboard is driving.
+
+           `text-decoration: underline` was tried first and does NOT render on QLabel via
+           QSS — confirmed by direct offscreen pixel comparison (2026-09-06): identical output
+           with and without the rule, on a widget that DOES have real Qt focus. Unlike
+           QPushButton (theme_item[active_display="true"] above, where the same property
+           genuinely works), QLabel's paintEvent doesn't consult the stylesheet's text-
+           decoration when drawing its text — the same class of "plausible QSS property,
+           silently inert on this specific widget type" gotcha CLAUDE.md documents for
+           QComboBox/QListWidget pseudo-states. `border-bottom` is a real box-model property
+           every QWidget's style-aware paint path honors, confirmed rendering correctly in the
+           same pixel comparison — used here instead as the actual working substitute. */
+        QWidget#settings_panel[kbdnav="true"] QLabel#theme_interval_label:focus {{
+            border-bottom: 1px solid {t['accent_light']};
         }}
         QPushButton#theme_add_all, QPushButton#theme_remove_all,
         QPushButton#theme_change_now, QPushButton#secondary_button {{

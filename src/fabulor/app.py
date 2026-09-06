@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from PySide6.QtWidgets import (
     QFileDialog,
     QWidget, QPushButton, QVBoxLayout, QListWidget, QListWidgetItem,
-    QApplication, QGraphicsBlurEffect, QGraphicsOpacityEffect, QLineEdit,
+    QApplication, QGraphicsBlurEffect, QGraphicsOpacityEffect, QLineEdit, QLabel,
 )
 from PySide6.QtCore import (
     Qt, QTimer, QPoint, QRect, QEvent, QPropertyAnimation, QEasingCurve, QModelIndex,
@@ -738,6 +738,14 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self._kbdnav_cursor_poll = QTimer(self)
         self._kbdnav_cursor_poll.setInterval(_KBDNAV_CURSOR_POLL_MS)
         self._kbdnav_cursor_poll.timeout.connect(self._on_kbdnav_cursor_poll)
+        # Themes-tab rotation-interval digit shortcut buffer — see _handle_themes_shortcuts.
+        # Mirrors ChapterList's own digit-jump debounce (chapter_list.py) exactly: 800ms
+        # single-shot, restarted on every digit, buffer read and cleared only when it fires.
+        self._themes_digit_buffer = ""
+        self._themes_digit_timer = QTimer(self)
+        self._themes_digit_timer.setSingleShot(True)
+        self._themes_digit_timer.setInterval(800)
+        self._themes_digit_timer.timeout.connect(self._commit_themes_digit_buffer)
         # Switching settings tabs keeps focus ON the tab bar (no FocusIn/FocusOut fires), so
         # re-evaluate marker scope on tab change: leaving Look clears it, and landing on Look
         # while the tab bar is focused re-anchors the marker to Look's tab rect.
@@ -4006,9 +4014,14 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         return True
 
     def _handle_settings_arrows(self, event) -> bool:
-        """Arrow-key navigation for the button-row settings tabs (Look, Controls — see
-        panels._ARROW_NAV_TABS). Returns True iff this consumed the event. Called from the
-        app-level eventFilter, same contract as _handle_tab_escape.
+        """Arrow-key navigation for the button-row settings tabs (Look, Controls, Audio,
+        Library, Themes — see panels._ARROW_NAV_TABS). Returns True iff this consumed the
+        event. Called from the app-level eventFilter, same contract as _handle_tab_escape.
+
+        Themes' rows come from panels.themes_tab_rows(), not the generic per-tab-layout walk
+        (see that method) — its swatch grid is a single one-item row here (`swatch_box`,
+        same shape as folder_list_widget) that then owns its own internal 2-D position once
+        focus reaches it; see _handle_themes_swatch_arrows for that internal navigation.
 
         Overrides Qt's native arrow behaviour, which treats a QHBoxLayout of buttons as a flat
         chain: natively Up/Down do the same thing as Left/Right (step one button sideways),
@@ -4100,7 +4113,21 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # Only for things that can actually be clicked: the balance slider is a row member too,
         # and ClickSlider has no click() — Enter on it would raise. A slider has no "activate"
         # meaning anyway; its keyboard affordance is Left/Right, below.
-        if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+        # The interval row's items are QLabels acting as buttons (a mousePressEvent
+        # monkeypatch, not a real clicked() signal — see build_themes_tab), so the generic
+        # hasattr(focus, "click") branch just below can never reach them. Handled here,
+        # ahead of it, on the same two keys.
+        if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space):
+            for minutes, lbl in self.theme_manager.interval_widgets.items():
+                if focus is lbl:
+                    self.theme_manager.set_rotation_interval(minutes)
+                    return True
+
+        # swatch_box is a real row member (see themes_tab_rows) but has no click() of its own
+        # — Enter/Return on it must fall through to _handle_themes_swatch_arrows below, which
+        # owns activation for whatever swatch is actually focused inside the grid, not be
+        # rejected here as "not clickable".
+        if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and focus is not self.theme_manager.swatch_box:
             if any(focus is w for row in rows for w in row) and hasattr(focus, "click"):
                 focus.click()
                 return True
@@ -4121,6 +4148,13 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         if pos is None:
             return False  # focus is on some other control — leave it to Qt
         row_i, col_i = pos
+
+        # The Themes swatch grid owns ALL arrow/Enter/Space keys once focus is on swatch_box —
+        # it is a one-item row here (like folder_list_widget) but has its own internal 2-D
+        # position (row, col) rather than a QListWidget's single currentRow(), so it needs its
+        # own dispatch rather than reusing the QListWidget branch below.
+        if focus is self.theme_manager.swatch_box:
+            return self._handle_themes_swatch_arrows(key, row_i, tab_bar)
 
         # A focused LIST BOX owns Up/Down for its own row selection (Library's Manage folders).
         # Only hand the key onward at the ends: Up on the first item leaves upward, Down on the
@@ -4213,6 +4247,26 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 tab_bar.setFocus(Qt.FocusReason.TabFocusReason)
             return True
 
+        # Left/Right between interval-row QLabels needs explicit handling — unlike QPushButton
+        # (which Qt's own style gives native arrow-key focus chaining between siblings, see
+        # the "native within-row stepping" comment below), a plain QLabel has NO such native
+        # behaviour even with Qt.FocusPolicy.TabFocus set (confirmed live and synthetically
+        # 2026-09-06: Right arrow silently did nothing, focus never left the first label).
+        # Moves focus manually via _focus_settings_control-equivalent setFocus, clamped at the
+        # row's own ends (no wrap — matches every other row's Left/Right-at-the-edge behaviour,
+        # which falls through to leave-the-row handling rather than wrapping).
+        if isinstance(focus, QLabel) and key in (Qt.Key.Key_Left, Qt.Key.Key_Right):
+            row = rows[row_i]
+            new_col = col_i + (1 if key == Qt.Key.Key_Right else -1)
+            if 0 <= new_col < len(row):
+                row[new_col].setFocus(Qt.FocusReason.TabFocusReason)
+                self._keep_marker_awake()
+                return True
+            if key == Qt.Key.Key_Right:
+                return True  # at the row's right end: swallow, no wrap
+            # key == Key_Left at the row's left end falls through to the row-0/col-0 and
+            # generic Left-elsewhere handling below, same as every other row's leftmost item.
+
         # Left/Right on a focused SLIDER adjust its value instead of moving focus — a slider's
         # own affordance is its position, so stepping off it sideways would leave the keyboard
         # unable to actually set the thing it just selected. Checked before the row-edge rules
@@ -4229,6 +4283,185 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             return True
         # Left elsewhere, and Right anywhere: native within-row stepping is already correct.
         return False
+
+    def _handle_themes_swatch_arrows(self, key, outer_row_i: int, tab_bar) -> bool:
+        """Arrow/Enter/Space navigation INSIDE the Themes swatch grid, once `swatch_box`
+        holds real Qt focus (see _handle_settings_arrows's dispatch to this method, and
+        _focus_settings_control for how the grid is entered). `outer_row_i` is swatch_box's
+        own position within themes_tab_rows() — needed only to know there is nothing below
+        it to fall through to (it is always the tab's last or second-to-last outer row).
+
+        Treated as a genuine 2-D grid (ThemeManager.swatch_grid_rows(), bin-packed — rows can
+        have different lengths), unlike the flat button rows _handle_settings_arrows itself
+        steps through:
+          * Left/Right — READING-ORDER wrap: past a row's last column, Right continues onto
+            the NEXT row's first column (and off the grid's last row, exits downward exactly
+            like Down does); past a row's first column, Left continues onto the PREVIOUS
+            row's last column (and off row 0, exits to the tab bar). This replaced an earlier
+            clamp-at-row-end design reported live as wrong 2026-09-06 ("it doesn't go down to
+            the next row from the rightmost theme").
+          * Up/Down — move to the SAME column index on the row above/below, clamped to that
+            row's own (possibly shorter) length. Deliberately NOT the same wrap Left/Right
+            use: Up/Down are the "move vertically, keep roughly the same horizontal position"
+            gesture and Left/Right are the "read through everything" gesture — conflating them
+            would make one of the two directions redundant.
+
+        Arrival at any new position re-previews via ThemeManager.kbdnav_enter_swatch — the
+        same debounced pipeline a mouse hover uses (2026-09-06 design: keyboard arrival
+        previews automatically, no separate keypress needed). Enter/Space ACTIVATE (toggle
+        pool membership) via kbdnav_activate_swatch — deliberately never the right-click
+        "select and switch now" action, which has no keyboard equivalent here."""
+        rows = self.theme_manager.swatch_grid_rows()
+        if not rows:
+            return True  # nothing to navigate; swallow so the key doesn't leak anywhere
+        pos = self.theme_manager._kbdnav_swatch_pos
+        if pos is None or pos[0] >= len(rows) or pos[1] >= len(rows[pos[0]]):
+            pos = (0, 0)  # defensive: grid content changed under us (e.g. pool edited elsewhere)
+        row_i, col_i = pos
+
+        def _land(new_row: int, new_col: int) -> None:
+            new_col = max(0, min(new_col, len(rows[new_row]) - 1))
+            self.theme_manager._kbdnav_swatch_pos = (new_row, new_col)
+            self.theme_manager.kbdnav_enter_swatch(rows[new_row][new_col])
+
+        if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space):
+            self.theme_manager.kbdnav_activate_swatch(rows[row_i][col_i])
+            return True
+        if key == Qt.Key.Key_Right:
+            # Reading-order wrap (2026-09-06, corrected from an earlier clamp-at-row-end
+            # design that was reported live as wrong: "it doesn't go down to the next row
+            # from the rightmost theme"). Rightmost column of a row wraps to the FIRST
+            # column of the NEXT row, same as text wrapping — not a clamp, and not the
+            # same thing as Down (which preserves column index; this always lands at
+            # column 0). Off the last row entirely, exits the grid downward exactly like
+            # Down does at the bottom.
+            if col_i + 1 < len(rows[row_i]):
+                _land(row_i, col_i + 1)
+            elif row_i + 1 < len(rows):
+                _land(row_i + 1, 0)
+            else:
+                self.theme_manager.kbdnav_exit_swatch_grid()
+                outer_rows = self.panel_manager.settings_tab_button_rows()
+                if outer_row_i + 1 < len(outer_rows):
+                    self._focus_settings_control(outer_rows[outer_row_i + 1][0])
+            return True
+        if key == Qt.Key.Key_Left:
+            # Mirror of Right's wrap: leftmost column of a row wraps to the LAST column of
+            # the PREVIOUS row. Off row 0 entirely (the cover-pool row, itself always a
+            # one-item row so col_i is always 0 there), leaves to the tab bar — same
+            # convention every other grid's top-left Left uses.
+            if col_i > 0:
+                _land(row_i, col_i - 1)
+            elif row_i > 0:
+                _land(row_i - 1, len(rows[row_i - 1]) - 1)
+            else:
+                self.theme_manager.kbdnav_exit_swatch_grid()
+                tab_bar.setFocus(Qt.FocusReason.TabFocusReason)
+            return True
+        if key == Qt.Key.Key_Down:
+            if row_i + 1 < len(rows):
+                _land(row_i + 1, col_i)
+                return True
+            # Last row of the grid: leave downward to whatever follows (bulk row), exactly
+            # like Down already does at the bottom of any other button row.
+            self.theme_manager.kbdnav_exit_swatch_grid()
+            outer_rows = self.panel_manager.settings_tab_button_rows()
+            if outer_row_i + 1 < len(outer_rows):
+                self._focus_settings_control(outer_rows[outer_row_i + 1][0])
+            return True
+        if key == Qt.Key.Key_Up:
+            if row_i > 0:
+                _land(row_i - 1, col_i)
+                return True
+            # Row 0 (cover-pool row): leave upward to the mode row above, or the tab bar if
+            # the grid is somehow the very first row (not reachable today, but matches every
+            # other row-0 Up's "tab bar" fallback rather than assuming a row above exists).
+            self.theme_manager.kbdnav_exit_swatch_grid()
+            if outer_row_i > 0:
+                outer_rows = self.panel_manager.settings_tab_button_rows()
+                self._focus_settings_control(outer_rows[outer_row_i - 1][0], from_below=True)
+            else:
+                tab_bar.setFocus(Qt.FocusReason.TabFocusReason)
+            return True
+        return False
+
+    # The full set of values a typed digit sequence can resolve to — matches the interval
+    # row's own on-screen values/order exactly (build_themes_tab's `intervals` list). 0 means
+    # Off, same convention the row's own "Off" label already uses via minutes=0.
+    _THEMES_INTERVAL_VALUES = frozenset((0, 2, 5, 10, 20, 30, 60, 120))
+
+    def _handle_themes_shortcuts(self, event) -> bool:
+        """Letter/digit shortcuts scoped to the Themes tab (2026-09-06 design), alongside the
+        arrow/Enter/Space navigation in _handle_settings_arrows/_handle_themes_swatch_arrows.
+        Returns True iff consumed. Called right after _handle_settings_arrows from the same
+        eventFilter KeyPress branch.
+
+        Unlike the swatch grid's own keys, these work regardless of which control inside the
+        tab currently has focus — they are TAB-scoped shortcuts, not row/grid-local ones,
+        mirroring how Library's t/a/r/d/y/p/f and 1-5 (LibraryPanel._SORT_KEY_SHORTCUTS/
+        _VIEW_MODE_SHORTCUTS) work regardless of which book is selected. Never claims a key
+        while a text field has focus (there are none on this tab today, but the guard costs
+        nothing and matches every sibling method's convention), and every branch carries its
+        own isAutoRepeat() guard so holding a key doesn't fire the action repeatedly — these
+        are one-shot actions (add all / remove all / rotate now / set an interval), not
+        something a repeat should ever drive.
+
+        Digits are buffered rather than mapped one key -> one interval: several intervals
+        are two/three digits (20, 30, 60, 120), so a single keypress can't disambiguate "2"
+        (heading toward 20) from a genuine "2" (the 2-minute interval) — the exact ambiguity
+        the 2026-09-06 design calls out ("the window should be set well enough not to cause
+        20 to be interpreted as 2 and 0"). `_themes_digit_buffer`/`_themes_digit_timer`
+        mirror ChapterList's own digit-jump debounce (chapter_list.py) exactly: each digit
+        keypress appends to the buffer and restarts an 800ms single-shot timer; the timer
+        firing (_commit_themes_digit_buffer) is what actually calls set_rotation_interval,
+        using whatever was typed if and only if it names a real interval — an unmatched
+        buffer (typing "9", or "121") is silently dropped rather than doing something
+        surprising with a number that isn't one of the eight real choices."""
+        key = event.key()
+        if not self._settings_is_active():
+            return False
+        if self.tabs.tabText(self.tabs.currentIndex()) != "Themes":
+            return False
+        if isinstance(QApplication.focusWidget(), QLineEdit):
+            return False
+        mods = event.modifiers()
+        ctrl = bool(mods & Qt.KeyboardModifier.ControlModifier)
+
+        if key == Qt.Key.Key_A and not event.isAutoRepeat():
+            # A (bare) and Ctrl+A both mean Add all — Ctrl+A is included because that chord
+            # is muscle memory from "select all" elsewhere and there is no text field on this
+            # tab for it to collide with.
+            self.theme_manager.select_all_themes()
+            return True
+        if key == Qt.Key.Key_R and not ctrl and not event.isAutoRepeat():
+            self.theme_manager.deselect_all_themes()
+            return True
+        if key == Qt.Key.Key_D and ctrl and not event.isAutoRepeat():
+            # Ctrl+D for Remove all (the D is "remove" read as its own chord, not a bare
+            # letter — R alone already means Remove all, so Ctrl+D is the second binding for
+            # it, not a second action).
+            self.theme_manager.deselect_all_themes()
+            return True
+        if key in (Qt.Key.Key_T, Qt.Key.Key_C) and not ctrl and not event.isAutoRepeat():
+            self.theme_manager._do_rotate(user_initiated=True)
+            return True
+        if Qt.Key.Key_0 <= key <= Qt.Key.Key_9 and not ctrl and not event.isAutoRepeat():
+            self._themes_digit_buffer += event.text()
+            self._themes_digit_timer.start()
+            return True
+        return False
+
+    def _commit_themes_digit_buffer(self) -> None:
+        """_themes_digit_timer fired 800ms after the last digit — see _handle_themes_shortcuts
+        for why this is a buffer-and-debounce rather than a one-key-per-interval map."""
+        typed = self._themes_digit_buffer
+        self._themes_digit_buffer = ""
+        try:
+            minutes = int(typed)
+        except ValueError:
+            return
+        if minutes in self._THEMES_INTERVAL_VALUES:
+            self.theme_manager.set_rotation_interval(minutes)
 
     def _focus_settings_control(self, widget, from_below: bool = False) -> None:
         """Give `widget` keyboard focus as a settings-navigation step, positioning the cursor
@@ -4247,9 +4480,21 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         rejected live (2026-09-05): reaching row 3 without acting on row 1 meant either living
         with a stray auto-selected row 1 or explicitly deselecting it first, which is exactly the
         "cumbersome" cost this design avoids. Nothing is selected until the user explicitly
-        presses Space/Enter on a row — see the toggle branch in _handle_settings_arrows."""
+        presses Space/Enter on a row — see the toggle branch in _handle_settings_arrows.
+
+        `swatch_box` (the Themes-tab swatch grid, entered as one opaque row like a list box
+        — see panels.themes_tab_rows) gets the equivalent treatment: real Qt focus lands on
+        the box itself, never on an individual ThemeItem (they're all Qt.FocusPolicy.NoFocus
+        — see build_themes_tab), and `from_below` picks which row the keyboard cursor starts
+        on, same idea as a list box's last-vs-first path."""
         if isinstance(widget, QListWidget) and widget.count():
             self._move_list_current_row(widget, widget.count() - 1 if from_below else 0)
+        elif widget is self.theme_manager.swatch_box:
+            rows = self.theme_manager.swatch_grid_rows()
+            row_i = len(rows) - 1 if from_below else 0
+            self.theme_manager._kbdnav_swatch_pos = (row_i, 0) if rows else None
+            if rows and rows[row_i]:
+                self.theme_manager.kbdnav_enter_swatch(rows[row_i][0])
         widget.setFocus(Qt.FocusReason.TabFocusReason)
 
     def _move_list_current_row(self, list_widget: QListWidget, row: int) -> None:
@@ -4436,11 +4681,23 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
         Scoped to the Settings PANEL, not to one tab: the tab bar is a marker target on every
         tab, and the marker follows Tab-cycling wherever that goes. Which tabs additionally get
-        ARROW navigation is a separate, narrower question — see panels._ARROW_NAV_TABS."""
+        ARROW navigation is a separate, narrower question — see panels._ARROW_NAV_TABS.
+
+        `swatch_box` is a real Tab stop (see panel_tab_widgets — it isn't a ThemeItem, so
+        that method's exclusion doesn't reach it) but is explicitly excluded HERE: a 2026-09-06
+        live design call settled on the grid's own synthetic-hover look
+        (ThemeManager._set_kbdnav_swatch_hover) as the sole "where am I" affordance while
+        inside it, same as folder_list_widget's dot delegate replaces the marker for that
+        widget — except swatch_box gets no marker-family affordance at all, not even the
+        fill-focus treatment folder_list_widget/excluded_popup get (_FILL_FOCUS_OBJECT_NAMES),
+        since a real per-swatch hover state already exists and a second overlay on top of it
+        would be redundant."""
         if focus is None or not self._settings_is_active():
             return False
         if focus is self.tabs.tabBar():
             return True
+        if focus is self.theme_manager.swatch_box:
+            return False
         return focus in self.panel_manager.panel_tab_widgets("settings")
 
     def _update_focus_marker(self, reason: Qt.FocusReason | None = None) -> None:
@@ -4703,6 +4960,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             # gated on the Library panel being the active one, so the two cannot both claim a
             # key. Self-gating: returns False immediately unless Settings > Look is active.
             if self._handle_settings_arrows(event):
+                return True
+            if self._handle_themes_shortcuts(event):
                 return True
             if (hasattr(self, 'library_panel')
                     and event.key() in self.library_panel._LIST_KEY_HANDLED_KEYS):

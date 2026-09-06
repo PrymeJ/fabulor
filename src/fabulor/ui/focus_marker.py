@@ -102,7 +102,18 @@ _HALF_PIXEL = 0.5
 # Their focus appearance lives entirely in themes.py (search the object name) or, for
 # excluded_popup, in its own per-row hover-reveal eye animation (ui/excluded_books.py,
 # _ExcludedRow.set_hovered) — this module's only job is to stay out of the way.
-_FILL_FOCUS_OBJECT_NAMES = frozenset(("reset_audio_btn", "settings_folder_list", "excluded_popup"))
+#
+# theme_interval_label (2026-09-06) is not a "fill" like the others — it uses a plain
+# `:focus { text-decoration: underline }` QSS rule instead (themes.py). Same reasoning as
+# reset_audio_btn's own comment there: the border marker read as noise on this widget, this
+# time confirmed live rather than by shared design judgement — the marker was visually
+# broken on it (too small/low-contrast to read clearly against a bare QLabel), and the
+# underline was chosen as a working replacement, not a stylistic preference. The variable
+# name stays as-is (every excluded widget shares "skip the traveling marker" even though
+# what replaces it differs per widget) rather than renaming it for one new case.
+_FILL_FOCUS_OBJECT_NAMES = frozenset((
+    "reset_audio_btn", "settings_folder_list", "excluded_popup", "theme_interval_label",
+))
 
 # Live-observed 1px horizontal misalignment specific to the QTabBar path — confirmed live
 # 2026-08-19 to affect ONLY the tab bar, not #pattern_button rectangles (which render correctly at
