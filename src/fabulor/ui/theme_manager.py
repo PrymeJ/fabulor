@@ -2378,18 +2378,28 @@ class ThemeManager(QObject):
 
     def kbdnav_exit_swatch_grid(self) -> None:
         """Leaving the swatch grid entirely via keyboard (Up from row 0, Left from the
-        cover-pool row, or Tab/Down out the bottom) — mirrors swatch_box's own leaveEvent
-        (_on_themes_tab_left) exactly, since from the preview pipeline's point of view this
-        IS the cursor leaving the hover-active region, just via keyboard instead of the mouse.
-        Clears the synthetic hover look first so no swatch is left visually stuck hovered.
+        cover-pool row, Tab/Down out the bottom) — reverts the preview, same as a real mouse
+        leaveEvent does. Clears the synthetic hover look first so no swatch is left visually
+        stuck hovered.
 
-        This is a direct CALL, not a second `leaveEvent` WIRING — the "exactly one widget
-        should ever call this method" rule above is about not re-attaching a second signal/
-        event hookup that could race the real one; a keyboard-triggered call site invoking
-        the same handler function is the same pattern _on_theme_right_clicked and hover both
-        already use to reach _on_theme_changed through one shared path."""
+        Calls `_on_theme_unhovered()` DIRECTLY rather than going through
+        `_on_themes_tab_left` (swatch_box's real leaveEvent handler) — that was the first
+        version of this method and it was a real, live-reproduced bug (2026-09-06, "neither
+        arrow nor tab exits work... the previewed theme not reverting"). `_on_themes_tab_left`
+        exists to answer "was this REAL mouse leaveEvent genuine, or a blur-grab artifact /
+        stationary-cursor jitter?" — its whole mechanism is built around comparing the actual
+        mouse's CURRENT position against where it last genuinely entered the box
+        (`_last_swatch_pos`). A keyboard-driven exit has nothing to do with where the mouse
+        physically is: if the user hovered the box with the mouse at some point this session
+        and then switched to arrow keys without moving it since, the real cursor sits well
+        within `_MOUSE_JITTER_PX` of `_last_swatch_pos` forever, and every keyboard exit was
+        silently swallowed by that guard as if it were a stationary-cursor artifact — the
+        keyboard action was correct throughout, the reused mouse-leave heuristic was not.
+        Unlike a real leaveEvent, a keyboard exit is unambiguous on its own (no jitter, no
+        blur-grab race is possible for it), so it doesn't need — and must not go through —
+        any of that disambiguation."""
         self._set_kbdnav_swatch_hover(None)
-        self._on_themes_tab_left(self.swatch_box)
+        self._on_theme_unhovered()
 
     def kbdnav_toggle_swatch(self, widget) -> None:
         """Space on a swatch — the keyboard equivalent of a LEFT click (toggle pool

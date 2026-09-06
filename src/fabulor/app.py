@@ -4004,6 +4004,15 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             # single-widget-panel case where Tab/Backtab would otherwise "leave" onto itself.
             if focus is self.excluded_books_popup and nxt is not focus:
                 self._collapse_excluded_books()
+            # Leaving the Themes swatch grid via Tab/Shift+Tab must stop its preview too, same
+            # as every arrow-key exit already does (_handle_themes_swatch_arrows's four
+            # kbdnav_exit_swatch_grid() call sites) — Tab-cycling is a second, independent way
+            # to leave this widget that bypassed the stop entirely, same shape as the Excluded
+            # Books collapse fix immediately above (reported live 2026-09-06: "leaving the
+            # swatch with a Tab or arrow should stop the preview, similar to how mouse preview
+            # works" — the arrow half was already correct, only Tab was missing it).
+            if focus is self.theme_manager.swatch_box and nxt is not focus:
+                self.theme_manager.kbdnav_exit_swatch_grid()
             # Via _focus_settings_control so a list box lands ON a path rather than merely
             # focusing the empty box — same reason the arrow navigation routes through it.
             # Backtab arrives from below, so it should land on the box's LAST path.
