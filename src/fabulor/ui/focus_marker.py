@@ -111,8 +111,22 @@ _HALF_PIXEL = 0.5
 # underline was chosen as a working replacement, not a stylistic preference. The variable
 # name stays as-is (every excluded widget shares "skip the traveling marker" even though
 # what replaces it differs per widget) rather than renaming it for one new case.
+#
+# disable_sleep_btn (2026-09-07) reported live the same way reset_audio_btn originally was:
+# the marker's geometry read wrong on a large filled button, and the explicit preference was
+# for keyboard focus to look exactly like mouse hover instead — already true in themes.py's
+# #disable_sleep_btn:focus rule (same focus_sleep_disable_btn fallback both states read), so
+# excluding it here is what lets that existing fill show cleanly with no marker drawn over it.
+#
+# disable_sprint_btn (2026-09-07, same session) — explicitly requested to mirror
+# disable_sleep_btn exactly ("Cancel the sprint should have used the hover styling instead of
+# the traveling marker, mimicking the Disable sleep timer button"). Note stats_reset_btn
+# (Sprint's "Reset all sprint data") is deliberately NOT in this set — explicit instruction the
+# same session that it should KEEP the traveling marker, since it has no solid background for
+# the marker to compete with visually.
 _FILL_FOCUS_OBJECT_NAMES = frozenset((
     "reset_audio_btn", "settings_folder_list", "excluded_popup", "theme_interval_label",
+    "disable_sleep_btn", "disable_sprint_btn",
 ))
 
 # Live-observed 1px horizontal misalignment specific to the QTabBar path — confirmed live

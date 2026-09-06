@@ -99,6 +99,7 @@ focus_marker_palette: (Optional) List of 2+ hex colors the traveling-border-mark
 focus_marker_tab_palette: (Optional) Same, but ONLY for the marker while it traces a settings TAB. The tab sits on a different background from the buttons (the tab bar, and the selected tab's own accent fill), so a palette that reads well on a button can blend into invisibility there. Fallback: focus_marker_palette — set this only for the themes where the tab actually needs it.
 focus_marker_selected_palette: (Optional) Same, but ONLY for the marker while it traces a SELECTED button (any #pattern_button-shaped toggle across Look/Controls/Audio whose "selected" dynamic property is true). A selected button fills with accent, a different backdrop from an unselected button's transparent one, so a palette tuned for the latter can vanish against the former (reported live 2026-09-05: marker plainly visible on an unselected button, barely visible on the selected one, same theme). Fallback: focus_marker_palette — set this only for the themes where the selected state actually needs it.
 focus_audio_tab_reset: (Optional) Background of the Audio tab's "Reset to defaults" button while it is ACTIVE — either keyboard-focused or mouse-hovered; both read this one key so they cannot drift. Large filled buttons use a FILL SHIFT instead of the traveling border marker, which is a thin-border affordance and reads as noise on a big surface. Fallback: accent_light.
+focus_sleep_disable_btn: (Optional) Same idea as focus_audio_tab_reset, for the Sleep panel's "Disable the sleep timer" button — background while ACTIVE (keyboard-focused or mouse-hovered; both read this one key). A DIFFERENT key, deliberately not unified with focus_audio_tab_reset — see get_sleep_stylesheet's docstring on why this family of reset/destructive buttons is explicitly un-unified across the app. Fallback: accent_light.
 focus_folder_list_dot: (Optional) Color of the small keyboard-cursor dot _FolderListItemDelegate paints on the Library folder list's current row (right edge, independent of selection — see that class's docstring for why a dot rather than a fill). Fallback: accent_light.
 excluded_scrollbar: (Optional) Background of the Excluded Books popup's scrollbar handle (ui/excluded_books.py). Plain accent blended visually into ExcludedBooksSection's expand arrow directly above it (also accent) — falls back to a derived darkened tint (see _derive_subdued in excluded_books.py; desaturating was tried first and rejected live as muddy) rather than accent itself. Fallback: a darkened accent (same hue/saturation), not accent.
 cover_preview_bg:     Background color for book cover previews in the library. Fallback: bg_deep → #000000.
@@ -4408,6 +4409,76 @@ def get_sleep_stylesheet(theme_name="default"):
             padding: 10px;
             margin-top: 10px;
         }}
+        /* Mouse hover/press. This button had NEITHER — the identical, already-documented
+           #reset_audio_btn gap (get_settings_stylesheet), deliberately left open there per
+           Pryme's explicit "un-unified reset buttons" instruction above. Filled in now that
+           this panel gained keyboard navigation and the gap became directly relevant
+           (reported live 2026-09-06/07) — still NOT unified with #reset_audio_btn's rule, same
+           reasoning: two different buttons, two independent style choices. Needs its own
+           ID-level rule for the same reason #reset_audio_btn does — an ID selector outranks
+           the generic QPushButton:hover and simply wins, so the base :hover rule never reached
+           this button at all. */
+        #disable_sleep_btn:hover {{
+            background: {t.get('focus_sleep_disable_btn', t['accent_light'])};
+        }}
+        #disable_sleep_btn:pressed {{
+            background: {t['accent_dark']};
+        }}
+        /* Keyboard focus shown as the SAME fill mouse hover uses (explicit instruction,
+           2026-09-07: "We should add one and use the same for when it becomes active with
+           the keyboard navigation") — not the traveling marker, same reasoning as
+           #reset_audio_btn's focus fill (a border affordance reads as noise around a large
+           filled button). Scoped to kbdnav="true" so it only shows while the keyboard is
+           driving; the mouse's own :hover above is unaffected. */
+        QWidget#sleep_panel[kbdnav="true"] #disable_sleep_btn:focus {{
+            background: {t.get('focus_sleep_disable_btn', t['accent_light'])};
+        }}
+        /* Keyboard-mode hover suppression, same contract as Settings' #pattern_button rules:
+           while the keys are driving, a hovered-but-unfocused control must not also light up. */
+        QWidget#sleep_panel[kbdnav="true"] #disable_sleep_btn:hover {{
+            background: {accent_style};
+        }}
+        QWidget#sleep_panel[kbdnav="true"] #disable_sleep_btn:focus:hover {{
+            background: {t.get('focus_sleep_disable_btn', t['accent_light'])};
+        }}
+        /* Keyboard-mode hover suppression for the panel's ordinary pattern_button rows (the
+           Fade-out row) — same contract and same reasoning as Settings' equivalent rules
+           (get_settings_stylesheet), scoped to #sleep_panel instead of #settings_panel since
+           get_panel_base_stylesheet's #pattern_button:hover is shared by all four panels and
+           none of the other three had a keyboard marker to compete with until now. */
+        QWidget#sleep_panel[kbdnav="true"] QPushButton#pattern_button:hover {{
+            background: transparent;
+            border: 1px solid {t['accent_dark']};
+        }}
+        QWidget#sleep_panel[kbdnav="true"] QPushButton#pattern_button[selected="true"]:hover {{
+            background: {t['accent']};
+        }}
+        /* Keyboard focus on `end_chap_btn` — the one grid cell that is NOT one of the 14
+           ramped duration-preset buttons (those are painted via SleepTimerPanel's own
+           per-instance setStyleSheet and need their own :focus rule instead — see
+           _apply_preset_ramp_colors). Scoped to its objectName (#panel_grid_eoc_btn), NOT a
+           bare QPushButton type selector — that was tried first and was a real, live-reported
+           bug: it also matched EVERY other plain button in the panel (set_custom_btn), and
+           worse, in Sprint's sibling stylesheet, #stats_reset_btn — which has no :focus rule
+           of its own to out-rank a generic one, so it silently gained the same fill it was
+           explicitly supposed to be excluded from ("Reset all sprint data should keep the
+           traveling marker"). A plain :focus rule (not a synthetic property) is still correct
+           because this is a real QPushButton that genuinely receives Qt focus when the grid
+           cursor lands on it — only the SELECTOR'S SCOPE was wrong, not the mechanism. */
+        QWidget#sleep_panel[kbdnav="true"] QPushButton#panel_grid_eoc_btn:focus {{
+            background-color: {t['accent_light']};
+        }}
+        /* Keyboard-mode hover suppression for the SAME button — the mouse-hovered button, if
+           different from the keyboard-focused one, must not also light up. Restates the base
+           rule's own resting/hover colors (get_panel_base_stylesheet) rather than an
+           `inherit`-style reset, which QSS doesn't support — same shape as every other kbdnav
+           suppression rule in this file. */
+        QWidget#sleep_panel[kbdnav="true"] QPushButton#panel_grid_eoc_btn:hover {{
+            background: {accent_style};
+        }}
+        QWidget#sleep_panel[kbdnav="true"] QPushButton#panel_grid_eoc_btn:focus:hover {{
+            background-color: {t['accent_light']};
+        }}
         QLabel#sleep_conflict_confirm {{
             font-size: 12px;
             color: {t['accent_light']};
@@ -4461,6 +4532,50 @@ def get_sprint_stylesheet(theme_name="default"):
             font-size: 14px;
             padding: 10px;
             margin-top: 10px;
+        }}
+        /* Mouse hover/press + keyboard focus — same gap, same fix shape as
+           get_sleep_stylesheet's #disable_sleep_btn (see that function's docstring for the
+           full reasoning: an ID selector outranks the generic QPushButton:hover, so this
+           button had neither state at all). Keyboard focus uses the SAME look as mouse hover
+           (explicit instruction, 2026-09-07 — "Cancel the sprint should have used the hover
+           styling instead of the traveling marker, mimicking the Disable sleep timer
+           button"), not a separately-tunable color — hence no focus_sprint_disable_btn theme
+           key; both states read t['accent_light'] directly. */
+        #disable_sprint_btn:hover {{
+            background: {t['accent_light']};
+        }}
+        #disable_sprint_btn:pressed {{
+            background: {t['accent_dark']};
+        }}
+        QWidget#sprint_panel[kbdnav="true"] #disable_sprint_btn:focus {{
+            background: {t['accent_light']};
+        }}
+        QWidget#sprint_panel[kbdnav="true"] #disable_sprint_btn:hover {{
+            background: {accent_style};
+        }}
+        QWidget#sprint_panel[kbdnav="true"] #disable_sprint_btn:focus:hover {{
+            background: {t['accent_light']};
+        }}
+        /* Keyboard focus on `_eoc_btn` ("End of chapter," the grid's one non-ramped cell —
+           the 10 duration presets are painted via SprintPanel's own per-instance
+           setStyleSheet and have their own :focus rule instead, see _apply_preset_ramp_
+           colors). Scoped to its objectName (#panel_grid_eoc_btn), NOT a bare QPushButton
+           type selector — that was tried first and was a real, live-reported bug: a claim
+           here that "#stats_reset_btn's own ID-scoped rule outranks this generic type
+           selector" was WRONG — #stats_reset_btn has :hover/:pressed rules but no :focus rule
+           of its own, so there was nothing to out-rank the generic one with, and it silently
+           gained the same fill it was explicitly supposed to be excluded from ("Reset all
+           sprint data should keep the traveling marker" — confirmed broken live via
+           screenshot, 2026-09-07). Fixed by scoping to the button's own objectName instead of
+           relying on a specificity fight that didn't actually exist. */
+        QWidget#sprint_panel[kbdnav="true"] QPushButton#panel_grid_eoc_btn:focus {{
+            background-color: {t['accent_light']};
+        }}
+        QWidget#sprint_panel[kbdnav="true"] QPushButton#panel_grid_eoc_btn:hover {{
+            background: {accent_style};
+        }}
+        QWidget#sprint_panel[kbdnav="true"] QPushButton#panel_grid_eoc_btn:focus:hover {{
+            background-color: {t['accent_light']};
         }}
         QLabel#sprint_conflict_confirm {{
             font-size: 12px;

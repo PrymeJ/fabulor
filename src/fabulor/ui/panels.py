@@ -1510,10 +1510,28 @@ class PanelManager:
         else:
             mw._apply_pending_cover_theme()
 
+    def _clear_focus_marker_for_close(self) -> None:
+        """Hide the traveling focus marker immediately, before a panel's slide-out animation
+        starts — not after. Without this, the marker keeps patrolling whatever control it was
+        tracking for the ENTIRE close animation, and since that control is still a live,
+        positioned widget until the panel's own `.hide()` runs at animation-finished, the
+        marker visibly travels off-screen WITH the sliding panel — reads as "the marker spilled
+        into the main window" (reported live 2026-09-07, Sleep panel; Settings never showed
+        this because `_close_settings_flow` already clears the marker at its own entry, for
+        exactly this reason — see that method's comment, which this helper factors out so
+        Speed/Sleep/Sprint's own close flows get the identical fix instead of three copies of
+        the same fix arriving independently, or at different times, the way it almost did.
+        Idempotent (marker.clear() is a safe no-op if already clear); safe no-op before the
+        marker exists at all."""
+        marker = getattr(self.main_window, 'focus_marker', None)
+        if marker is not None:
+            marker.clear()
+
     def _close_speed_flow(self):
         """Slides the speed panel back out."""
         if self.speed_panel_animation.state() == QAbstractAnimation.State.Running:
             return
+        self._clear_focus_marker_for_close()
         panel_w = self.speed_panel.width()
         sidebar_y = 56
         self.speed_panel_animation.setStartValue(QPoint(0, sidebar_y))
@@ -1639,6 +1657,7 @@ class PanelManager:
         """Slides the sleep panel back out."""
         if self.sleep_panel_animation.state() == QAbstractAnimation.State.Running:
             return
+        self._clear_focus_marker_for_close()
         panel_w = self.sleep_panel.width()
         sidebar_y = 56
         self.sleep_panel_animation.setStartValue(QPoint(0, sidebar_y))
@@ -1708,6 +1727,7 @@ class PanelManager:
         """Slides the sprint panel back out. Mirrors _close_sleep_flow exactly."""
         if self.sprint_panel_animation.state() == QAbstractAnimation.State.Running:
             return
+        self._clear_focus_marker_for_close()
         self.sprint_panel._cancel_reset_sprint_data()
         panel_w = self.sprint_panel.width()
         sidebar_y = 56
@@ -2009,17 +2029,16 @@ class PanelManager:
         this guard. The guard is a plain no-op on re-entry, not a queue: the one
         in-flight close is already going to finish and hide the panel; a second
         request while it's pending adds nothing."""
-        # Hide the traveling focus marker (ui/focus_marker.py) immediately — before the
-        # snapback-settle wait and slide-out below, not after (see _on_settings_hidden,
-        # which used to own this and left the marker visibly patrolling the tab border
-        # throughout the whole close animation). Mirrors a tab switch's own
-        # _update_focus_marker() clear: the marker disappears the instant the widget it
-        # was tracking is going away, not once the transition finishes. Idempotent, so
-        # safe to call again on the re-entrancy early-return path below. Safe no-op if
-        # the marker doesn't exist.
-        marker = getattr(self.main_window, 'focus_marker', None)
-        if marker is not None:
-            marker.clear()
+        # Hide the traveling focus marker immediately — before the snapback-settle wait and
+        # slide-out below, not after (see _on_settings_hidden, which used to own this and left
+        # the marker visibly patrolling the tab border throughout the whole close animation).
+        # Mirrors a tab switch's own _update_focus_marker() clear: the marker disappears the
+        # instant the widget it was tracking is going away, not once the transition finishes.
+        # Factored into _clear_focus_marker_for_close 2026-09-07 so Speed/Sleep/Sprint's own
+        # close flows share this exact fix rather than reimplementing it — see that method's
+        # docstring for the live report that found the gap on Sleep. Idempotent, so safe to
+        # call again on the re-entrancy early-return path below.
+        self._clear_focus_marker_for_close()
         if getattr(self, '_settings_close_pending', False):
             logger.warning("[CLOSE-SETTINGS-TRACE] _close_settings_flow: EARLY-RETURN, "
                             "already pending (re-entrancy guard)")
@@ -2657,6 +2676,138 @@ class PanelManager:
             if interval_row:
                 rows.append(interval_row)
         return rows
+
+    def flat_panel_rows(self, panel_key: str) -> list:
+        """Row source for Speed/Sleep/Sprint arrow navigation (added 2026-09-07) — the
+        equivalent of settings_tab_button_rows()/themes_tab_rows() for a panel with no tabs at
+        all, just one flat QVBoxLayout. Same generic-per-row-shape approach and the same reason
+        for it (controls hide/show at runtime — e.g. Sleep's disable button, Sprint's grace-
+        period submenu rows — so membership is re-read live on every keypress, never cached).
+
+        THREE row shapes here, one more than settings_tab_button_rows' two, because these
+        panels' preset grids are a genuine QGridLayout (Speed's 12 speed buttons, Sleep's 14
+        duration presets + End of chapter, Sprint's 10 duration presets + End of chapter) —
+        unlike anything on a Settings tab:
+          * a QHBoxLayout of controls — the common case (Sleep's custom-time-input row, its
+            Fade-out row; Sprint's backward-compensation/grace-mode rows).
+          * a single widget added straight to the panel's own QVBoxLayout — Sleep's/Sprint's
+            disable button, Sprint's Reset-all-sprint-data button, any conflict-confirm label
+            currently shown.
+          * a QGridLayout — represented as a SINGLE opaque row (one list containing every
+            navigable cell in the grid, in `itemAt` order) rather than one row per grid ROW.
+            `MainWindow._handle_panel_grid_arrows` owns the real 2-D movement once focus
+            reaches the grid, reading the live QGridLayout structure directly (row/column
+            counts, `itemAtPosition`, and cell spans — End of chapter spans 2 columns) rather
+            than trying to flatten it into `flat_panel_rows`' own row-of-rows shape, which has
+            no way to represent a span. Same architecture as Themes' swatch_box: one opaque
+            stop in the row list, its own internal navigation once entered.
+
+        Grid cell membership within the opaque row is still filtered by `_navigable` below —
+        an item without a widget (an empty grid cell — Sleep's grid has two: End of chapter's
+        span leaves (3,0) and (3,1) real slots, occupied; no empty cells today, but a future
+        grid might) is skipped the same way a hidden button is."""
+        mw = self.main_window
+        panel = {"speed": getattr(mw, "speed_panel", None),
+                 "sleep": getattr(mw, "sleep_panel", None),
+                 "sprint": getattr(mw, "sprint_panel", None)}.get(panel_key)
+        if panel is None:
+            return []
+        layout = panel.layout()
+        if layout is None:
+            return []
+
+        def _navigable(w) -> bool:
+            return (w is not None and w.isVisibleTo(panel) and w.isEnabled()
+                    and bool(w.focusPolicy() & Qt.FocusPolicy.TabFocus))
+
+        def _walk(lay, out: list) -> None:
+            for i in range(lay.count()):
+                item = lay.itemAt(i)
+                sub = item.layout()
+                if isinstance(sub, QGridLayout):
+                    grid_row = [w for j in range(sub.count())
+                                if _navigable(w := sub.itemAt(j).widget())]
+                    if grid_row:
+                        out.append(grid_row)
+                    continue
+                if sub is not None:
+                    row = [w for j in range(sub.count())
+                           if _navigable(w := sub.itemAt(j).widget())]
+                    if row:
+                        out.append(row)
+                    continue
+                w = item.widget()
+                if w is None:
+                    continue
+                # A bare CONTAINER widget with its OWN internal layout (e.g. Sprint's
+                # _grace_submenu, added via addWidget rather than addLayout — a QWidget
+                # wrapper used purely to give a group of rows one shared show/hide toggle) is
+                # recursed into rather than treated as a single navigable leaf — added
+                # 2026-09-07 after this exact case (the grace-period percentage/fixed/custom
+                # sub-rows) was silently skipped in full: `_navigable(w)` on the wrapper itself
+                # is always False (a plain QWidget has no TabFocus), so nothing inside it was
+                # ever reachable at all, live-reported as "skips the second row... and moves to
+                # Reset all sprint data" — it wasn't skipping ONE row, the whole submenu was
+                # invisible to this walk. Only recurses into a VISIBLE wrapper — an entirely
+                # hidden submenu (grace mode not "custom"/"percentage"/"fixed") must stay fully
+                # absent from the rows list, same as any other hidden control.
+                if not w.isVisibleTo(panel):
+                    continue
+                inner = w.layout()
+                if isinstance(inner, QHBoxLayout) and inner.count() > 0:
+                    # The wrapper exists ONLY to hold a single row's worth of buttons side by
+                    # side (e.g. _grace_pct_row/_grace_fixed_row) — its contents are ONE row,
+                    # not N one-item rows. Collect them directly rather than recursing, which
+                    # would otherwise split each button into its own separate row (confirmed
+                    # live 2026-09-07: recursing unconditionally here produced one row PER
+                    # PERCENTAGE BUTTON instead of one row of six).
+                    row = [iw for k in range(inner.count())
+                           if _navigable(iw := inner.itemAt(k).widget())]
+                    if row:
+                        out.append(row)
+                    continue
+                if inner is not None and inner.count() > 0:
+                    # A QVBoxLayout (or anything else stacking sub-rows vertically) — e.g.
+                    # _grace_submenu's own submenu_layout, which holds THREE further row
+                    # wrappers, one per grace-mode sub-option. Recurse so each of those
+                    # becomes its own row in turn.
+                    _walk(inner, out)
+                    continue
+                if _navigable(w):
+                    out.append([w])
+
+        rows = []
+        _walk(layout, rows)
+        return rows
+
+    def grid_layout_for(self, panel_key: str, widget) -> "QGridLayout | None":
+        """The real QGridLayout `widget` sits in, if it's one of `panel_key`'s preset grids —
+        used by MainWindow._handle_panel_grid_arrows once flat_panel_rows has identified that
+        focus is inside a grid-shaped row and real 2-D navigation needs the grid ITSELF, not
+        just its flattened widget list.
+
+        Walks the panel's own top-level layout the same way flat_panel_rows does (matching
+        detection logic — a QGridLayout item, found via `item.layout()`) rather than asking
+        `widget.parentWidget().layout()`: that looks like it should work but does NOT — a
+        QWidget has only ONE top-level `.layout()`, which for these panels is always the outer
+        QVBoxLayout, never a sub-layout added via `addLayout()` (confirmed live 2026-09-07,
+        caught before shipping: `panel.layout() is grid` is False even for a widget added
+        directly into that grid). This is the correct way to recover a sub-layout a widget
+        belongs to; there is no Qt API that goes the other direction from a plain widget."""
+        mw = self.main_window
+        panel = {"speed": getattr(mw, "speed_panel", None),
+                 "sleep": getattr(mw, "sleep_panel", None),
+                 "sprint": getattr(mw, "sprint_panel", None)}.get(panel_key)
+        if panel is None:
+            return None
+        layout = panel.layout()
+        if layout is None:
+            return None
+        for i in range(layout.count()):
+            sub = layout.itemAt(i).layout()
+            if isinstance(sub, QGridLayout) and sub.indexOf(widget) >= 0:
+                return sub
+        return None
 
     # ── Panel-local keyboard focus ownership ─────────────────────────────────
     # Enforces the invariant that MainWindow.keyPressEvent's _focus_allows_global_shortcuts

@@ -95,6 +95,12 @@ class SleepTimerPanel(QWidget):
             self._sleep_presets_buttons.append(btn)
 
         self.end_chap_btn = QPushButton("End of chapter")
+        # Named so the keyboard-focus QSS rule (get_sleep_stylesheet) can target this ONE
+        # grid cell specifically — a bare QPushButton type selector was tried first and wrongly
+        # matched every other plain button in the panel (Set, and — critical bug, reported live
+        # 2026-09-07 — Sprint's #stats_reset_btn had no :focus rule of its own to out-rank it,
+        # so it silently inherited the same fill it was explicitly supposed to be excluded from).
+        self.end_chap_btn.setObjectName("panel_grid_eoc_btn")
         self.end_chap_btn.setFixedHeight(30)
         # Grid column-width negotiation for a 2-column span left this 1px short
         # of flush with the preset buttons above it (57+8+57=122) — same fix as
@@ -426,6 +432,29 @@ class SleepTimerPanel(QWidget):
                 f"color: {btn_text}; border: none; }}"
                 f"QPushButton:hover {{ background-color: rgb({hover_c.red()}, {hover_c.green()}, {hover_c.blue()}); }}"
                 f"QPushButton:pressed {{ background-color: rgb({pressed_c.red()}, {pressed_c.green()}, {pressed_c.blue()}); }}"
+                # Keyboard-navigation's look for the grid's current cell. Unlike Themes' swatch
+                # grid (whose ThemeItems are deliberately Qt.FocusPolicy.NoFocus, tracked by a
+                # synthetic kbdnav_hover PROPERTY because they never receive real Qt focus —
+                # see theme_manager.py's _set_kbdnav_swatch_hover), these buttons are ordinary
+                # QPushButtons that DO receive real focus when MainWindow._handle_panel_grid_
+                # arrows moves the cursor onto them — a plain :focus rule works natively here,
+                # no synthetic property needed. Must be its own rule in THIS per-instance
+                # setStyleSheet regardless, since it wins over any shared panel-level QSS —
+                # same reason :hover/:pressed need restating above.
+                f"QPushButton:focus {{ background-color: rgb({hover_c.red()}, {hover_c.green()}, {hover_c.blue()}); }}"
+                # Keyboard-mode hover suppression, same contract/reasoning as Settings'
+                # #pattern_button rules (get_settings_stylesheet): while the keyboard is
+                # driving, the button the MOUSE happens to rest on (a DIFFERENT one than the
+                # keyboard-focused button, ordinarily) must not also light up — otherwise two
+                # cells claim "you are here" at once. An ancestor-scoped selector written
+                # inside a per-instance stylesheet still resolves normally against the real
+                # ancestor's live property (confirmed — Qt's cascade is not scoped to where a
+                # rule was SET, only to what it selects), so this can live right here instead
+                # of needing a second injection point.
+                f"QWidget#sleep_panel[kbdnav=\"true\"] QPushButton:hover {{ "
+                f"background-color: rgb({c.red()}, {c.green()}, {c.blue()}); }}"
+                f"QWidget#sleep_panel[kbdnav=\"true\"] QPushButton:focus:hover {{ "
+                f"background-color: rgb({hover_c.red()}, {hover_c.green()}, {hover_c.blue()}); }}"
             )
 
     def update_panel_styling(self):

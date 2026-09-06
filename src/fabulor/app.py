@@ -3979,7 +3979,12 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self.library_panel._clear_keyboard_selection()
             self.library_panel.search_field.setFocus(Qt.FocusReason.TabFocusReason)
             return True
-        if panel in ("settings", "speed", "sleep"):
+        # "sprint" was missing here until 2026-09-07 (reported live: "Tab and Shift+Tab don't
+        # work" while testing Sprint's new arrow navigation) — a pre-existing gap, not
+        # something this session's arrow-nav work introduced: panel_tab_widgets("sprint") and
+        # _focus_settings_control both already worked generically for any panel, this dispatch
+        # tuple was simply never updated when SprintPanel was added.
+        if panel in ("settings", "speed", "sleep", "sprint"):
             widgets = self.panel_manager.panel_tab_widgets(panel)
             if not widgets:
                 return True  # nothing focusable — still swallow so Tab can't escape the panel
@@ -4479,6 +4484,308 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         if minutes in self._THEMES_INTERVAL_VALUES:
             self.theme_manager.set_rotation_interval(minutes)
 
+    # ── Speed / Sleep / Sprint arrow navigation (added 2026-09-07) ────────────────────────
+    # These three panels have no tabs — one flat row-of-rows per panel (PanelManager.
+    # flat_panel_rows), with each panel's own QGridLayout preset grid represented as a single
+    # opaque stop that owns its own internal 2-D navigation (_handle_panel_grid_arrows),
+    # mirroring exactly how Themes' swatch_box works inside Settings (_handle_settings_arrows/
+    # _handle_themes_swatch_arrows). Kept as a SEPARATE method rather than folded into
+    # _handle_settings_arrows: that method is keyed throughout on Settings-specific concepts
+    # (tabs, settings_tab_button_rows, the folder-list/Excluded-Books special cases) that don't
+    # apply here, and touching it risked the exact kind of regression the modality machinery
+    # has already caused twice (2026-09-03/04) — a parallel method costs some duplication but
+    # leaves Settings' own navigation completely unchanged.
+    #
+    # Per-panel-key grid cursor state, since Speed/Sleep/Sprint each have their own grid and
+    # only one is ever open at a time but all three can independently remember a position
+    # across a close-then-reopen within the same app session (not persisted, just in-memory —
+    # same "no memory across a full exit" scope as Themes' swatch grid, see
+    # ThemeManager._kbdnav_swatch_pos's docstring, just multiplied by three panels).
+    _FLAT_PANEL_KEYS = ("speed", "sleep", "sprint")
+
+    def _handle_flat_panel_arrows(self, event) -> bool:
+        """Arrow-key navigation for Speed/Sleep/Sprint. Returns True iff consumed. Called from
+        the app-level eventFilter, same contract as _handle_settings_arrows.
+
+        Down enters/advances a row, landing on its first control; Up leaves to the previous
+        row. Left/Right are handled EXPLICITLY here (reading-order wrap across rows) rather
+        than deferring to Qt's native sibling stepping the way _handle_settings_arrows does —
+        see the Left/Right branches below for why that native-deferral shape is actually a bug
+        waiting to happen, not a harmless shortcut, on this specific set of panels. The one
+        shape Settings doesn't have at all: a QGridLayout preset grid, represented as ONE row
+        here (see PanelManager.flat_panel_rows) that hands off to _handle_panel_grid_arrows for
+        its own internal movement once focus reaches it.
+
+        A focused TEXT FIELD (the custom-duration input) is deliberately NOT deferred to for
+        Left/Right the way Settings' text fields are — live design correction 2026-09-07:
+        "this is not a field where we'll write an article... let the arrows treat it as any
+        other button. No need to dwell there." Up/Down already work correctly with no special
+        case (they act on ROW position, never the field's own text cursor); Left/Right are
+        explicitly swallowed instead of left to native text-cursor movement.
+
+        Space/Enter both activate a plain click (Qt gives Space for a QPushButton for free —
+        this method deliberately never touches plain Space, same as _handle_settings_arrows;
+        Enter needs adding, same reasoning there too). Shift+Enter/Shift+Space are the
+        keyboard equivalent of a RIGHT click, on whichever focused control actually has a
+        `rightClicked` signal (Sleep's Fade-out row today; consumed as a no-op on anything
+        else, so a Shift-held press never falls through and fires a plain click instead) —
+        2026-09-07 live design call, mirroring how Themes split plain Enter (right-click
+        equivalent) from Space (left-click equivalent) for its swatch grid, generalized here to
+        a MODIFIER on the shared activation keys instead of two different bare keys, since
+        these panels' buttons already use plain Enter/Space for their own single click action
+        and only a few controls have a second (right-click) action at all.
+
+        Digit redirect into the panel's own custom-duration/grace QLineEdit is handled
+        separately, in the eventFilter's KeyPress branch (see _redirect_digit_to_panel_input)
+        — it must run BEFORE this method's own key-gate, since a digit is not one of the keys
+        this method itself claims, and it must apply regardless of what currently has focus on
+        the panel (not just when focus already sits in one of `rows`)."""
+        key = event.key()
+        if key not in (Qt.Key.Key_Up, Qt.Key.Key_Down, Qt.Key.Key_Left, Qt.Key.Key_Right,
+                       Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space):
+            return False
+        panel_key = self.panel_manager.active_full_panel()
+        if panel_key not in self._FLAT_PANEL_KEYS:
+            return False
+        focus = QApplication.focusWidget()
+        rows = self.panel_manager.flat_panel_rows(panel_key)
+        if not rows:
+            return False
+        shift = bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier)
+
+        grid = self.panel_manager.grid_layout_for(panel_key, focus)
+        if grid is not None:
+            return self._handle_panel_grid_arrows(key, shift, grid, panel_key, rows)
+
+        pos = next(((r, c) for r, row in enumerate(rows)
+                    for c, w in enumerate(row) if w is focus), None)
+        if pos is None:
+            return False  # focus is on some other control — leave it to Qt
+        row_i, col_i = pos
+
+        # A focused TEXT FIELD (the custom-duration input) is treated as an ORDINARY one-item
+        # row here, deliberately NOT deferred to like Settings' text fields are elsewhere —
+        # live design correction 2026-09-07: "this is not a field where we'll write an
+        # article... let the arrows treat it as any other button. No need to dwell there."
+        # Left/Right must NOT be left to native handling (which would move the text cursor
+        # instead of navigating) — but swallowing them outright was ALSO rejected live
+        # ("swallowing the right and left arrows is worse. Just let them continue the
+        # navigation"): since the field is always the only item in its row, Left/Right
+        # continue the SAME direction Up/Down would — Right/Left both just mean "keep moving
+        # through the panel" here, there being no horizontal sibling to distinguish them from
+        # vertical movement. Remapped to Down/Up respectively and handled by the exact same
+        # branches below, rather than duplicating their logic.
+        if isinstance(focus, QLineEdit) and key == Qt.Key.Key_Right:
+            key = Qt.Key.Key_Down
+        elif isinstance(focus, QLineEdit) and key == Qt.Key.Key_Left:
+            key = Qt.Key.Key_Up
+
+        # Shift+Enter and Shift+Space both mean "right-click equivalent" — checked before the
+        # plain-Enter/plain-Space handling below so a Shift-held press never also fires a plain
+        # click. Space is caught here specifically because Qt's own native Space-clicks-a-
+        # button behavior has no way to know about Shift; without this branch Shift+Space
+        # would silently fall through to Qt and fire an ordinary click, not a right-click.
+        if shift and key in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space):
+            if hasattr(focus, "rightClicked"):
+                focus.rightClicked.emit()
+            return True  # consumed either way — a Shift-held press on a control with no
+            # rightClicked signal should not fall through and fire a plain click instead
+        if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            if hasattr(focus, "click"):
+                focus.click()
+                return True
+            return False  # not clickable (e.g. the text field itself) — leave it to Qt,
+            # matching _handle_settings_arrows' own "not clickable" fallback
+        # Plain Space is deliberately NOT handled here at all — Qt already fires clicked() on
+        # Space for a focused QPushButton natively (same as _handle_settings_arrows, which
+        # never touches Space for exactly this reason); explicitly calling click() for it here
+        # too would double-fire it.
+
+        if key == Qt.Key.Key_Down:
+            if row_i + 1 < len(rows):
+                self._focus_flat_panel_control(rows[row_i + 1][0], panel_key)
+                return True
+            return True  # last row: swallow, so Down can't fall out of the panel
+        if key == Qt.Key.Key_Up:
+            if row_i > 0:
+                self._focus_flat_panel_control(rows[row_i - 1][0], panel_key, from_below=True)
+                return True
+            return True  # first row: swallow — no tab bar to leave to on these panels
+        # Left/Right are handled explicitly, in full, rather than deferring to Qt's native
+        # sibling-focus stepping the way _handle_settings_arrows does for Settings' rows. This
+        # was a REAL BUG, not a stylistic choice: "native within-row stepping" is not actually
+        # scoped to the row at all — it's Qt's global native Tab-order chain, which QPushButton
+        # happens to also honor for arrow keys (the same mechanism that made Themes' interval
+        # QLabels correctly NOT move, since QLabel has no such native behavior). At the last
+        # widget of a row, that chain simply continues into whatever the NEXT widget in the
+        # panel's construction order is — not the next row's first widget `rows` would say, and
+        # not a stop at all — so Right at the end of ANY row silently escaped into a later row
+        # picked by Qt, not by this navigation model (confirmed live 2026-09-07: Right on the
+        # Smart Rewind duration row's "60" jumped to "Default speed", an EARLIER row than
+        # Smart Rewind — Qt's native chain and `rows`' visual order had simply diverged).
+        # Settings' own rows happen to never hit this because Look/Controls/Audio's rows are
+        # always followed by MORE rows below them in construction order too, so the escape
+        # landed somewhere plausible-looking often enough not to be caught — it was never
+        # actually safe there either, just lucky. Reading-order wrap, matching the grid's own
+        # model and the live-requested "let them continue the navigation" for Left/Right in
+        # general: past a row's last item, Right continues onto the NEXT row's first; past a
+        # row's first item, Left continues onto the PREVIOUS row's last. Off the panel
+        # entirely in either direction, swallow (no tab bar to leave to on these panels).
+        if key == Qt.Key.Key_Right:
+            if col_i + 1 < len(rows[row_i]):
+                self._focus_flat_panel_control(rows[row_i][col_i + 1], panel_key)
+            elif row_i + 1 < len(rows):
+                self._focus_flat_panel_control(rows[row_i + 1][0], panel_key)
+            return True
+        if key == Qt.Key.Key_Left:
+            if col_i > 0:
+                self._focus_flat_panel_control(rows[row_i][col_i - 1], panel_key)
+            elif row_i > 0:
+                self._focus_flat_panel_control(rows[row_i - 1][-1], panel_key, from_below=True)
+            return True
+        return False
+
+    def _handle_panel_grid_arrows(self, key, shift: bool, grid, panel_key: str, rows: list) -> bool:
+        """Internal Left/Right/Up/Down/Enter/Space navigation once focus is inside one of
+        Speed/Sleep/Sprint's preset grids (see _handle_flat_panel_arrows). Reads the grid's
+        REAL structure straight from Qt (rowCount/columnCount/itemAtPosition/getItemPosition)
+        rather than flat_panel_rows' flattened list, so a spanning cell (Sleep's/Sprint's "End
+        of chapter", which spans 2 columns) is correctly treated as ONE stop from either
+        column it occupies, not two — `itemAtPosition` already resolves this identically to
+        how the mouse experiences it (clicking either half activates the same button)."""
+        focus = QApplication.focusWidget()
+        idx = grid.indexOf(focus)
+        if idx < 0:
+            return False
+        row_i, col_i, row_span, col_span = grid.getItemPosition(idx)
+
+        def _widget_at(r: int, c: int):
+            item = grid.itemAtPosition(r, c)
+            return item.widget() if item is not None else None
+
+        def _land(r: int, c: int) -> bool:
+            w = _widget_at(r, c)
+            if w is None or not w.isVisibleTo(grid.parentWidget()) or not w.isEnabled():
+                return False
+            w.setFocus(Qt.FocusReason.TabFocusReason)
+            self._keep_marker_awake()
+            return True
+
+        # Same Shift+Enter/Shift+Space-is-right-click, plain-Space-is-Qt's-own-native-handling
+        # shape as _handle_flat_panel_arrows — see that method's comments for why each branch
+        # is ordered/scoped the way it is; kept in sync deliberately, not by accident.
+        if shift and key in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space):
+            if hasattr(focus, "rightClicked"):
+                focus.rightClicked.emit()
+            return True
+        if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            if hasattr(focus, "click"):
+                focus.click()
+                return True
+            return False
+        if key == Qt.Key.Key_Right:
+            for c in range(col_i + col_span, grid.columnCount()):
+                if _land(row_i, c):
+                    return True
+            # Reading-order wrap (2026-09-07, corrected from an initial clamp-at-row-end
+            # design — reported live as wrong, the same correction Themes' swatch grid
+            # needed for the same reason: "when you are at the rightmost button, right arrow
+            # is no-op instead of going to the first button of the next row"): continue onto
+            # the NEXT row's first cell rather than stopping. Off the grid's last row
+            # entirely, exits downward exactly like Down does at the bottom.
+            for r in range(row_i + row_span, grid.rowCount()):
+                if _land(r, 0):
+                    return True
+            outer_row_i = next((i for i, row in enumerate(rows)
+                                 if grid.itemAt(0).widget() in row), None)
+            if outer_row_i is not None and outer_row_i + 1 < len(rows):
+                self._focus_flat_panel_control(rows[outer_row_i + 1][0], panel_key)
+            return True
+        if key == Qt.Key.Key_Left:
+            for c in range(col_i - 1, -1, -1):
+                if _land(row_i, c):
+                    return True
+            # Mirror of Right's wrap: continue onto the PREVIOUS row's last cell. Off row 0
+            # entirely, exits upward exactly like Up does at the top.
+            for r in range(row_i - 1, -1, -1):
+                if _land(r, grid.columnCount() - 1):
+                    return True
+            outer_row_i = next((i for i, row in enumerate(rows)
+                                 if grid.itemAt(0).widget() in row), None)
+            if outer_row_i is not None and outer_row_i > 0:
+                self._focus_flat_panel_control(rows[outer_row_i - 1][0], panel_key, from_below=True)
+            return True
+        if key == Qt.Key.Key_Down:
+            for r in range(row_i + row_span, grid.rowCount()):
+                if _land(r, min(col_i, grid.columnCount() - 1)):
+                    return True
+            # Bottom of the grid: leave downward to whatever row follows it, exactly like
+            # _handle_flat_panel_arrows' own Down does at any other row's bottom.
+            outer_row_i = next((i for i, row in enumerate(rows)
+                                 if grid.itemAt(0).widget() in row), None)
+            if outer_row_i is not None and outer_row_i + 1 < len(rows):
+                self._focus_flat_panel_control(rows[outer_row_i + 1][0], panel_key)
+            return True
+        if key == Qt.Key.Key_Up:
+            for r in range(row_i - 1, -1, -1):
+                if _land(r, min(col_i, grid.columnCount() - 1)):
+                    return True
+            # Top of the grid: leave upward, same convention.
+            outer_row_i = next((i for i, row in enumerate(rows)
+                                 if grid.itemAt(0).widget() in row), None)
+            if outer_row_i is not None and outer_row_i > 0:
+                self._focus_flat_panel_control(rows[outer_row_i - 1][0], panel_key, from_below=True)
+            return True
+        return False
+
+    def _focus_flat_panel_control(self, widget, panel_key: str, from_below: bool = False) -> None:
+        """Give `widget` keyboard focus as a Speed/Sleep/Sprint navigation step. Mirrors
+        _focus_settings_control's shape but there is no list-box case here — every row's first
+        control (including a grid's first navigable cell) is a plain widget setFocus can just
+        target directly. `from_below` is accepted for call-site symmetry with
+        _focus_settings_control even though nothing here currently needs to pick a DIFFERENT
+        landing widget for it (a grid always lands on its own first/last real cell regardless
+        of direction, handled by flat_panel_rows already filtering to navigable widgets only)."""
+        widget.setFocus(Qt.FocusReason.TabFocusReason)
+        self._keep_marker_awake()
+
+    def _redirect_digit_to_panel_input(self, event) -> bool:
+        """A typed digit while Sleep or Sprint is open and focus is somewhere else on the
+        panel redirects into that panel's own custom-DURATION QLineEdit and starts typing
+        there, rather than building a second buffered-digit mechanism like Themes' interval
+        row — live design call 2026-09-06: these panels already have a real text field for
+        "type an exact number," so reusing it is simpler than a second mechanism.
+
+        Sprint has a SECOND candidate field (custom_grace_input, only present/relevant when
+        grace mode is "custom") that a bare digit does NOT redirect to — explicit live design
+        call 2026-09-07: a digit always means "set the duration," regardless of grace mode;
+        reaching the grace field is arrow/Tab navigation's job, same as any other control that
+        isn't the one-and-only obvious target for a typed number. Speed has no text field at
+        all and is correctly never reached by this method.
+
+        Never fires while focus is ALREADY in the target QLineEdit (its own keys must win, not
+        get reinterpreted as "start a new redirect"), and only for genuinely bare digit keys —
+        a modified digit (Ctrl/Alt+digit) is left alone in case it means something else in the
+        future."""
+        if event.modifiers() & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.AltModifier):
+            return False
+        if not (Qt.Key.Key_0 <= event.key() <= Qt.Key.Key_9):
+            return False
+        panel_key = self.panel_manager.active_full_panel()
+        target = {
+            "sleep": getattr(self.sleep_panel, "custom_sleep_input", None),
+            "sprint": getattr(self.sprint_panel, "custom_sprint_input", None),
+        }.get(panel_key)
+        if target is None:
+            return False
+        focus = QApplication.focusWidget()
+        if focus is target:
+            return False
+        target.setFocus(Qt.FocusReason.OtherFocusReason)
+        target.selectAll()
+        QApplication.sendEvent(target, event)
+        return True
+
     def _focus_settings_control(self, widget, from_below: bool = False) -> None:
         """Give `widget` keyboard focus as a settings-navigation step, positioning the cursor
         first if it is a list box.
@@ -4544,30 +4851,56 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         if marker is not None:
             marker.keep_awake()
 
+    def _kbdnav_active_panel_key(self) -> str | None:
+        """Which of the four keyboard-navigable panels (settings/speed/sleep/sprint) is
+        currently open, or None if none is. Single source of truth for "which panel does the
+        modality flag/marker/kbdnav property apply to right now" — added 2026-09-07 when
+        keyboard navigation extended from Settings alone to Speed/Sleep/Sprint. Every method
+        that used to hardcode `self.settings_panel`/`"settings"` (the panel-property target in
+        _set_keyboard_nav_active, the surface check in _on_kbdnav_cursor_poll) now asks this
+        instead, so adding a panel to the modality system means teaching THIS method about it,
+        not re-finding every hardcoded site."""
+        if not hasattr(self, 'panel_manager'):
+            return None
+        panel = self.panel_manager.active_full_panel()
+        return panel if panel in ("settings", "speed", "sleep", "sprint") else None
+
+    def _kbdnav_panel_widget(self, panel_key: str):
+        """The QWidget the `kbdnav` QSS property is set on for `panel_key` — settings_panel/
+        speed_panel/sleep_panel/sprint_panel. Single mapping used by _set_keyboard_nav_active;
+        see _kbdnav_active_panel_key's docstring for why this indirection exists."""
+        return getattr(self, f"{panel_key}_panel", None)
+
     def _set_keyboard_nav_active(self, active: bool) -> None:
         """Single owner of `_keyboard_nav_active` AND its visual consequences.
 
         Two things must move together, which is why nothing writes the flag directly:
           1. the traveling focus marker's show-gate (_update_focus_marker), and
-          2. the `kbdnav` dynamic property on the Settings panel, which the QSS reads to
-             suppress :hover highlights while the keyboard is driving.
+          2. the `kbdnav` dynamic property on whichever panel is currently open
+             (_kbdnav_active_panel_key), which the QSS reads to suppress :hover highlights
+             while the keyboard is driving.
 
         (2) exists because the keyboard marker and the mouse's :hover were both lighting up at
         once — the marker on one control, :hover on whatever the cursor happened to rest over —
         so nothing on screen said which one Enter would act on (reported live 2026-09-03 with
         three screenshots: hover on the Audio TAB while the marker sat on a button, and hover on
         the "1500" BUTTON while the marker sat on "Slow"). Most-recent-input-wins: whichever
-        device was used last owns the highlight.
+        device was used last owns the highlight. Originally Settings-only; generalized
+        2026-09-07 to whichever of the four panels is open, via _kbdnav_active_panel_key —
+        the mechanism itself (one property, one polish pass) is unchanged, only WHICH panel it
+        targets is no longer hardcoded.
 
-        The property is set on `settings_panel` (not per-button) so one polish() covers every
-        descendant, and the QSS gates its :hover rules on it — see get_settings_stylesheet.
+        The property is set on the active panel (not per-button) so one polish() covers every
+        descendant, and each panel's own QSS gates its :hover rules on it — see
+        get_settings_stylesheet/get_speed_stylesheet/get_sleep_stylesheet/get_sprint_stylesheet.
         Qt does not re-evaluate a stylesheet when a dynamic property changes, so unpolish/polish
         is required; skipped entirely when the value hasn't changed, since polishing the panel
         walks all its children."""
         if active == getattr(self, '_keyboard_nav_active', False):
             return
         self._keyboard_nav_active = active
-        panel = getattr(self, 'settings_panel', None)
+        panel_key = self._kbdnav_active_panel_key()
+        panel = self._kbdnav_panel_widget(panel_key) if panel_key is not None else None
         if panel is not None:
             panel.setProperty("kbdnav", "true" if active else "false")
             panel.style().unpolish(panel)
@@ -4579,13 +4912,16 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             # live 2026-09-04: the tab bar first, then the buttons, each via a [KBDNAV] trace
             # showing clean True/False alternation while the highlight visibly persisted).
             # update() alone is not enough — the unpolish/polish pair is what re-resolves
-            # [kbdnav] for them.
-            tabs = getattr(self, 'tabs', None)
-            if tabs is not None:
-                bar = tabs.tabBar()
-                bar.style().unpolish(bar)
-                bar.style().polish(bar)
-                bar.update()
+            # [kbdnav] for them. Settings-only: Speed/Sleep/Sprint have no tab bar, and
+            # repolishing Settings' tab bar while a DIFFERENT panel is open would be pointless
+            # work on a widget that isn't even the one currently gated by this property.
+            if panel_key == "settings":
+                tabs = getattr(self, 'tabs', None)
+                if tabs is not None:
+                    bar = tabs.tabBar()
+                    bar.style().unpolish(bar)
+                    bar.style().polish(bar)
+                    bar.update()
             # EVERY button under the panel, not just the current tab's and not filtered by
             # object name. Two reasons, both learned the hard way:
             #   * settings_tab_button_rows() only reports the CURRENT tab, so flipping the flag
@@ -4629,19 +4965,22 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         if anchor is None:
             self._kbdnav_cursor_poll.stop()
             return
-        # Left the surface entirely (Settings closed) while keyboard mode was on: drop it here
+        # Left the surface entirely (panel closed) while keyboard mode was on: drop it here
         # rather than leaving it set for whenever the user returns. Deliberately the PANEL-level
         # check, not a per-tab one — arrowing through the TAB BAR changes the current tab by
         # definition, and clearing on that turned the tab bar's own keyboard navigation back
-        # into mouse mode mid-flight (reported live 2026-09-04).
-        if not self._settings_is_active():
+        # into mouse mode mid-flight (reported live 2026-09-04). Generalized 2026-09-07 from
+        # Settings-only (_settings_is_active) to _kbdnav_active_panel_key, which recognises all
+        # four keyboard-navigable panels — the check is otherwise unchanged.
+        panel_key = self._kbdnav_active_panel_key()
+        if panel_key is None:
             self._set_keyboard_nav_active(False)
             return
         pos = QCursor.pos()
         if (abs(pos.x() - anchor.x()) < _KBDNAV_CURSOR_JITTER_PX
                 and abs(pos.y() - anchor.y()) < _KBDNAV_CURSOR_JITTER_PX):
             return  # hasn't left its resting spot yet
-        if not self._cursor_over_navigable_control(pos):
+        if not self._cursor_over_navigable_control(pos, panel_key):
             return  # moved, but over dead space — keyboard keeps the highlight
         self._set_keyboard_nav_active(False)
         self._update_focus_marker()
@@ -4665,18 +5004,30 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         return (hasattr(self, 'panel_manager') and hasattr(self, 'tabs')
                 and self.panel_manager.active_full_panel() == "settings")
 
-    def _cursor_over_navigable_control(self, global_pos) -> bool:
+    def _cursor_over_navigable_control(self, global_pos, panel_key: str = "settings") -> bool:
         """Whether `global_pos` is over a control that competes with the traveling marker for
         "you are here" — i.e. something with its own :hover state the keyboard also navigates to:
-        the settings tab bar, or one of the active tab's arrow-navigable buttons.
+        the settings tab bar, or one of the active tab's/panel's arrow-navigable buttons.
 
-        Uses the same live row source as the arrow navigation (settings_tab_button_rows) so the
-        two can't disagree about what a button is — notably, a hidden Chapter-notches Animation
-        button is not in the rows and so is correctly not a handoff target. That shared source is
-        also what keeps the modality flag clearable: the setter and this check must recognise the
-        same controls, or the flag can be set somewhere nothing can clear it (see
-        _settings_is_active's docstring for the two live regressions that proved it)."""
+        `panel_key` generalizes this 2026-09-07 from Settings-only to Speed/Sleep/Sprint too —
+        defaults to "settings" so the (many) existing call sites that only ever meant Settings
+        stay unchanged. For "settings", behavior is byte-for-byte what it always was (tab bar +
+        settings_tab_button_rows()); for the other three, it checks panel_manager.
+        flat_panel_rows(panel_key) instead, which has no tab bar to check.
+
+        Uses the same live row source as the arrow navigation so the two can't disagree about
+        what a button is — notably, a hidden control is not in the rows and so is correctly not
+        a handoff target. That shared source is also what keeps the modality flag clearable: the
+        setter and this check must recognise the same controls, or the flag can be set somewhere
+        nothing can clear it (see _settings_is_active's docstring for the two live regressions
+        that proved it for Settings; the same property is required of flat_panel_rows now)."""
         if not hasattr(self, 'tabs') or not hasattr(self, 'panel_manager'):
+            return False
+        if panel_key != "settings":
+            for row in self.panel_manager.flat_panel_rows(panel_key):
+                for w in row:
+                    if w.rect().contains(w.mapFromGlobal(global_pos)):
+                        return True
             return False
         tab_bar = self.tabs.tabBar()
         if tab_bar.isVisible():
@@ -4690,31 +5041,39 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         return False
 
     def _focus_marker_in_scope(self, focus) -> bool:
-        """Whether the traveling focus marker should be tracking `focus` right now: the Settings
-        panel must be the active full panel, and `focus` must be either the Settings tab bar OR
-        one of the active tab's Tab-navigable controls (the exact same membership set Tab cycling
-        uses — no second source of truth).
+        """Whether the traveling focus marker should be tracking `focus` right now: one of the
+        four keyboard-navigable panels must be open, and `focus` must be one of ITS Tab-
+        navigable controls (the exact same membership set Tab cycling uses — no second source
+        of truth) — for Settings specifically, the tab bar also always counts.
 
-        Scoped to the Settings PANEL, not to one tab: the tab bar is a marker target on every
-        tab, and the marker follows Tab-cycling wherever that goes. Which tabs additionally get
-        ARROW navigation is a separate, narrower question — see panels._ARROW_NAV_TABS.
+        Scoped to the whole PANEL, not to one tab: Settings' tab bar is a marker target on
+        every tab, and the marker follows Tab-cycling wherever that goes. Which tabs
+        additionally get ARROW navigation is a separate, narrower question — see
+        panels._ARROW_NAV_TABS. Generalized 2026-09-07 from Settings-only to also cover
+        Speed/Sleep/Sprint (whose `panel_tab_widgets` keys are their own panel names, already
+        supported by that method before this generalization — see PanelManager.
+        panel_tab_widgets).
 
-        `swatch_box` is a real Tab stop (see panel_tab_widgets — it isn't a ThemeItem, so
-        that method's exclusion doesn't reach it) but is explicitly excluded HERE: a 2026-09-06
-        live design call settled on the grid's own synthetic-hover look
+        `swatch_box` is a real Tab stop on Settings (see panel_tab_widgets — it isn't a
+        ThemeItem, so that method's exclusion doesn't reach it) but is explicitly excluded
+        HERE: a 2026-09-06 live design call settled on the grid's own synthetic-hover look
         (ThemeManager._set_kbdnav_swatch_hover) as the sole "where am I" affordance while
         inside it, same as folder_list_widget's dot delegate replaces the marker for that
         widget — except swatch_box gets no marker-family affordance at all, not even the
         fill-focus treatment folder_list_widget/excluded_popup get (_FILL_FOCUS_OBJECT_NAMES),
         since a real per-swatch hover state already exists and a second overlay on top of it
         would be redundant."""
-        if focus is None or not self._settings_is_active():
+        if focus is None:
             return False
-        if focus is self.tabs.tabBar():
-            return True
-        if focus is self.theme_manager.swatch_box:
+        panel_key = self._kbdnav_active_panel_key()
+        if panel_key is None:
             return False
-        return focus in self.panel_manager.panel_tab_widgets("settings")
+        if panel_key == "settings":
+            if focus is self.tabs.tabBar():
+                return True
+            if focus is self.theme_manager.swatch_box:
+                return False
+        return focus in self.panel_manager.panel_tab_widgets(panel_key)
 
     def _update_focus_marker(self, reason: Qt.FocusReason | None = None) -> None:
         """Point the traveling focus marker at the currently-focused control iff it's in scope
@@ -4956,18 +5315,21 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             #     leave the modality alone;
             #   * skipped while a text field has focus, matching _handle_tab_escape's own
             #     deference to QLineEdit;
-            #   * and only where the marker actually operates — the SETTINGS PANEL. Asserting
-            #     app-wide stranded the flag: arrowing around a tab with no hand-back targets
-            #     set it True where _cursor_over_navigable_control could never clear it, so
-            #     :hover stayed dead until a button was clicked. Narrowing it to the LOOK TAB
-            #     then broke the tab bar instead, since arrowing through tabs leaves Look by
-            #     definition. The Settings panel is the correct scope: it is exactly the set of
-            #     controls the hand-back check also recognises (tab bar always, Look buttons
-            #     when Look is up), which is the property that makes the flag reliably
-            #     clearable. Both regressions reported live 2026-09-04.
+            #   * and only where the marker actually operates — a keyboard-navigable PANEL.
+            #     Asserting app-wide stranded the flag: arrowing around a tab with no hand-back
+            #     targets set it True where _cursor_over_navigable_control could never clear
+            #     it, so :hover stayed dead until a button was clicked. Narrowing it to the
+            #     LOOK TAB then broke the tab bar instead, since arrowing through tabs leaves
+            #     Look by definition. The whole PANEL is the correct scope: it is exactly the
+            #     set of controls the hand-back check also recognises (tab bar always, Look
+            #     buttons when Look is up — or, for Speed/Sleep/Sprint, that panel's own rows),
+            #     which is the property that makes the flag reliably clearable. Both
+            #     regressions reported live 2026-09-04; generalized from Settings-only to all
+            #     four panels 2026-09-07 via _kbdnav_active_panel_key — same invariant, now
+            #     checked against whichever panel is actually open.
             if (event.key() in _KBDNAV_ASSERT_KEYS
                     and not isinstance(QApplication.focusWidget(), QLineEdit)
-                    and self._settings_is_active()):
+                    and self._kbdnav_active_panel_key() is not None):
                 self._set_keyboard_nav_active(True)
             if self._handle_tab_escape(event):
                 return True
@@ -4978,6 +5340,10 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             if self._handle_settings_arrows(event):
                 return True
             if self._handle_themes_shortcuts(event):
+                return True
+            if self._redirect_digit_to_panel_input(event):
+                return True
+            if self._handle_flat_panel_arrows(event):
                 return True
             if (hasattr(self, 'library_panel')
                     and event.key() in self.library_panel._LIST_KEY_HANDLED_KEYS):

@@ -160,10 +160,16 @@ class SprintPanel(QWidget):
             self._sprint_presets_buttons.append(btn)
         # 10 presets fill cells (0,0)-(2,1); (2,2)-(2,3) are otherwise empty —
         # End of chapter spans them rather than adding a new row. No
-        # setObjectName here — matches SleepTimerPanel.end_chap_btn exactly,
-        # which is also a plain unnamed QPushButton (styled by the same
-        # ramp/default QSS as the duration presets, NOT "pattern_button").
+        # Styled by the same ramp/default QSS as the duration presets, NOT "pattern_button" —
+        # matches SleepTimerPanel.end_chap_btn's resting/hover appearance exactly. Given the
+        # SAME objectName as that button (2026-09-07) so the keyboard-focus QSS rule
+        # (get_sprint_stylesheet) can target this ONE grid cell specifically, instead of a bare
+        # QPushButton type selector — that was tried first and wrongly matched every other
+        # plain button in the panel, including #stats_reset_btn (reported live: it silently
+        # gained the same fill it was explicitly supposed to be excluded from, since it had no
+        # :focus rule of its own to out-rank the generic one).
         self._eoc_btn = QPushButton("End of chapter")
+        self._eoc_btn.setObjectName("panel_grid_eoc_btn")
         self._eoc_btn.setFixedHeight(30)
         # Grid column-width negotiation for a 2-column span left this 1px short
         # of flush with the preset buttons above it (57+8+57=122) — reported
@@ -962,6 +968,15 @@ class SprintPanel(QWidget):
                 f"color: {btn_text}; border: none; }}"
                 f"QPushButton:hover {{ background-color: rgb({hover_c.red()}, {hover_c.green()}, {hover_c.blue()}); }}"
                 f"QPushButton:pressed {{ background-color: rgb({pressed_c.red()}, {pressed_c.green()}, {pressed_c.blue()}); }}"
+                # Keyboard focus + keyboard-mode hover suppression — mirrors
+                # SleepTimerPanel._apply_preset_ramp_colors exactly (2026-09-07 fix; see that
+                # method's comments for the full reasoning). Reported live: this grid showed
+                # the marker with no hover-style highlight underneath it, unlike Sleep's.
+                f"QPushButton:focus {{ background-color: rgb({hover_c.red()}, {hover_c.green()}, {hover_c.blue()}); }}"
+                f"QWidget#sprint_panel[kbdnav=\"true\"] QPushButton:hover {{ "
+                f"background-color: rgb({c.red()}, {c.green()}, {c.blue()}); }}"
+                f"QWidget#sprint_panel[kbdnav=\"true\"] QPushButton:focus:hover {{ "
+                f"background-color: rgb({hover_c.red()}, {hover_c.green()}, {hover_c.blue()}); }}"
             )
 
     def update_panel_styling(self):

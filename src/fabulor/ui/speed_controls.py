@@ -306,6 +306,25 @@ class SpeedControlsPanel(QWidget):
                 f"color: {btn_text}; border: none; }}"
                 f"QPushButton:hover {{ background-color: rgb({hover_c.red()}, {hover_c.green()}, {hover_c.blue()}); }}"
                 f"QPushButton:pressed {{ background-color: rgb({pressed_c.red()}, {pressed_c.green()}, {pressed_c.blue()}); }}"
+                # Keyboard-navigation's look for the grid's current cell — a plain :focus rule
+                # (these are ordinary QPushButtons that receive real Qt focus when
+                # MainWindow._handle_panel_grid_arrows moves the cursor onto them, unlike
+                # Themes' NoFocus swatches). Mirrors sleep_timer.py's identical fix exactly —
+                # see _apply_preset_ramp_colors there for the full reasoning (must be its own
+                # rule in THIS per-instance setStyleSheet, since it wins over any shared
+                # panel-level QSS, same as :hover/:pressed above). Reported live 2026-09-07:
+                # this grid showed the marker with no hover-style highlight underneath it,
+                # unlike Sleep's identical grid, which already had this rule.
+                f"QPushButton:focus {{ background-color: rgb({hover_c.red()}, {hover_c.green()}, {hover_c.blue()}); }}"
+                # Keyboard-mode hover suppression — the mouse-hovered button, if different from
+                # the keyboard-focused one, must not also light up. Same ancestor-scoped-
+                # selector-inside-a-per-instance-stylesheet trick sleep_timer.py's version uses
+                # (confirmed there that Qt's cascade resolves this normally regardless of where
+                # the rule was declared).
+                f"QWidget#speed_panel[kbdnav=\"true\"] QPushButton:hover {{ "
+                f"background-color: rgb({c.red()}, {c.green()}, {c.blue()}); }}"
+                f"QWidget#speed_panel[kbdnav=\"true\"] QPushButton:focus:hover {{ "
+                f"background-color: rgb({hover_c.red()}, {hover_c.green()}, {hover_c.blue()}); }}"
             )
 
     def update_visuals(self, theme_name=None):
