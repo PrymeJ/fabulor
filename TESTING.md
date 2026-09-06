@@ -196,6 +196,68 @@ would.
 - [ ] Same with **arrow keys** on the tab bar (this path used to revert after the switch)
 - [ ] Switching tabs with no preview showing: no added delay, behaves exactly as before
 
+### Speed / Sleep / Sprint panels — keyboard navigation (added 2026-09-07 Session 1)
+These three panels have no tabs — one flat row-of-rows per panel (`PanelManager.
+flat_panel_rows`), with each panel's own preset grid a single stop that owns its own internal
+navigation (`MainWindow._handle_panel_grid_arrows`). Run the row-to-row checks on **all three**
+panels; the mechanism is shared.
+
+**Row-to-row**
+- [ ] Down/Up move between rows (the preset grid, custom-duration row, and whatever else the
+  panel has), landing on the row's first control
+- [ ] **Right/Left at a row's last/first item continue into the NEXT/PREVIOUS row** rather than
+  stopping or jumping to an unrelated row — this was a real, repeatedly-reported bug (Qt's
+  native inter-button arrow stepping is NOT scoped to the visual row, it follows construction
+  order) fixed by handling Left/Right fully explicitly; re-check every row boundary in each
+  panel, not just one, since the bug's exact landing spot depended on construction order
+- [ ] Space and Enter BOTH activate a plain click (a real inversion bug had Space doing nothing)
+- [ ] Shift+Space and Shift+Enter both trigger a `rightClicked` action where one exists (Sleep's
+  Fade-out row: left-click applies now, Shift-click sets as default) — a no-op, not a plain
+  click, on any control with no `rightClicked` signal
+
+**Preset grid (Speed's 12 speed buttons; Sleep's 14 duration + End of chapter; Sprint's 10
+duration + End of chapter)**
+- [ ] Right/Left wrap in reading order across grid rows — rightmost cell continues onto the
+  NEXT row's first cell, leftmost continues onto the PREVIOUS row's last; off the grid
+  entirely in either direction, exits to the row above/below the grid in the panel
+- [ ] Up/Down move by column, clamped to a shorter row's own length where relevant
+- [ ] The spanning "End of chapter" cell (Sleep/Sprint) is ONE stop reachable from either
+  column it occupies, not two, and Left/Right/Up/Down around it behave like any other cell
+- [ ] The keyboard-focused grid button shows the SAME hover-style highlight a mouse hover
+  would (a real `:focus` QSS rule reproduced in each grid's own per-instance ramp
+  stylesheet) — moving to a new cell must show exactly one highlighted button, never zero,
+  never two
+- [ ] **This highlight must NOT appear on any other button in the panel** — Default speed,
+  Percentage/Fixed/Custom/None, Off/On, or (critically) Reset all sprint data. A real bug
+  briefly leaked it onto all of these via an unscoped `QPushButton:focus` rule; confirm via
+  screenshot comparison across a full navigation pass, not just a glance
+- [ ] Resting the real mouse on a DIFFERENT grid button than the keyboard-focused one:
+  exactly one of the two shows a highlight at a time, never both (kbdnav hover-suppression)
+
+**Text fields (Sleep's custom-duration input; Sprint's custom-duration and custom-grace-period
+inputs)**
+- [ ] Left/Right on a focused text field do NOT move the text cursor and do NOT dead-end —
+  they act like Down/Up respectively (there's no horizontal sibling to distinguish the two)
+- [ ] Up/Down on a focused text field move rows normally, untouched by the above
+- [ ] Typing a digit while focus is ANYWHERE ELSE on Sleep or Sprint redirects into that
+  panel's DURATION field (not the grace field) and starts typing fresh, replacing any stale
+  text — never fires while already inside that field
+- [ ] On Sprint specifically, with Grace mode = Custom (so `custom_grace_input` is visible):
+  typing a bare digit still goes to the DURATION field, never the grace field
+
+**Panel-specific**
+- [ ] Sprint's grace-period submenu (Percentage/Fixed/Custom sub-rows) is fully reachable by
+  arrow navigation in EVERY grace mode that shows it — this was completely unreachable before
+  a real fix (a bare-`QWidget`-wrapper case `flat_panel_rows` didn't handle at all)
+- [ ] Sprint responds to Tab and Shift+Tab at all (a pre-existing, unrelated gap — the panel
+  was simply missing from the Tab-cycling dispatch list)
+- [ ] `disable_sleep_btn`/`disable_sprint_btn` show ONLY a hover-style fill for both mouse and
+  keyboard focus — no traveling marker ever appears on them
+- [ ] `stats_reset_btn` ("Reset all sprint data") shows ONLY the traveling marker — no fill of
+  any kind, confirming it was NOT swept up by the grid's keyboard-focus rule
+- [ ] Closing any of the three panels (Escape, gutter click, or its own action) never shows the
+  marker visibly sliding off-panel with the close animation
+
 ## Playback
 
 - [x] Play/pause toggles correctly

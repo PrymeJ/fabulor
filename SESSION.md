@@ -1,3 +1,99 @@
+## Session Summary — 2026-09-07 Session 1 — Full keyboard navigation added to the Speed, Sleep and Sprint panels, generalizing the traveling-marker modality machinery beyond Settings for the first time. `346700f` on `feature/traveling-focus-marker`
+
+Moves keyboard navigation onto the three panels that were never tab-based to begin with —
+Speed, Sleep, and Sprint each have one flat layout instead of Settings' tab structure. This
+required generalizing machinery that had been hardcoded to Settings since 2026-09-03
+(`_set_keyboard_nav_active`, `_focus_marker_in_scope`, the `kbdnav` QSS property, the
+cursor-hand-back poll) — real, careful work given this exact area caused two live regressions
+in earlier sessions. The generalization was done by parameterizing on "the currently active
+panel" (`_kbdnav_active_panel_key`) rather than rewriting the logic, specifically to keep
+Settings' own path byte-for-byte reachable as one case among four; the full 504-test suite
+stayed green throughout and Settings' own navigation was not reported as regressed at any point
+this session.
+
+**New structural pieces, each mirroring an existing pattern rather than inventing one.**
+`PanelManager.flat_panel_rows(panel_key)` is the row source for a tabless panel — a bare
+`QVBoxLayout` walk that groups controls the same way `settings_tab_button_rows` does, plus a
+third row shape neither Settings tab has: a real `QGridLayout` (Speed's 12 speed presets,
+Sleep's 14 duration presets + End of chapter, Sprint's 10 + End of chapter), represented as ONE
+opaque row — same architecture as Themes' `swatch_box` — that hands off to
+`MainWindow._handle_panel_grid_arrows` for real 2-D movement, reading the grid's actual
+row/column/span structure straight from Qt rather than flattening it.
+
+**Bugs found live, each one requiring the actual root cause before the fix rather than a
+patch on the symptom:**
+
+- *Sprint's whole grace-period submenu (percentage/fixed/custom rows) was invisible to
+  navigation* — reported as "skips the second row... moves to Reset all sprint data," which
+  turned out to mean the ENTIRE submenu, not one row. Cause: those rows are wrapped in bare
+  `QWidget` containers added via `addWidget` (a pattern used purely to give the group one shared
+  show/hide toggle), which `flat_panel_rows`' walk had no case for at all — `_navigable()` on a
+  plain container is always `False`, so nothing inside it was ever reachable. Fixed with a
+  recursive walk that distinguishes a `QHBoxLayout` wrapper (collect its contents as ONE row)
+  from a `QVBoxLayout` wrapper (recurse, one row per child) — confirmed structurally before and
+  after the fix via direct row-list inspection, not assumed from the code alone.
+- *Plain Space did nothing, only Enter worked* — a real logic inversion: the code explicitly
+  returned `True` (claiming "handled") for a bare Space press instead of returning `False` to
+  let Qt's own native Space-clicks-a-button behavior fire, in both the row-level and grid-level
+  handlers. Matches `_handle_settings_arrows`'s own stance (never touch plain Space at all) —
+  the new code had just gotten the boolean backwards.
+- *Right/Left at a row boundary silently jumped to an unrelated, often much-earlier row*
+  ("Right on 2.5x jumps to Playback speed," "Left on 1.0x jumps to Smart rewind's 30," and
+  several more reported before the pattern was clear). Root cause, found only after ruling out
+  the grid logic itself via a clean structural repro: the plain-row Left/Right handling
+  deferred to Qt's own native arrow-key focus stepping between `QPushButton` siblings — but
+  that native chain is **not scoped to the row at all**, it follows the panel's whole
+  construction order, so at any row's last widget it silently continued into whatever button
+  Qt built next, independent of the `rows` model entirely. `_handle_settings_arrows` reuses the
+  exact same "defer to native" shape for its own rows and has never shown this live — concluded
+  to be luck (Look/Controls/Audio's rows all happen to be followed by more rows below, so the
+  escape usually lands somewhere that looks plausible), not a difference in mechanism, and
+  logged as an open risk in TODO.md rather than left implicit. Fixed for Speed/Sleep/Sprint by
+  handling Left/Right fully explicitly — including reading-order wrap across rows, matching a
+  separate live request that grid Right/Left continue into the next/previous row instead of
+  clamping.
+- *A generic keyboard-focus fill leaked onto controls it should never have touched* — screenshot
+  evidence showed "Default speed," "Percentage/Fixed," and worst, "Reset all sprint data" all
+  picking up the grid's keyboard-focus fill, when only the grid's own `End of chapter` button
+  was meant to. Cause: that rule was written as a bare `QPushButton:focus` type selector,
+  matching every plain button in the panel — and an in-code comment claiming
+  `#stats_reset_btn`'s own ID-scoped rule would "outrank" it was simply wrong, since that button
+  had `:hover`/`:pressed` rules but no `:focus` rule to compete with at all. Fixed by giving
+  `end_chap_btn`/`_eoc_btn` a dedicated objectName (`panel_grid_eoc_btn`) and rescoping both
+  rules to it — confirmed via screenshot afterward that Reset-all-sprint-data was back to
+  showing only the traveling marker.
+- *The marker visibly slid off-panel with the panel itself on close* ("marker spills into the
+  main window") — Speed/Sleep/Sprint's close flows never cleared the marker before starting
+  their slide-out animation, unlike `_close_settings_flow`, which already had this exact fix
+  from an earlier session. Factored into one shared `_clear_focus_marker_for_close` helper
+  (Settings' own inline version was refactored to call it too) so the fix lives in one place
+  rather than three near-copies drifting apart.
+- *Sprint was completely unreachable via Tab/Shift+Tab* — a genuinely pre-existing gap, not
+  something this session's own work introduced: the panel-dispatch tuple in `_handle_tab_escape`
+  simply never had `"sprint"` added when `SprintPanel` was built, even though
+  `panel_tab_widgets("sprint")` and `_focus_settings_control` both already worked generically
+  for it. One-line fix once found.
+
+**Design corrections applied the same session, not deferred:** a text field's Left/Right were
+first swallowed entirely, then corrected again after being told that was worse than the
+original text-cursor-dwelling problem — "just let them continue the navigation" — landing on
+remapping Left/Right to Up/Down respectively for a one-item text-field row, since there is no
+horizontal sibling to distinguish the two from vertical movement. Sprint's duration field
+gained the same digit-redirect Sleep already had (a live design call settled the ambiguity with
+Sprint's second, conditional grace-custom field: a bare digit always means duration, never
+grace, regardless of grace mode). `disable_sleep_btn`/`disable_sprint_btn` were explicitly
+requested to show ONLY the hover-style fill, not the traveling marker — both added to
+`_FILL_FOCUS_OBJECT_NAMES` — while `stats_reset_btn` (Reset all sprint data) was explicitly kept
+on the marker, since it has no solid background for the marker to compete with.
+
+Every fix was verified against the full 504-test suite (no regressions throughout) plus live
+testing for every navigational/visual claim; several "structurally correct by inspection" first
+attempts (the native-stepping defer, the bare-selector QSS rule) were caught specifically
+because a live report contradicted them, then confirmed wrong by direct structural inspection
+or screenshot before being replaced.
+
+---
+
 ## Session Summary — 2026-09-06 Session 2 — Full keyboard navigation added to the Settings → Themes tab, closing out keyboard nav for the whole Settings panel. `3015945`→`44990c0` on `feature/traveling-focus-marker`
 
 This finishes the Settings panel's keyboard-navigation work started across the prior three

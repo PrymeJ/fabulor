@@ -1752,7 +1752,46 @@ Any `QWidget` subclass (not `QFrame`, not `QLabel`) that owns a background-color
 
 *Reorganization note (2026-07-13): the "Critical Architecture Rules" section was restructured to remove repetition — it previously existed as two passes (a full-prose section and a later condensed second pass covering many of the same rules). The two were merged: rules that appeared in both now appear once, under whichever fact they share, with no information dropped. Rules unique to either pass are unchanged. See the note directly under the "Critical Architecture Rules" heading for detail.*
 
-*Last updated: 2026-09-06 Session 2 — Full keyboard navigation added to Settings' Themes tab
+*Last updated: 2026-09-07 Session 1 — Full keyboard navigation added to the Speed, Sleep and
+Sprint panels (branch `feature/traveling-focus-marker`, still NOT merged) — the three panels
+that were never tab-based, so this also required GENERALIZING the traveling-marker modality
+machinery (`_set_keyboard_nav_active`, `_focus_marker_in_scope`, the `kbdnav` QSS property,
+the cursor hand-back poll) beyond Settings for the first time, via a new
+`_kbdnav_active_panel_key` that parameterizes on the active panel rather than rewriting the
+Settings-only logic — Settings' own path stayed byte-for-byte reachable throughout, verified
+against the full 504-test suite plus no live regression reports. `PanelManager.
+flat_panel_rows()`/`grid_layout_for()` are the new row source for a tabless panel — a third row
+shape (a real `QGridLayout`, unlike anything on a Settings tab) is represented as one opaque
+stop, same architecture as Themes' `swatch_box`, that hands off to `MainWindow.
+_handle_panel_grid_arrows` for real 2-D grid movement read straight from Qt's own row/column/
+span structure. **Five live-found bugs, several requiring a second correction after an
+initially-plausible fix was shown wrong by direct evidence**: Sprint's entire grace-period
+submenu was unreachable (`flat_panel_rows`'s walk had no case for a bare `QWidget` row-wrapper —
+added recursive handling that tells a `QHBoxLayout` wrapper, one row, apart from a `QVBoxLayout`
+wrapper, several rows); plain Space did nothing because the code explicitly swallowed it instead
+of deferring to Qt's own native Space-click; Right/Left at any row boundary could silently jump
+to an unrelated row because deferring to Qt's native inter-sibling arrow stepping is NOT actually
+scoped to the visual row — it follows construction order — the exact same shape
+`_handle_settings_arrows` also uses and has "never shown live, but only out of luck," now flagged
+in TODO.md rather than left implicit; a keyboard-focus QSS rule written as a bare
+`QPushButton:focus` type selector leaked onto every plain button in the panel including
+`stats_reset_btn` (a wrong in-code claim that its own ID rule would "outrank" the generic one —
+it had no competing `:focus` rule at all), fixed by giving the grid's one non-ramped button
+(`end_chap_btn`/`_eoc_btn`) a dedicated objectName; and the marker visibly slid off-panel with a
+closing panel's slide-out on Speed/Sleep/Sprint (Settings already had this exact fix from an
+earlier session, just never generalized) — now one shared `_clear_focus_marker_for_close`
+helper instead of three near-copies. Also fixed: Sprint was completely missing from Tab/
+Shift+Tab cycling, a pre-existing gap unrelated to this session's own work. Design corrections
+applied live, not deferred: a text field's Left/Right went from "defer to native" (wrong — moves
+the text cursor) to "swallow" (also rejected — "just let them continue the navigation") to
+remapping Left/Right onto Up/Down for a one-item row; Sprint's duration field gained the same
+digit-redirect Sleep already had, with an explicit rule that a bare digit always means duration,
+never the second, conditional grace-custom field. Full narrative, including every live report
+that caught each bug, in SESSION.md 2026-09-07 Session 1; live checks in TESTING.md; the
+now-closed TODO.md item is removed, with the Settings-side Left/Right risk newly flagged there
+instead of left implicit.
+
+*Previously: 2026-09-06 Session 2 — Full keyboard navigation added to Settings' Themes tab
 (branch `feature/traveling-focus-marker`, still NOT merged), closing out keyboard nav for the
 whole Settings panel — Themes was the one tab deferred across every prior pass because its swatch
 grid is bin-packed (a variable item count per row), not a fixed button row. `PanelManager.

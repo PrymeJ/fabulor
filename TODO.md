@@ -9,14 +9,19 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
 
 ## Summary index
 
-### Settings keyboard navigation — remaining surfaces
-Branch `feature/traveling-focus-marker` (not merged). Themes, Look, Controls, Audio and Library
-are all done as of 2026-09-06 Session 2 — the whole Settings panel is now arrow-navigable.
-Moving on to Playback, Sleep and Sprint panels next.
-- [2026-09-05] `#disable_sleep_btn` has the same missing-`:hover` gap that was fixed for
-  `#reset_audio_btn` (an ID selector outranks the generic `QPushButton:hover`). Deliberately left
-  alone — this family of reset/destructive buttons is explicitly un-unified, and unifying them is
-  its own existing item.
+### Keyboard navigation — remaining surfaces
+Branch `feature/traveling-focus-marker` (not merged). The whole Settings panel (Themes, Look,
+Controls, Audio, Library) plus Speed, Sleep, and Sprint are all arrow-navigable as of
+2026-09-07 Session 1. `disable_sleep_btn`'s and `disable_sprint_btn`'s missing-hover gaps (an
+ID selector outranks the generic `QPushButton:hover`, same root cause as `reset_audio_btn`'s
+original gap) were both closed this pass, since keyboard navigation made them directly
+relevant — no longer an open item. Remaining known gap: `_handle_settings_arrows`'s own
+Left/Right (Settings' Look/Controls/Audio/Library rows) still defers to Qt's native
+sibling-focus stepping at row boundaries — the exact mechanism that turned out to be a real bug
+for Speed/Sleep/Sprint (Qt's native chain follows construction order, not the visual row model,
+so it can escape into an unrelated row). Settings' own rows have never shown this live, but the
+2026-09-07 investigation concluded it was "never actually safe there either, just lucky" — not
+yet reproduced or fixed, flagged here so it isn't forgotten if it ever surfaces.
 
 ### Listening Sprint backward-seek compensation doesn't net forward+backward excursions
 - [2026-08-11] The pure tick-to-tick `_last_known_pos` diff in `SprintPanel.update_sprint_state`
