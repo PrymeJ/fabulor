@@ -3089,7 +3089,29 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         MainWindow itself" is equivalent to "focus is panel-local" by construction; no panel
         enumeration is needed here, and it can't drift out of sync with the panel list."""
         focus = QApplication.focusWidget()
-        return focus is None or focus is self
+        allowed = focus is None or focus is self
+        if not allowed and hasattr(self, 'panel_manager') and self.panel_manager.active_full_panel() is None:
+            # [FOCUS-STRAND-TRACE] temporary — 2026-09-08, diagnosing an intermittent live
+            # report: closing Settings via Esc WHILE a library rescan is still running left
+            # global shortcuts (Space, arrows) dead on the main window afterward. Neither side
+            # has reproduced it on demand. Gated on active_full_panel() being None — a
+            # panel-local focus while a panel IS genuinely open is normal, constant, correct
+            # behavior and would drown this in noise; the actual bug signature is specifically
+            # "no panel is open, yet something still holds real focus," which is what this logs
+            # the moment it happens — remove once root-caused.
+            ancestors = []
+            p = focus.parentWidget()
+            while p is not None:
+                ancestors.append(type(p).__name__)
+                p = p.parentWidget()
+            scanner = getattr(getattr(self, 'library_controller', None), 'scanner', None)
+            scanner_running = scanner.is_running() if scanner is not None else None
+            logger.warning(
+                f"[FOCUS-STRAND-TRACE] blocked with NO panel open — focus={focus!r} "
+                f"visible={focus.isVisible()} enabled={focus.isEnabled()} "
+                f"parent_chain={ancestors} scanner_running={scanner_running}"
+            )
+        return allowed
 
     def keyPressEvent(self, event):
         # All global key bindings route through the dispatcher (shortcuts.py). It owns

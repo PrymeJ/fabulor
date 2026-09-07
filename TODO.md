@@ -83,17 +83,34 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
     this entry's own reasoning says is not strong evidence either way.
 
 ### Settings keyboard-focus regressions found while testing Tags (check after Tags is done)
-- [2026-09-08] Excluded Books: hit Enter to un-exclude a book, then Esc to close Settings — after
-  that, no keyboard shortcut works on the main window until clicking somewhere. Reported live,
-  not yet investigated. Likely the same class of bug as the two below (a focus-ownership strand —
-  see the "Keyboard focus ownership" CLAUDE.md rule — possibly specific to a popup opened from
-  within Settings, since ExcludedBooksPopup is exactly the kind of MainWindow-level popup that
-  rule's "click-outside `safe` allowlist" consequence warns about).
-- [2026-09-08] Library scan: hit Rescan, then Esc to close the panel — same symptom, keyboard
-  shortcuts dead on the main window until a click. Reported live, not yet investigated. Given the
-  matching symptom with the Excluded Books case above, check whether both share one root cause
-  (e.g. something during the scan/rescan flow claiming real Qt focus without a matching release)
-  before treating them as two separate bugs.
+- [2026-09-08] Excluded Books focus strand — FIXED. Un-excluding the LAST remaining book drops
+  `ExcludedBooksPopup.book_count` to 0, and `reposition()` hides the popup entirely in that case.
+  If the popup itself held real Qt focus (the normal case — Enter/Space on its own focused row
+  triggered the restore), `hide()` stranded focus on the now-hidden widget with nothing to
+  reclaim it, permanently blocking global shortcuts (`_focus_allows_global_shortcuts()` reads
+  "a panel-local widget still owns this key") until a mouse click reset focus elsewhere. Fixed
+  in `_on_excluded_book_restored` (app.py) by redirecting to the same target
+  `_on_excluded_books_exit_upward` already uses on a normal Up-out-of-the-popup exit (Persist
+  search filter's row) whenever the popup held focus and reposition() just hid it.
+- [2026-09-08] Library scan focus strand — NOT YET ROOT-CAUSED, intermittent, diagnostic tracing
+  added. Reported live: Rescan clicked, Esc closes Settings WHILE the scan is still running,
+  then Space/arrow keys are no-ops on the main window. Neither side could reproduce this on
+  demand in the same session it was reported (worked cleanly on retries), so this was NOT fixed
+  blind. Investigated so far: confirmed directly (small standalone Qt script) that disabling a
+  currently-focused `QPushButton` does NOT drop focus to `None` — Qt silently moves it to a
+  focusable SIBLING instead — which is what `_set_scan_buttons_enabled(False)` does to
+  `add_folder_btn`/`remove_folder_btn`/`refresh_library_btn` while a scan runs; a synthetic
+  repro of "disable the focused button (or all three), then hide+release the panel, then
+  re-enable them once the scan finishes" behaved correctly in isolation (focus dropped to None
+  and stayed there) both times, so the real bug needs either the actual scanner thread's timing
+  or some other live-only factor a synchronous script doesn't capture. `_focus_allows_global_
+  shortcuts()` (app.py) now carries a narrow, permanent-until-removed `[FOCUS-STRAND-TRACE]`
+  log gated specifically on "no panel is open AND focus is still panel-local" (the exact bug
+  signature — a panel-local focus while a panel IS genuinely open is normal and would drown
+  this in noise otherwise), logging the blocking widget's identity/visibility/enabled state,
+  its full parent chain, and whether the scanner is still running at that moment. Purely
+  diagnostic, no behavior change (`allowed`'s value and effect are untouched) — waiting for it
+  to actually fire the next time this reproduces, rather than continuing to guess blind.
 - [2026-09-08] Speed/Sleep/Sprint "ramp-up" buttons' highlight not clearing — FIXED. Root cause:
   each panel's per-instance ramp stylesheet (`_apply_preset_ramp_colors`) had a bare, unscoped
   `QPushButton:focus` rule for the keyboard-cursor highlight. These buttons keep REAL Qt focus by
