@@ -296,6 +296,13 @@ class TagManagerWidget(QWidget):
         self._current_tag: str | None = None
         self._tag_name_original: str = ""
         self._confirming_delete: bool = False
+        # Keyboard cursor for the tag LIST (added 2026-09-08) — an index into
+        # _tag_list_rows(), independent of ScrollHoverTracker's mouse-driven
+        # _hovered (that tracker's own suspend() is the coexistence hook, see
+        # hover_tracker.py's docstring: "designed for keyboard selection to
+        # land on top"). None means no keyboard cursor is currently active —
+        # distinct from 0, a real cursor at the first row.
+        self._kbdnav_row_index: int | None = None
         self._cancel_timer: QTimer | None = None
         self._rename_revert_timer: QTimer | None = None
         self._current_theme: dict = {}
@@ -354,13 +361,13 @@ class TagManagerWidget(QWidget):
         self._tag_list_layout.addStretch()
         self._tag_scroll.setWidget(self._tag_list_container)
         # Re-resolve the hovered row when the list scrolls under a still cursor —
-        # QSS :hover alone goes stale there. See ui/hover_tracker.py.
+        # QSS :hover alone goes stale there. See ui/hover_tracker.py. Shares
+        # _tag_list_rows() with the keyboard cursor below (added 2026-09-08) so
+        # the two can never disagree about what a "row" is.
         self._row_hover = ScrollHoverTracker(
-            self._tag_scroll,
-            lambda: [self._tag_list_layout.itemAt(i).widget()
-                     for i in range(self._tag_list_layout.count())
-                     if self._tag_list_layout.itemAt(i).widget() is not None],
-            self)
+            self._tag_scroll, self._tag_list_rows, self,
+            on_mouse_reclaim=self._on_mouse_reclaimed_tag_list,
+        )
         # Horizontal Ignored, not Preferred: with Preferred the container claims
         # its own sizeHint and came out 245px wide inside a 242px viewport
         # (measured), overhanging by 3px — so a right margin measured from the
@@ -404,17 +411,15 @@ class TagManagerWidget(QWidget):
             e.accept()
 
         self._tag_scroll.wheelEvent = _tag_rows_wheel
-        # Arrow-key scrolling has no real keyboard-nav implementation in this panel yet — this
-        # is Qt's native QAbstractScrollArea fallback (StrongFocus by default, unclaimed here,
-        # unlike Book Detail's History tab where the same default was a bug to fix — see
-        # book_detail_panel.py's `_history_scroll.setFocusPolicy(Qt.FocusPolicy.NoFocus)`).
-        # bar.setSingleStep(_TAG_ROW_PITCH) above already makes a native arrow press move by
-        # exactly one row, but — same gap as the wheel case — a manually DRAGGED scrollbar can
-        # start off that pitch, and a relative singleStep delta from an off-pitch position never
-        # self-corrects. Added now, ahead of any real keyboard-nav work landing here, so the
-        # deferred-correction idiom (see Library's eventFilter Wheel branch / Stats'
-        # StatsRowListView.wheelEvent, 2026-08-12/13) is already in place and doesn't get
-        # forgotten once real key handling is built. Installed on _tag_scroll itself, not its
+        # Arrow-key handling for the tag LIST is real keyboard-nav as of 2026-09-08 —
+        # see _handle_tag_list_keys/_set_kbdnav_row, wired in eventFilter's KeyPress
+        # branch. `_tag_scroll` needs real focus (StrongFocus, Qt's default for
+        # QAbstractScrollArea, unclaimed here — unlike Book Detail's History tab,
+        # where the same default was a bug to fix, see book_detail_panel.py's
+        # `_history_scroll.setFocusPolicy(Qt.FocusPolicy.NoFocus)`) so KeyPress events
+        # actually land on it for the filter to see. `bar.setSingleStep(_TAG_ROW_PITCH)`
+        # above still matters for the WHEEL/scrollbar-drag path, which never goes
+        # through the keyboard cursor at all. Installed on _tag_scroll itself, not its
         # viewport() — arrow-key KeyPress events target whatever widget holds focus, which is
         # the scroll area itself under Qt's default StrongFocus. The installEventFilter() call
         # itself is deferred to the END of _build_ui (not here) — eventFilter's very first
@@ -558,11 +563,25 @@ class TagManagerWidget(QWidget):
         if self._current_tag:
             self._open_tag(self._current_tag)
 
+    def tag_scroll_widget(self):
+        """The tag list's QScrollArea — the widget PanelManager._start_tags_entry gives
+        real Qt focus to, so the list's own arrow-key handling (eventFilter, gated on
+        `obj is self._tag_scroll`) actually receives KeyPress events. Exposed as a
+        method rather than reaching into the private `_tag_scroll` attribute directly
+        from panels.py."""
+        return self._tag_scroll
+
     def refresh(self):
         """Reload tag list from DB. Always lands on the list view."""
         self._current_tag = None
         self._panel_widget.hide()
         self._list_widget.show()
+        # Any keyboard cursor belongs to the OLD rows, about to be deleted —
+        # clearing here (not re-deriving after rebuild) matches every other
+        # region's "no memory across a rebuild/exit" convention this branch
+        # established (see ThemeManager._kbdnav_swatch_pos's docstring); the
+        # panel's own claim-focus path re-establishes row 0 on next entry.
+        self._kbdnav_row_index = None
 
         while self._tag_list_layout.count() > 1:
             item = self._tag_list_layout.takeAt(0)
@@ -575,6 +594,94 @@ class TagManagerWidget(QWidget):
             self._tag_list_layout.insertWidget(
                 self._tag_list_layout.count() - 1, row
             )
+
+    def _tag_list_rows(self) -> list:
+        """Tag-list row widgets in visual order, live off the layout — shared by
+        ScrollHoverTracker (mouse) and the keyboard cursor below, so the two
+        mechanisms can never disagree about what a "row" is. Rows are looked up
+        fresh each call (never cached) since refresh() rebuilds them wholesale."""
+        return [w for i in range(self._tag_list_layout.count())
+                if (w := self._tag_list_layout.itemAt(i).widget()) is not None]
+
+    def _on_mouse_reclaimed_tag_list(self) -> None:
+        """Called by ScrollHoverTracker the instant it detects the REAL mouse has
+        genuinely moved while the keyboard cursor was active (most-recent-input-
+        wins — see ScrollHoverTracker._maybe_reclaim_from_mouse). Clears the
+        keyboard cursor's own highlight WITHOUT touching the tracker's suspended
+        state itself — the tracker has already un-suspended and is about to
+        resync to the real cursor position in the same call, so calling back
+        into _set_kbdnav_row(None) here (which would re-invoke suspend(False) a
+        second time) is unnecessary and would just repeat work the tracker is
+        already mid-way through doing."""
+        rows = self._tag_list_rows()
+        idx = self._kbdnav_row_index
+        if idx is not None and 0 <= idx < len(rows):
+            rows[idx].setProperty("hovered", "false")
+            rows[idx].style().unpolish(rows[idx])
+            rows[idx].style().polish(rows[idx])
+        self._kbdnav_row_index = None
+
+    def _set_kbdnav_row(self, index: int | None) -> None:
+        """Move the tag-list keyboard cursor to `index` (or clear it with None),
+        updating the visual highlight and suspending/resuming mouse hover to
+        match — the same coexistence contract hover_tracker.py's docstring
+        describes ("designed for keyboard selection to land on top";
+        ScrollHoverTracker.suspend is the hook). Reuses the exact same
+        `hovered` property + unpolish/polish primitive ScrollHoverTracker
+        itself uses (_set_hovered), rather than a second visual mechanism, so
+        a keyboard-selected row and a mouse-hovered row are pixel-identical —
+        explicit design call: "Mouse hover highlight style to be used to
+        indicate the active row." Scrolls the new row into view."""
+        rows = self._tag_list_rows()
+        prev_index = self._kbdnav_row_index
+        if prev_index is not None and 0 <= prev_index < len(rows):
+            rows[prev_index].setProperty("hovered", "false")
+            rows[prev_index].style().unpolish(rows[prev_index])
+            rows[prev_index].style().polish(rows[prev_index])
+        self._kbdnav_row_index = index
+        if index is None:
+            self._row_hover.suspend(False)
+            return
+        self._row_hover.suspend(True)
+        if 0 <= index < len(rows):
+            row = rows[index]
+            row.setProperty("hovered", "true")
+            row.style().unpolish(row)
+            row.style().polish(row)
+            self._tag_scroll.ensureWidgetVisible(row, 0, 0)
+
+    def _handle_tag_list_keys(self, event) -> bool:
+        """Up/Down/PgUp/PgDown/Home/End move the keyboard cursor; Enter/Space
+        open the tag under it (the same action a left-click on the row
+        performs) — live design call, 2026-09-08: list-view nav ships before
+        the tag-detail sub-panel's own, larger set of interactions. Returns
+        True iff the key was consumed."""
+        key = event.key()
+        rows = self._tag_list_rows()
+        if not rows:
+            return False
+        if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space):
+            if self._kbdnav_row_index is not None and 0 <= self._kbdnav_row_index < len(rows):
+                tag = rows[self._kbdnav_row_index].property("tag_name")
+                if tag:
+                    self._open_tag(tag)
+            return True
+        current = self._kbdnav_row_index if self._kbdnav_row_index is not None else -1
+        if key == Qt.Key.Key_Down:
+            self._set_kbdnav_row(min(current + 1, len(rows) - 1) if current >= 0 else 0)
+        elif key == Qt.Key.Key_Up:
+            self._set_kbdnav_row(max(current - 1, 0) if current >= 0 else len(rows) - 1)
+        elif key == Qt.Key.Key_PageDown:
+            self._set_kbdnav_row(min(current + _TAG_SCROLL_ROWS, len(rows) - 1) if current >= 0 else 0)
+        elif key == Qt.Key.Key_PageUp:
+            self._set_kbdnav_row(max(current - _TAG_SCROLL_ROWS, 0) if current >= 0 else len(rows) - 1)
+        elif key == Qt.Key.Key_Home:
+            self._set_kbdnav_row(0)
+        elif key == Qt.Key.Key_End:
+            self._set_kbdnav_row(len(rows) - 1)
+        else:
+            return False
+        return True
 
     def _build_tag_row(self, tag_data: dict) -> QWidget:
         row = QWidget()
@@ -625,6 +732,7 @@ class TagManagerWidget(QWidget):
         layout.addWidget(badge)
 
         tag = tag_data['tag']
+        row.setProperty("tag_name", tag)  # read back by _handle_tag_list_keys' Enter/Space
         row.mousePressEvent = lambda e: self._open_tag(tag) if e.button() == Qt.MouseButton.LeftButton else None
         return row
 
@@ -750,22 +858,15 @@ class TagManagerWidget(QWidget):
                 self._tag_name_edit.clearFocus()
                 return True
 
-        if obj is self._tag_scroll and event.type() == QEvent.Type.KeyPress:
-            if event.key() in (Qt.Key.Key_Up, Qt.Key.Key_Down):
-                # Correction only, same shape as Library/Stats' wheel fix (2026-08-12/13) —
-                # let native singleStep-based scrolling run first (unchanged amount), then
-                # round the RESULT to the nearest row boundary one event-loop tick later,
-                # since the corrected value isn't available yet inside this filter call.
-                bar = self._tag_scroll.verticalScrollBar()
-
-                def _snap_after_native_scroll(bar=bar):
-                    v = bar.value()
-                    snapped = round(v / _TAG_ROW_PITCH) * _TAG_ROW_PITCH
-                    snapped = max(bar.minimum(), min(bar.maximum(), snapped))
-                    if snapped != v:
-                        bar.setValue(snapped)
-
-                QTimer.singleShot(0, _snap_after_native_scroll)
+        # Tag-LIST keyboard cursor (added 2026-09-08) — replaces the old scroll-only
+        # stub that used to live here (native singleStep scrolling with no real
+        # selection). Scoped to the list view being visible: the tag-detail
+        # sub-panel's own, separate set of interactions (back/edit/delete/color
+        # picker/thumbnails) is a later pass and must not see these keys.
+        if (obj is self._tag_scroll and event.type() == QEvent.Type.KeyPress
+                and self._list_widget.isVisible()):
+            if self._handle_tag_list_keys(event):
+                return True
 
         if event.type() == QEvent.Type.MouseButtonPress:
             from PySide6.QtCore import QRect

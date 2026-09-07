@@ -1815,7 +1815,14 @@ class PanelManager:
         self.tags_panel.show()
         self.tags_panel.refresh()
         self.tags_panel.raise_()
-        self._claim_panel_focus(self.tags_panel)
+        # Claims focus on _tag_scroll directly (2026-09-08, tag-list keyboard nav),
+        # not the panel root — refresh() always lands on the list view, and the
+        # list's own arrow-key handling (TagManagerWidget.eventFilter) is gated on
+        # `obj is self._tag_scroll`, so real focus has to land there for a key
+        # press to ever reach it. _claim_panel_focus's own fallback (grant
+        # StrongFocus + setFocus) applies unchanged; _tag_scroll already has
+        # StrongFocus by Qt's QAbstractScrollArea default.
+        self._claim_panel_focus(self.tags_panel.tag_scroll_widget())
         self.tags_panel_animation.setStartValue(QPoint(-panel_w, sidebar_y))
         self.tags_panel_animation.setEndValue(QPoint(0, sidebar_y))
 

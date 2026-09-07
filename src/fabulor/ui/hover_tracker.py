@@ -31,6 +31,15 @@ tearing the tracker down, so the two never render two highlights at once.
 from PySide6.QtCore import QObject, QPoint, Qt
 from PySide6.QtGui import QCursor
 
+# Minimum real cursor displacement, in pixels, required to reclaim from a
+# suspended (keyboard-owned) state — same role as the traveling marker's own
+# _KBDNAV_CURSOR_JITTER_PX (app.py): a synthetic Enter/Leave pair from the
+# transport-bar blur grab's hide/show cycle (~5-15x/sec while a book plays;
+# see this file's own module docstring) reports the SAME cursor position each
+# time, so comparing against an anchor rather than reacting to the event's
+# mere existence is what tells a real move apart from that artifact.
+_MOUSE_RECLAIM_JITTER_PX = 3
+
 
 class ScrollHoverTracker(QObject):
     """Re-resolves the hovered row of a scroll area whenever its content moves.
@@ -40,12 +49,25 @@ class ScrollHoverTracker(QObject):
     because both panels rebuild their rows wholesale on refresh, and a cached
     list would go stale exactly when the panel repopulates."""
 
-    def __init__(self, scroll, rows_of, parent=None):
+    def __init__(self, scroll, rows_of, parent=None, on_mouse_reclaim=None):
         super().__init__(parent)
         self._scroll = scroll
         self._rows_of = rows_of
         self._hovered = None
         self._suspended = False
+        self._suspend_anchor = None  # cursor pos at the moment of suspend(True) — see suspend()
+        # Optional zero-arg callback, fired when a REAL mouse event arrives while
+        # suspended (added 2026-09-08, for Tags' keyboard cursor) — most-recent-
+        # input-wins, the same principle the traveling-marker modality machinery
+        # uses elsewhere in this app: whichever device moved last owns the
+        # highlight. Without this, suspend(True) was sticky — only an explicit
+        # suspend(False) from the keyboard side could ever release it, so real
+        # mouse movement while a keyboard cursor was active did nothing at all
+        # (reported live: "it broke the mouse hover"). The callback lets the
+        # OWNER of the keyboard cursor (which this class knows nothing about)
+        # clear its own state in response, instead of this generic tracker
+        # reaching into caller-specific concepts it shouldn't know about.
+        self._on_mouse_reclaim = on_mouse_reclaim
         scroll.verticalScrollBar().valueChanged.connect(self._resync)
         # Mouse movement is the OTHER half: valueChanged alone would only track
         # while scrolling, so plain hovering would never highlight anything.
@@ -99,7 +121,10 @@ class ScrollHoverTracker(QObject):
         if event.type() in ScrollHoverTracker._TRACKED_EVENTS:
             try:
                 if self._scroll.isAncestorOf(obj):
-                    self._resync()
+                    if self._suspended:
+                        self._maybe_reclaim_from_mouse()
+                    else:
+                        self._resync()
             except (RuntimeError, TypeError):
                 # obj may be a non-widget QObject, or a widget already deleted
                 # by a refresh — neither is ours to track.
@@ -116,12 +141,40 @@ class ScrollHoverTracker(QObject):
         """Stop (or resume) mouse-hover tracking without tearing down.
 
         For keyboard navigation: while the keyboard owns the selection, hover
-        must not paint a second highlight. Suspending clears the current one."""
+        must not paint a second highlight. Suspending clears the current one.
+        Records the cursor's position AT THE MOMENT of suspending as the
+        reclaim anchor — see _maybe_reclaim_from_mouse."""
         self._suspended = suspended
         if suspended:
+            self._suspend_anchor = QCursor.pos()
             self._set_hovered(None)
         else:
+            self._suspend_anchor = None
             self._resync()
+
+    def _maybe_reclaim_from_mouse(self):
+        """Most-recent-input-wins: called on every tracked event while suspended.
+        A genuinely moved cursor hands hover back to the mouse (and tells the
+        keyboard-cursor owner, via `on_mouse_reclaim`, to give up its own
+        selection); a cursor still sitting where it was when suspend(True) was
+        called is a synthetic event (blur-grab hide/show, a stray Enter/Leave
+        from the row rebuild suspend() itself can trigger) and is ignored —
+        same anchor-and-jitter shape as the traveling marker's own
+        _kbdnav_cursor_anchor/_KBDNAV_CURSOR_JITTER_PX (app.py), not a
+        coincidence: both solve "which device actually moved last" against the
+        same class of synthetic-event noise."""
+        anchor = self._suspend_anchor
+        if anchor is None:
+            return
+        pos = QCursor.pos()
+        if (abs(pos.x() - anchor.x()) < _MOUSE_RECLAIM_JITTER_PX
+                and abs(pos.y() - anchor.y()) < _MOUSE_RECLAIM_JITTER_PX):
+            return
+        self._suspended = False
+        self._suspend_anchor = None
+        if self._on_mouse_reclaim is not None:
+            self._on_mouse_reclaim()
+        self._resync()
 
     def _resync(self, *_):
         if self._suspended:
