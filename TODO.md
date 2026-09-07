@@ -9,6 +9,79 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
 
 ## Summary index
 
+### Hover-pickup keyboard navigation for Settings/Speed/Sleep/Sprint — paused, intermittent regression
+- [2026-09-08] Goal: extend Tags' "pick up keyboard nav from wherever the mouse is hovering"
+  principle to the traveling-focus-marker panels (Settings' arrow-nav tabs, Speed, Sleep,
+  Sprint) — user-requested consolidation of the app's two "where am I" mechanisms. Two
+  implementation attempts, both abandoned after live regressions; approach is currently
+  reverted entirely, not merged, not started fresh.
+  - **Attempt 1** (all four panels at once): redirected focus to a `_widget_at_cursor` hit-test
+    result whenever `_handle_settings_arrows`/`_handle_flat_panel_arrows` found focus wasn't a
+    recognized row member, gated by the marker's own `_kbdnav_cursor_anchor`/
+    `_KBDNAV_CURSOR_JITTER_PX` "has the mouse moved since keyboard took over" check (same
+    anchor `_on_kbdnav_cursor_poll` already uses for the opposite hand-back direction). Also
+    stamped a fresh anchor in `PanelManager._claim_panel_focus` on panel-open, since
+    `OtherFocusReason` is a deliberate no-op for the modality flag. **Regression**: mouse hover
+    (the `:hover` QSS) disappeared across the whole panel, and on Settings' Themes tab
+    specifically the swatch grid's own separate keyboard-hover state
+    (`ThemeManager._set_kbdnav_swatch_hover`/`_kbdnav_swatch_pos`) got corrupted — two swatches
+    simultaneously showing the highlight. Root cause (found by code inspection, not
+    re-reproduced against attempt 1's exact code): `_hover_pickup_target` was refreshing
+    `_kbdnav_cursor_anchor` to the CURRENT mouse position on every successful pickup, but
+    `_on_kbdnav_cursor_poll`'s hand-back check depends on that anchor staying FIXED at wherever
+    the mouse was when keyboard mode first activated (`_set_keyboard_nav_active`'s own
+    `if active == current: return` guard deliberately never re-stamps it on repeat `True` calls
+    — see that method's own comment on why). Continuously sliding the anchor made "has the
+    mouse moved" permanently read false, so `kbdnav` stayed stuck `true` and the
+    `[kbdnav="true"] QPushButton:hover`-suppression rule (and the equivalent Settings
+    `#pattern_button` rule) suppressed hover indefinitely. The swatch-grid corruption is a
+    SEPARATE issue on top of that — `.setFocus()` was called directly on `swatch_box` without
+    going through its own internal cursor-position state machine at all.
+  - **Attempt 2** (Speed-only pilot, with `[HOVER-PICKUP-TRACE]` logging at every decision
+    point, specifically to re-derive the mechanism after reverting attempt 1): removed the
+    anchor-write entirely (`_hover_pickup_target` now only READS the anchor, matching what the
+    poll does) and scoped the actual pickup logic to `panel_key == "speed"` only, touching
+    nothing on Settings/Sleep/Sprint's own code paths. Live trace confirmed `kbdnav` correctly
+    transitioning `True`→`False` on hand-back, with a property READBACK immediately after
+    `setProperty`/`unpolish`/`polish` confirming the QSS attribute itself was genuinely
+    `'false'` at that moment — yet the user still reported hover broken afterward, including on
+    Settings' plain `#pattern_button`s (which this attempt's code never touches at all) and
+    Speed/Sleep/Sprint's ramp grids, while non-`kbdnav`-gated controls (Add/Rescan, the
+    Excluded Books eye icon, Theme swatches, the pool's Add/Remove/Change buttons) kept working
+    throughout. An A/B test was attempted (stash the pilot's diff, restart, retest three times
+    against the "clean" committed state through `1fa0746`; unstash, restart, retest) and every
+    stashed-state run passed — **but this does NOT actually confirm the pilot code is the
+    cause, and should not be read as having done so.** The bug is intermittent even WITH the
+    pilot code present (the user's own account: "earlier... I couldn't reproduce it on the next
+    start. Then when I wasn't expecting it, it failed"), so a handful of clean passes on the
+    stashed side is exactly as weak a signal as the clean passes seen on the buggy side — three
+    successes prove "didn't fail this time," not "can't fail." Whether `1fa0746` itself is
+    genuinely bug-free was never independently established; it was only assumed to be, because
+    it predates this session's hover-pickup work. This is the reason the attempt was paused
+    rather than continued: an intermittent race (most likely something timing-dependent around
+    the 60ms `_kbdnav_cursor_poll` tick, `_KBDNAV_CURSOR_POLL_MS`, racing against a keypress or
+    a focus-change event) is a poor candidate for further blind code-reading regardless of which
+    side of the diff it lives on — it needs either a tighter, reliable repro, or a soak/stress
+    test that exercises the arrow-nav + poll interaction far more times than manual testing can,
+    before the next attempt can trust any "it works now" result.
+  - **Not yet tried / worth considering for a future attempt**: (a) a redesign that never calls
+    `.setFocus()` speculatively during pickup-eligibility CHECKING and only commits the focus
+    change once fully validated, to shrink whatever window the race lives in; (b) instrumenting
+    `_on_kbdnav_cursor_poll` itself (not just `_set_keyboard_nav_active`) with the same
+    property-readback-after-repolish trace, since the poll is what actually decides to call
+    `_set_keyboard_nav_active(False)` and hasn't been traced as closely as the setter has; (c)
+    checking whether the swatch-grid corruption from attempt 1 was really fully explained by
+    the anchor-write bug, or whether it points at a second, independent issue worth isolating
+    on its own before folding Themes back into any future attempt at this feature.
+  - Current state: fully reverted, nothing merged, `app.py` back to `1fa0746`. Tags' own
+    hover-pickup (`ScrollHoverTracker`) is unaffected and unrelated — this item is purely about
+    extending the same principle to the other four panels. **Open, unresolved question this
+    entry deliberately does NOT claim to answer**: whether `1fa0746` itself (the pre-hover-pickup
+    baseline this branch currently sits at) can independently exhibit this same intermittent
+    hover-suppression symptom on its own, unrelated to anything in this feature attempt — it was
+    never stress-tested for that, only run a handful of times without failing, which the rest of
+    this entry's own reasoning says is not strong evidence either way.
+
 ### Settings keyboard-focus regressions found while testing Tags (check after Tags is done)
 - [2026-09-08] Excluded Books: hit Enter to un-exclude a book, then Esc to close Settings — after
   that, no keyboard shortcut works on the main window until clicking somewhere. Reported live,

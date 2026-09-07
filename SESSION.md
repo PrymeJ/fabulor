@@ -1,3 +1,85 @@
+## Session Summary — 2026-09-08 Session 1 — Hover-pickup keyboard navigation for Settings/Speed/Sleep/Sprint: two attempts, both reverted after an intermittent live regression. No commit — `app.py` stayed at `1fa0746` throughout.
+
+Goal: extend Tags' own "pick up keyboard nav from wherever the mouse is hovering"
+(`ScrollHoverTracker.hovered_row`) to the four traveling-focus-marker panels, consolidating the
+app's two separate "where am I" mechanisms per Pryme's explicit request at the end of the prior
+session. Ends with the feature fully reverted and documented in TODO.md rather than shipped —
+the investigation is the record of this session, not a merged change.
+
+**Design, worked out via AskUserQuestion before any code was written.** The rule settled on was
+genuine most-recent-input-wins, not "only the very first press": mouse hover redirects an
+arrow-key press only if the mouse has *moved* since keyboard last took over (a keypress, or the
+panel opening) — Tabbing to a different control and leaving the mouse still must NOT let a
+later arrow-press snap to the stale hover position. A first plan (reviewed independently by
+another Claude instance, whose feedback was itself checked against the code rather than trusted
+outright) assumed Tags lands ON the hovered row first, needing two presses to advance further;
+reading `_handle_tag_list_keys` directly showed Tags actually moves PAST the hovered row on the
+very first press (`current = index of hovered row`, then `min(current + 1, ...)`) — Pryme
+confirmed matching that exact behavior, not the two-press model, before implementation began.
+
+**Attempt 1 (all four panels at once) — regressed live, root-caused, reverted.** Reused the
+marker's own existing `_kbdnav_cursor_anchor`/`_KBDNAV_CURSOR_JITTER_PX` (the same anchor
+`_on_kbdnav_cursor_poll` already uses for the opposite hand-back direction) rather than building
+parallel state, and split `_cursor_over_navigable_control` into a new `_widget_at_cursor` so the
+existing hit-test loop could return the widget itself, not just a bool. Reported live almost
+immediately: mouse hover (`:hover` QSS) disappeared across the whole panel, and on Settings'
+Themes tab specifically the swatch grid's own separate keyboard-hover state
+(`ThemeManager._set_kbdnav_swatch_hover`) showed two swatches simultaneously highlighted.
+Root cause, found by code inspection after reverting rather than by further live guessing: the
+new pickup helper was refreshing `_kbdnav_cursor_anchor` to the *current* mouse position on
+every successful pickup, but `_on_kbdnav_cursor_poll`'s hand-back check depends on that anchor
+staying *fixed* at wherever the mouse was when keyboard mode first activated —
+`_set_keyboard_nav_active`'s own `if active == current: return` guard deliberately never
+re-stamps it on repeat `True` calls, exactly so entering keyboard mode with the cursor already
+resting on a control doesn't immediately hand it back. Continuously sliding the anchor made "has
+the mouse moved" permanently read false, so `kbdnav` stayed stuck `true` and the
+`[kbdnav="true"] QPushButton:hover` suppression rule (an existing mechanism from a prior
+session, not new this session) suppressed hover indefinitely. The swatch corruption was a
+separate consequence of the same change calling `.setFocus()` directly on `swatch_box` without
+going through its own internal cursor-position state machine at all.
+
+**Attempt 2 (Speed-only pilot, instrumented) — the anchor bug fixed, but a second, intermittent
+symptom persisted and could not be pinned down.** Removed the anchor-write entirely (the pickup
+helper now only *reads* `_kbdnav_cursor_anchor`, matching what the poll itself does) and scoped
+the actual redirect to `panel_key == "speed"` only, touching no code on Settings/Sleep/Sprint's
+own paths. `[HOVER-PICKUP-TRACE]` logging was added at every decision point, including a
+property *readback* immediately after `setProperty`/`unpolish`/`polish` in
+`_set_keyboard_nav_active` to rule out a stale-cache repolish gap. The trace confirmed `kbdnav`
+correctly transitioning `True`→`False` on hand-back, with the readback itself genuinely
+`'false'` at that instant — yet Pryme still reported hover broken afterward, including on
+Settings' plain `#pattern_button`s (which this attempt's code never touches) and on
+Speed/Sleep/Sprint's ramp grids, while every non-`kbdnav`-gated control (Add/Rescan, the
+Excluded Books eye icon, Theme swatches, the pool's Add/Remove/Change buttons) kept working
+throughout — and, separately, reported once that hover was already broken before any key had
+been pressed at all that session, which by itself rules out anything in the arrow-key path as
+the *sole* explanation.
+
+**Why this was paused rather than pushed through: the symptom would not reliably reproduce, on
+either side of the diff.** An A/B test (stash the Speed-pilot diff, restart, retest three times
+against the state at `1fa0746`; unstash, restart, retest) found no failures on the stashed side
+across those three tries — but Pryme's own account of the bug's behavior with the pilot code
+active was "earlier... I couldn't reproduce it on the next start. Then when I wasn't expecting
+it, it failed," meaning the bug is intermittent even when present. A caught mistake worth
+recording here, not quietly dropped: this A/B result was initially written up as having
+*confirmed* the pilot code was the cause — Pryme corrected this directly ("that didn't prove
+anything either... we don't know for sure that this is the clean state"), and the claim was
+retracted and rewritten rather than left standing, per the standing rule that a corrected claim
+must be explicitly named and its downstream conclusions re-checked. Three clean passes on
+either side of an intermittent bug is not evidence of either side's innocence — it only shows
+"didn't fail this time." Whether the `1fa0746` baseline can independently exhibit this same
+hover-suppression symptom, entirely unrelated to this feature attempt, was never established
+either way.
+
+**Current state:** fully reverted, nothing merged — `app.py` sits at `1fa0746`, matching HEAD.
+The full investigation, including the two not-yet-tried ideas for a future attempt (shrinking
+the speculative-`setFocus()` window during eligibility checking; tracing
+`_on_kbdnav_cursor_poll` itself as closely as the setter was traced) and the open question about
+`1fa0746`'s own untested reliability, is written up in TODO.md rather than here, since nothing
+was fixed or shipped — see the "Hover-pickup keyboard navigation for Settings/Speed/Sleep/Sprint"
+entry there for the full detail this summary doesn't repeat.
+
+---
+
 ## Session Summary — 2026-09-07 Session 1 — Full keyboard navigation added to the Speed, Sleep and Sprint panels, generalizing the traveling-marker modality machinery beyond Settings for the first time. `346700f` on `feature/traveling-focus-marker`
 
 Moves keyboard navigation onto the three panels that were never tab-based to begin with —
