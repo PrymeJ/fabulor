@@ -501,6 +501,17 @@ class _TagBookGrid(QScrollArea):
         def _snap_after_native_scroll():
             v = bar.value()
             snapped = round(v / _TAG_GRID_ROW_PITCH) * _TAG_GRID_ROW_PITCH
+            # bar.maximum() is the true scroll-max needed to fully reveal the
+            # LAST row — it is only a multiple of the pitch by coincidence
+            # (the last row rarely divides the viewport height evenly).
+            # Rounding to the nearest pitch multiple can land one pitch SHORT
+            # of that true max, clipping the last row permanently (no amount
+            # of further scrolling reaches it, since the snap re-applies on
+            # every wheel tick) — reported live once the "dummy" tag held
+            # 100+ books. If we're within one pitch of the true max, snap
+            # straight to it instead of the nearest multiple.
+            if bar.maximum() - v < _TAG_GRID_ROW_PITCH:
+                snapped = bar.maximum()
             snapped = max(bar.minimum(), min(bar.maximum(), snapped))
             if snapped != v:
                 bar.setValue(snapped)
@@ -728,12 +739,13 @@ class TagManagerWidget(QWidget):
         panel_layout.addSpacing(0)
 
         self._reserved_row = QWidget()
-        # 24, not 21 (live design follow-up, 2026-09-08) — grew to match the
-        # color-picker dots' own 24x24 box (see _add_picker_dot's comment):
-        # the keyboard-cursor ring needed room the old 20px dot/21px row
-        # could not give it without being clipped. Pushes the book-count
-        # label and thumbnail grid down by 3px — explicitly OK'd live.
-        self._reserved_row.setFixedHeight(24)
+        # 25, not 21 (live design follow-up, 2026-09-08) — grown to match
+        # the color-picker dots' own 25x25 box (see _add_picker_dot's
+        # comment): the keyboard-cursor ring needed room the old 20px
+        # dot/21px row couldn't give it without being clipped. Pushes the
+        # book-count label and thumbnail grid down further — explicitly
+        # OK'd live.
+        self._reserved_row.setFixedHeight(25)
         reserved_layout = QStackedLayout(self._reserved_row)
         reserved_layout.setContentsMargins(0, 0, 0, 0)
         reserved_layout.setStackingMode(QStackedLayout.StackingMode.StackOne)
@@ -750,49 +762,35 @@ class TagManagerWidget(QWidget):
 
         def _add_picker_dot(color_key, color_hex):
             dot = QLabel("●")
-            # 24x24, not 20x20 (live design follow-up, 2026-09-08) — the ring
-            # is a CHILD of this label (Qt clips a child to its parent's own
-            # rect), so no ring geometry could ever avoid being clipped while
-            # the label itself stayed 20x20: an 18x18 ring centered on the
-            # glyph's true painted center (measured below) needs vertical
-            # room from y=5 to y=23, which a 20px-tall parent cannot give it
-            # regardless of the ring's own size/position. Reported live as
-            # "more space at the top than bottom, and its bottom gets
-            # clipped." 24x24 gives the needed room; _reserved_row/
-            # _color_picker_row grew to match (see their own construction,
-            # above) — explicitly OK'd live: "we can safely push the N books
-            # label and the thumbnails here if the ring needs those 2 or 3px."
-            dot.setFixedSize(24, 24)
+            # 25x25 (was 20x20 originally) — live-tuned across several
+            # rounds, 2026-09-08, alongside the ring's own geometry below
+            # and the font size (28->23px). The ring is a CHILD of this
+            # label (Qt clips a child to its parent's own rect), so both the
+            # box and the ring's own geometry had to be tuned together —
+            # see _reserved_row's construction, above, for the matching
+            # row-height history.
+            dot.setFixedSize(25, 25)
             dot.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            dot.setStyleSheet("font-size: 27px;" if color_hex is None
-                               else f"font-size: 27px; color: {color_hex};")
+            dot.setStyleSheet("font-size: 23px;" if color_hex is None
+                               else f"font-size: 23px; color: {color_hex};")
             if color_hex is None:
                 dot.setObjectName("tag_dot_neutral")
             dot.setCursor(Qt.CursorShape.PointingHandCursor)
             dot.mousePressEvent = lambda e, k=color_key: self._set_tag_color(k)
             picker_layout.addWidget(dot)
             ring = _DotFocusRing(dot)
-            # The "●" glyph's visual center does NOT match this label's
-            # geometric center — confirmed live across two rounds (first
-            # "clipped at the bottom", then, after enlarging the box and
-            # recentring from an offscreen pixel measurement, "still not
-            # centered, more space at the top"). The offscreen measurement
-            # method itself is not trustworthy here — see CLAUDE.md's "DO NOT
-            # verify a settings-panel/tab visual layout bug with headless
-            # test scripts alone" — so ring.setGeometry below is now a bare,
-            # directly-tunable number rather than derived from a recomputed
-            # offscreen bounding box; nudge it directly against what's
-            # visible live rather than re-measuring. A ring sized tight to
-            # the glyph (first attempt: 12x12) was reported live as
-            # "impossible to see, clashes with the placeholder" — a ring
-            # HUGGING the dot reads as part of the dot rather than as a
-            # indicator. y=4 (x still 3) is a live-nudged value, not derived
-            # from any measurement — see the note above on why the
-            # offscreen-measured offset is not being trusted anymore. Tuned
-            # live across three rounds: y=5 read as "more space at top",
-            # y=3 read as "wrong direction" (too much space at bottom); y=4
-            # split the difference.
-            ring.setGeometry(3, 4, 18, 18)
+            # The "●" glyph's visual center does not match this label's
+            # geometric center, and an offscreen pixel measurement of it
+            # proved unreliable for this — see CLAUDE.md's "DO NOT verify a
+            # settings-panel/tab visual layout bug with headless test
+            # scripts alone". This geometry is a bare, live-tuned number
+            # (via a temporary Ctrl+Arrow dev-nudge tool, added and removed
+            # this same session — see git history), not derived from any
+            # measurement. Accepted as "not perfect, but not too bad as a
+            # fallback" — a small remaining sub-pixel roundness imperfection
+            # on the antialiased ellipse stroke, not a position/clipping
+            # problem.
+            ring.setGeometry(4, 6, 17, 17)
             ring.hide()
             self._color_picker_dots.append((dot, color_key, ring))
 
@@ -1118,8 +1116,19 @@ class TagManagerWidget(QWidget):
             _, _, prev_ring = self._color_picker_dots[self._color_kbdnav_index]
             prev_ring.hide()
         self._color_kbdnav_index = index
-        _, _, ring = self._color_picker_dots[index]
-        color = self._current_theme.get("tags_kbdnav_ring", self._current_theme.get("accent_light", "#ffffff"))
+        _, color_key, ring = self._color_picker_dots[index]
+        # The ring matches its OWN dot's color (live design call, 2026-09-08
+        # follow-up) rather than a single theme-wide focus color — for a row
+        # where each cell already carries a distinct, meaningful color, a
+        # ring in that SAME color reads as "this one" rather than a generic
+        # focus indicator competing with the color it's pointing at. The
+        # neutral dot (color_key None) has no such color of its own, so it
+        # keeps the theme-derived tags_kbdnav_ring/accent_light fallback —
+        # same one the thumbnail grid's ring still uses.
+        dot_color = TAG_COLORS.get(color_key)
+        color = dot_color or self._current_theme.get(
+            "tags_kbdnav_ring", self._current_theme.get("accent_light", "#ffffff")
+        )
         ring.set_color(color)
         ring.show()
         ring.raise_()
@@ -1136,6 +1145,7 @@ class TagManagerWidget(QWidget):
         key = event.key()
         n = len(self._color_picker_dots)
         idx = self._color_kbdnav_index
+
         if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space):
             _, color_key, _ = self._color_picker_dots[idx]
             self._set_tag_color(color_key)
@@ -1703,8 +1713,14 @@ class TagManagerWidget(QWidget):
         if hasattr(self, '_book_grid'):
             self._book_grid.set_kbdnav_color(kbdnav_ring_color)
         if hasattr(self, '_color_kbdnav_index') and self._color_kbdnav_index is not None:
-            _, _, ring = self._color_picker_dots[self._color_kbdnav_index]
-            ring.set_color(kbdnav_ring_color)
+            _, color_key, ring = self._color_picker_dots[self._color_kbdnav_index]
+            # Colored dots' rings match their OWN dot color (see
+            # _set_color_kbdnav) — only the neutral dot's ring is
+            # theme-derived, so only re-apply the theme color there. A
+            # theme change never changes what color a coral/mint/etc. dot
+            # IS, so there's nothing to re-derive for those.
+            if color_key is None:
+                ring.set_color(kbdnav_ring_color)
 
     def _on_grid_remove(self, path: str):
         if self._confirming_delete:
