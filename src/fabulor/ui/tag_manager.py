@@ -547,6 +547,21 @@ class TagManagerWidget(QWidget):
         # land on top"). None means no keyboard cursor is currently active —
         # distinct from 0, a real cursor at the first row.
         self._kbdnav_row_index: int | None = None
+        # Type-ahead letter jump for the tag LIST (added 2026-09-08, TODO.md
+        # item) — same buffer+debounce shape as ChapterList's digit jump
+        # (chapter_list.py, _digit_buffer/_digit_timer): typed letters
+        # accumulate into _typeahead_buffer, re-searched on every keystroke,
+        # cleared 800ms after the last one. Repeated presses of a SINGLE
+        # letter cycle through its matches instead of narrowing to nothing
+        # after the first one (see _handle_tag_list_typeahead) — the
+        # behavior Qt's own native list type-ahead search has, which this
+        # mirrors since tags are short, scannable names meant to be jumped
+        # to by a starting letter, not filtered by a whole typed string.
+        self._typeahead_buffer: str = ""
+        self._typeahead_timer = QTimer(self)
+        self._typeahead_timer.setSingleShot(True)
+        self._typeahead_timer.setInterval(800)
+        self._typeahead_timer.timeout.connect(self._clear_typeahead_buffer)
         self._cancel_timer: QTimer | None = None
         self._rename_revert_timer: QTimer | None = None
         self._current_theme: dict = {}
@@ -1001,9 +1016,59 @@ class TagManagerWidget(QWidget):
             self._set_kbdnav_row(0)
         elif key == Qt.Key.Key_End:
             self._set_kbdnav_row(len(rows) - 1)
+        elif event.text() and event.text().isprintable() and not (event.modifiers() & ~Qt.KeyboardModifier.ShiftModifier):
+            # Type-ahead letter jump (TODO.md item) — any printable character
+            # with no modifier besides Shift (so a capital letter still
+            # works). Checked LAST, after every dedicated nav key above, so
+            # it never shadows Space (already claimed for Enter/Space above)
+            # or any other bound key.
+            self._handle_tag_list_typeahead(event.text(), rows, current)
         else:
             return False
         return True
+
+    def _clear_typeahead_buffer(self) -> None:
+        self._typeahead_buffer = ""
+
+    def _handle_tag_list_typeahead(self, char: str, rows: list, current: int) -> None:
+        """Extends or restarts the type-ahead buffer and jumps the keyboard
+        cursor to the next matching tag. Same buffer shape as ChapterList's
+        digit jump (chapter_list.py) — accumulate, debounce, commit — but
+        with a cycling behavior digit-jump doesn't need: repeatedly pressing
+        the SAME single letter (e.g. "s", "s", "s") cycles through every tag
+        starting with that letter one at a time, rather than the buffer
+        staying "s" forever and always landing on the first match. Typing
+        DIFFERENT letters in quick succession (e.g. "s", "e") instead
+        narrows to tags starting with the full typed prefix, same as typing
+        normally into a search field — the two behaviors coexist by
+        checking whether the new character repeats the buffer's own single
+        existing character."""
+        char = char.lower()
+        if self._typeahead_buffer and char == self._typeahead_buffer[-1] and len(self._typeahead_buffer) == 1:
+            pass  # repeat of the same single letter — cycle, don't append (buffer already correct)
+        else:
+            self._typeahead_buffer += char
+        self._typeahead_timer.start()  # restart — fires 800ms after the last keystroke
+
+        buf = self._typeahead_buffer
+        tags = [(i, row.property("tag_name") or "") for i, row in enumerate(rows)]
+        matches = [i for i, tag in tags if tag.startswith(buf)]
+        if not matches:
+            # No tag starts with the full buffer — fall back to just the
+            # newly typed character alone, so a mistyped second letter
+            # doesn't strand the user with zero matches until the debounce
+            # clears; matches whatever Qt's own native type-ahead does in
+            # the same situation.
+            self._typeahead_buffer = char
+            matches = [i for i, tag in tags if tag.startswith(char)]
+        if not matches:
+            return
+        # Land on the first match AFTER the current cursor (wrapping to the
+        # start), so repeated presses of one letter cycle forward through
+        # every match instead of sticking on the first one found.
+        after = [i for i in matches if i > current]
+        target = after[0] if after else matches[0]
+        self._set_kbdnav_row(target)
 
     def _handle_tag_detail_keys(self, event) -> bool:
         """Keyboard nav for the tag-DETAIL sub-panel — live design 2026-09-08.

@@ -1819,6 +1819,7 @@ THEMES = {
         "bookmark_icon":                 "#8565A6",
         "tassel_head":                   "#602B93",
         "focus_marker_palette":         ["#E3B300", "#CF466E"],
+        "tags_kbdnav_ring":              "#E7A8D2",
         "placeholder_cover":             "#ECBEDF",
         "placeholder_library":           "#896F81",
     },

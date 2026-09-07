@@ -29,15 +29,17 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
   shape as the "unpolish/polish on a parent does NOT re-resolve a child's cached style" CLAUDE.md
   gotcha, though not confirmed to be that specific mechanism yet.
 
-### Tags list type-ahead letter jump
-- [2026-09-08] Idea from live testing: pressing a letter while the tag list has the keyboard
-  cursor cycles through tags starting with that letter (repeat presses advance to the next match,
-  same behavior as Qt's own native list type-ahead search). Asked about specifically re:
-  performance, especially around panel slides — assessed as cheap and not a concern: the tag list
-  is a small scroll area of already-materialized row widgets (tens of tags in practice, not
-  thousands), a keypress-triggered linear scan over their text is O(n) on a small n with no I/O,
-  and it's a discrete per-keypress action, not something that runs per-frame during a slide
-  animation. Not started — deferred as a nice-to-have, not blocking anything.
+### Diacritic-insensitive library search
+- [2026-09-08] Raised live: an author like Meša Selimović can't be searched by typing "mesa" (no
+  š on the keyboard) — currently the only workaround is searching a substring that avoids the
+  accented letter entirely (e.g. "selim"). Standard fix is Unicode NFKD normalization + stripping
+  combining marks (`unicodedata.normalize('NFKD', s)` then drop `unicodedata.combining(c)`
+  characters) applied to both the query and the searchable fields at filter time, alongside the
+  existing case-fold — no library, no hand-maintained substitution list, covers essentially every
+  Latin-script diacritic (š→s, ć/č→c, ö→o, etc.) via Python's stdlib alone. Would apply in
+  `LibraryPanel._apply_filter_and_sort`. Does NOT help non-Latin scripts (Cyrillic, Greek, CJK) —
+  out of scope, those aren't diacritic variants of Latin letters. Explicitly deferred until after
+  this branch (`feature/traveling-focus-marker`) merges to main — not started.
 
 ### Keyboard navigation — remaining surfaces
 Branch `feature/traveling-focus-marker` (not merged). The whole Settings panel (Themes, Look,
