@@ -128,14 +128,17 @@ TAG_COLORS = {
 
 
 class _ThumbFocusRing(QWidget):
-    """A 1px border overlay marking the keyboard-selected thumbnail — see
+    """A border overlay marking the keyboard-selected thumbnail — see
     _TagBookThumb.set_keyboard_focused for why this is a separate sibling widget
     rather than a paintEvent override on the thumbnail itself. Overlaps the SAME
     rect the no-cover placeholder's own border occupies
     (render_logo_placeholder_bordered's `pm.rect().adjusted(0, 0, -1, -1)`, 47×47
     here), by explicit design: a real cover has no border of its own to clash
     with, and a placeholder's border is simply covered/replaced by this one when
-    both are showing, rather than the two competing visually."""
+    both are showing, rather than the two competing visually. Pen width 2 (was
+    1) — a 1px border was reported live as "barely visible and clashes with
+    the placeholder [border]"; 2px reads as a clearly distinct focus indicator
+    rather than looking like the placeholder's own outline."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -148,8 +151,11 @@ class _ThumbFocusRing(QWidget):
 
     def paintEvent(self, event):
         painter = QPainter(self)
-        painter.setPen(self._color)
-        painter.drawRect(self.rect().adjusted(0, 0, -1, -1))
+        pen = painter.pen()
+        pen.setColor(self._color)
+        pen.setWidth(2)
+        painter.setPen(pen)
+        painter.drawRect(self.rect().adjusted(1, 1, -2, -2))
         painter.end()
 
 
@@ -687,13 +693,18 @@ class TagManagerWidget(QWidget):
             ring = _DotFocusRing(dot)
             # The "●" glyph at this font-size does NOT paint centered within
             # the label's 20x20 box — measured offscreen (pixel bounding box
-            # of the rendered glyph): actual visual center (9.5, 12.0), not
-            # the box's geometric (10, 10) — a ~2.5px downward font-metrics
-            # offset (QFontMetrics.boundingRect is baseline-relative, not
-            # visual-circle-relative). Sizing/positioning the ring to the
-            # glyph's real painted bounds rather than the label's box is what
-            # actually centers it on the dot the user sees.
-            ring.setGeometry(4, 6, 12, 12)
+            # of the rendered glyph): actual visual center (9.5, 12.0), a
+            # painted size of roughly 10x11px, not the box's geometric center
+            # (10, 10) — a ~2.5px downward font-metrics offset
+            # (QFontMetrics.boundingRect is baseline-relative, not
+            # visual-circle-relative). A ring sized tight to that glyph
+            # (first attempt: 12x12) was reported live as "impossible to see,
+            # clashes with the placeholder" — a ring HUGGING the dot reads as
+            # part of the dot rather than as a distinct focus indicator.
+            # Sized/positioned here to sit OUTSIDE the glyph with a 1-2px gap
+            # instead (18x18, same center) — the row's 9px inter-dot spacing
+            # leaves enough clearance for this without touching a neighbor.
+            ring.setGeometry(1, 3, 18, 18)
             ring.hide()
             self._color_picker_dots.append((dot, color_key, ring))
 
@@ -982,6 +993,28 @@ class TagManagerWidget(QWidget):
                 self._on_delete_tag()
             return True
 
+        if self._confirming_delete:
+            # A dedicated branch, ahead of the color-row/thumbnail-grid
+            # dispatch below — live design call, 2026-09-08, fixing a real
+            # bug: with no branch here, Enter/Space fell through to whichever
+            # region's own handler (color row or thumbnail grid) and did
+            # THAT region's normal thing instead of confirming — reported
+            # live as "Enter doesn't confirm, Space just dismisses" (Space
+            # was actually triggering the thumbnail grid's own remove action,
+            # which itself checks _confirming_delete and cancels — a
+            # dismiss, not a confirm, and only by accident of that check
+            # existing elsewhere). Enter/Space now confirm; any arrow key
+            # dismisses (cancels) the confirmation rather than moving a
+            # cursor that, while armed, isn't meant to be visibly navigable
+            # anyway (the grid is locked — see _book_grid.set_locked).
+            if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space):
+                self._on_confirm_delete()
+                return True
+            if key in (Qt.Key.Key_Left, Qt.Key.Key_Right, Qt.Key.Key_Up, Qt.Key.Key_Down):
+                self._cancel_delete_confirm()
+                return True
+            return True  # swallow everything else too — nothing should reach the locked grid/colors
+
         if self._color_kbdnav_index is not None:
             return self._handle_color_row_keys(event)
         return self._handle_thumb_grid_keys(event)
@@ -1119,9 +1152,13 @@ class TagManagerWidget(QWidget):
                 self._enter_color_row_from_thumbnails()
             return True
         if key == Qt.Key.Key_Down:
-            if row + 1 < rows_count:
-                target_col = min(col, _row_len(row + 1) - 1)
-                self._book_grid.set_kbdnav_pos((row + 1, target_col))
+            # Wraps to row 0 at the last row (live design follow-up,
+            # 2026-09-08) — mirrors Right-wraps-to-the-first-thumbnail rather
+            # than exiting the grid, since Down/Up already have their own
+            # dedicated exit (row 0's Up) distinct from this axis.
+            next_row = row + 1 if row + 1 < rows_count else 0
+            target_col = min(col, _row_len(next_row) - 1)
+            self._book_grid.set_kbdnav_pos((next_row, target_col))
             return True
         if key == Qt.Key.Key_Up:
             if row > 0:
@@ -1347,6 +1384,24 @@ class TagManagerWidget(QWidget):
                 self._revert_tag_name()
                 self._tag_name_edit.clearFocus()
                 return True
+            if event.key() == Qt.Key.Key_Down and self._panel_widget.isVisible():
+                # Down from the name field cancels any unsaved edit and returns
+                # to the color row — explicit live design call, 2026-09-08:
+                # "Down arrow from the name should cancel it and go back to
+                # colors" — "the user haven't hit Enter to save them, so going
+                # out means discard is the intention." Same discard as Escape
+                # (_revert_tag_name), but landing in the color row rather than
+                # the thumbnail grid, mirroring how Up from the color row is
+                # what reaches the name field in the first place. Reuses
+                # _enter_color_row_from_thumbnails (its name is a slight
+                # misnomer now — it's really "enter the color row from
+                # wherever", already correctly guarded against
+                # _confirming_delete) rather than duplicating the same
+                # picker-opening logic a second time.
+                self._revert_tag_name()
+                self._tag_name_edit.clearFocus()
+                self._enter_color_row_from_thumbnails()
+                return True
 
         # Tag-LIST keyboard cursor (added 2026-09-08) — replaces the old scroll-only
         # stub that used to live here (native singleStep scrolling with no real
@@ -1405,6 +1460,13 @@ class TagManagerWidget(QWidget):
             return
         new_name = self._tag_name_edit.text().strip().lower()
         if new_name == self._current_tag:
+            # Enter with nothing actually changed — live design call, 2026-09-08:
+            # this used to be a silent no-op (Enter appeared to do nothing at
+            # all), which read as broken. Since there's nothing to save, Enter
+            # here means the same thing leaving the field any other way means:
+            # exit edit mode, same as Escape (_revert_tag_name is a no-op too
+            # in this exact case, since the text already matches the original).
+            self._tag_name_edit.clearFocus()
             return
         if not new_name:
             return

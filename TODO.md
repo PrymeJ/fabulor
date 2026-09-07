@@ -9,6 +9,26 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
 
 ## Summary index
 
+### Settings keyboard-focus regressions found while testing Tags (check after Tags is done)
+- [2026-09-08] Excluded Books: hit Enter to un-exclude a book, then Esc to close Settings — after
+  that, no keyboard shortcut works on the main window until clicking somewhere. Reported live,
+  not yet investigated. Likely the same class of bug as the two below (a focus-ownership strand —
+  see the "Keyboard focus ownership" CLAUDE.md rule — possibly specific to a popup opened from
+  within Settings, since ExcludedBooksPopup is exactly the kind of MainWindow-level popup that
+  rule's "click-outside `safe` allowlist" consequence warns about).
+- [2026-09-08] Library scan: hit Rescan, then Esc to close the panel — same symptom, keyboard
+  shortcuts dead on the main window until a click. Reported live, not yet investigated. Given the
+  matching symptom with the Excluded Books case above, check whether both share one root cause
+  (e.g. something during the scan/rescan flow claiming real Qt focus without a matching release)
+  before treating them as two separate bugs.
+- [2026-09-08] Speed/Sleep/Sprint "ramp-up" buttons: the keyboard traveling-marker highlight on
+  these buttons doesn't clear when keyboard nav moves on or the mouse takes over — the marker
+  itself disappears correctly, but a separate highlight state on the button stays lit even after
+  a real mouse hover elsewhere. Reported live, not yet investigated — likely a QSS dynamic-property
+  (`kbdnav`-shaped) not being unset on the same transition that clears the marker, same general
+  shape as the "unpolish/polish on a parent does NOT re-resolve a child's cached style" CLAUDE.md
+  gotcha, though not confirmed to be that specific mechanism yet.
+
 ### Keyboard navigation — remaining surfaces
 Branch `feature/traveling-focus-marker` (not merged). The whole Settings panel (Themes, Look,
 Controls, Audio, Library) plus Speed, Sleep, and Sprint are all arrow-navigable as of
