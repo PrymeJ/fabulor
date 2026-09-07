@@ -21,13 +21,29 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
   matching symptom with the Excluded Books case above, check whether both share one root cause
   (e.g. something during the scan/rescan flow claiming real Qt focus without a matching release)
   before treating them as two separate bugs.
-- [2026-09-08] Speed/Sleep/Sprint "ramp-up" buttons: the keyboard traveling-marker highlight on
-  these buttons doesn't clear when keyboard nav moves on or the mouse takes over — the marker
-  itself disappears correctly, but a separate highlight state on the button stays lit even after
-  a real mouse hover elsewhere. Reported live, not yet investigated — likely a QSS dynamic-property
-  (`kbdnav`-shaped) not being unset on the same transition that clears the marker, same general
-  shape as the "unpolish/polish on a parent does NOT re-resolve a child's cached style" CLAUDE.md
-  gotcha, though not confirmed to be that specific mechanism yet.
+- [2026-09-08] Speed/Sleep/Sprint "ramp-up" buttons' highlight not clearing — FIXED. Root cause:
+  each panel's per-instance ramp stylesheet (`_apply_preset_ramp_colors`) had a bare, unscoped
+  `QPushButton:focus` rule for the keyboard-cursor highlight. These buttons keep REAL Qt focus by
+  design even after the traveling marker itself stops being drawn (its own idle self-fade, or an
+  instant `clear()` when the mouse takes over — see `_set_keyboard_nav_active`/
+  `_update_focus_marker` in app.py), so the bare `:focus` rule kept matching and the highlight
+  stayed lit indefinitely. Fixed by scoping the rule to `[kbdnav="true"]` (same ancestor-scoped
+  pattern the adjacent `:hover`/`:focus:hover` suppression rules already used) in all three
+  panels — the highlight now disappears the instant `[kbdnav]` flips false, same timing as
+  `clear()`.
+
+### Ramp-up button highlight: animated fade instead of an instant snap-off
+- [2026-09-08] Follow-up to the fix above, explicitly deferred: the highlight now disappears
+  instantly when keyboard mode ends, matching the marker's `clear()` timing — but the marker's
+  OWN idle self-fade (patrol → slow → wait → fade, see `focus_marker.py`'s `_fade_anim`) is a
+  smooth animation, and the button's highlight still just snaps off underneath it rather than
+  fading in sync. Live design ask: make the ramp button's highlight fade out together with the
+  marker's fade, in both cases (idle self-fade AND mouse-takeover clear). Not a QSS-only fix —
+  `setStyleSheet`-driven background colors aren't natively animatable; needs a real animated
+  color property on the ramp buttons (a `QVariantAnimation`-driven `Property(QColor)`, the same
+  general shape `ClickSlider`/`FreezableLabel` already use elsewhere in this app for animated
+  colors) wired to fire whenever `TravelingFocusMarker` begins fading or clears. Touches all
+  three panels (Speed/Sleep/Sprint) since they share the same ramp-button pattern. Not started.
 
 ### Diacritic-insensitive library search
 - [2026-09-08] Raised live: an author like Meša Selimović can't be searched by typing "mesa" (no

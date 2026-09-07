@@ -972,7 +972,11 @@ class SprintPanel(QWidget):
                 # SleepTimerPanel._apply_preset_ramp_colors exactly (2026-09-07 fix; see that
                 # method's comments for the full reasoning). Reported live: this grid showed
                 # the marker with no hover-style highlight underneath it, unlike Sleep's.
-                f"QPushButton:focus {{ background-color: rgb({hover_c.red()}, {hover_c.green()}, {hover_c.blue()}); }}"
+                # Focus rule SCOPED to [kbdnav="true"] (was bare :focus until 2026-09-08) —
+                # see SleepTimerPanel._apply_preset_ramp_colors's comment on why an unscoped
+                # rule left the highlight lit indefinitely after the marker itself vanished.
+                f"QWidget#sprint_panel[kbdnav=\"true\"] QPushButton:focus {{ "
+                f"background-color: rgb({hover_c.red()}, {hover_c.green()}, {hover_c.blue()}); }}"
                 f"QWidget#sprint_panel[kbdnav=\"true\"] QPushButton:hover {{ "
                 f"background-color: rgb({c.red()}, {c.green()}, {c.blue()}); }}"
                 f"QWidget#sprint_panel[kbdnav=\"true\"] QPushButton:focus:hover {{ "

@@ -306,16 +306,23 @@ class SpeedControlsPanel(QWidget):
                 f"color: {btn_text}; border: none; }}"
                 f"QPushButton:hover {{ background-color: rgb({hover_c.red()}, {hover_c.green()}, {hover_c.blue()}); }}"
                 f"QPushButton:pressed {{ background-color: rgb({pressed_c.red()}, {pressed_c.green()}, {pressed_c.blue()}); }}"
-                # Keyboard-navigation's look for the grid's current cell — a plain :focus rule
-                # (these are ordinary QPushButtons that receive real Qt focus when
-                # MainWindow._handle_panel_grid_arrows moves the cursor onto them, unlike
-                # Themes' NoFocus swatches). Mirrors sleep_timer.py's identical fix exactly —
-                # see _apply_preset_ramp_colors there for the full reasoning (must be its own
-                # rule in THIS per-instance setStyleSheet, since it wins over any shared
-                # panel-level QSS, same as :hover/:pressed above). Reported live 2026-09-07:
-                # this grid showed the marker with no hover-style highlight underneath it,
-                # unlike Sleep's identical grid, which already had this rule.
-                f"QPushButton:focus {{ background-color: rgb({hover_c.red()}, {hover_c.green()}, {hover_c.blue()}); }}"
+                # Keyboard-navigation's look for the grid's current cell — SCOPED to
+                # [kbdnav="true"] (was a bare QPushButton:focus rule until 2026-09-08).
+                # These buttons are ordinary QPushButtons that receive real Qt focus when
+                # MainWindow._handle_panel_grid_arrows moves the cursor onto them, and —
+                # by design (see _set_keyboard_nav_active/_update_focus_marker in app.py)
+                # — KEEP that real focus even after the traveling marker itself stops
+                # being drawn (idle self-fade, or an instant clear() when the mouse takes
+                # over), so a later Tab/keyboard nav can resume from where it left off. A
+                # bare :focus rule has no knowledge of that and stayed lit indefinitely —
+                # reported live 2026-09-08: "the marker stops and disappears... but the
+                # highlight stays even if I use the mouse." Scoping to [kbdnav="true"]
+                # makes the highlight disappear in the SAME instant [kbdnav] flips false,
+                # i.e. exactly when _set_keyboard_nav_active(False) runs — matching
+                # clear()'s own instant timing. (A fade in sync with the marker's own
+                # idle self-fade is a separate, larger follow-up — see TODO.md.)
+                f"QWidget#speed_panel[kbdnav=\"true\"] QPushButton:focus {{ "
+                f"background-color: rgb({hover_c.red()}, {hover_c.green()}, {hover_c.blue()}); }}"
                 # Keyboard-mode hover suppression — the mouse-hovered button, if different from
                 # the keyboard-focused one, must not also light up. Same ancestor-scoped-
                 # selector-inside-a-per-instance-stylesheet trick sleep_timer.py's version uses
