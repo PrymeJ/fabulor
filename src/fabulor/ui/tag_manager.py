@@ -150,12 +150,22 @@ class _ThumbFocusRing(QWidget):
         self.update()
 
     def paintEvent(self, event):
+        # Filled-frame technique (outer rect minus inner rect, via fillRect)
+        # rather than a stroked drawRect — a stroked rect was reported live
+        # as missing its top-left and bottom-left corner pixels (the
+        # thumbnail showing through). A non-antialiased QPainter stroke on a
+        # closed rect draws its four edges as separate segments and can drop
+        # a corner pixel where two perpendicular 2px-wide segments should
+        # overlap; filling four solid border bands has no such seam — each
+        # band is a plain opaque rect, and the four together always cover
+        # every corner completely regardless of pen/join-style quirks.
         painter = QPainter(self)
-        pen = painter.pen()
-        pen.setColor(self._color)
-        pen.setWidth(2)
-        painter.setPen(pen)
-        painter.drawRect(self.rect().adjusted(1, 1, -2, -2))
+        thickness = 2
+        r = self.rect()
+        painter.fillRect(r.x(), r.y(), r.width(), thickness, self._color)  # top
+        painter.fillRect(r.x(), r.bottom() - thickness + 1, r.width(), thickness, self._color)  # bottom
+        painter.fillRect(r.x(), r.y(), thickness, r.height(), self._color)  # left
+        painter.fillRect(r.right() - thickness + 1, r.y(), thickness, r.height(), self._color)  # right
         painter.end()
 
 
@@ -181,7 +191,12 @@ class _DotFocusRing(QWidget):
         pen.setColor(self._color)
         pen.setWidth(2)
         painter.setPen(pen)
-        painter.drawEllipse(self.rect().adjusted(1, 1, -2, -2))
+        # Same symmetric-inset fix as _ThumbFocusRing above, for the same
+        # reason: adjusted(1,1,-2,-2) insets the bottom/right 1px more than
+        # the top/left for a 2px pen, which reads as the ring sitting
+        # slightly toward the top-left of where it should be centered —
+        # reported live as "not sharp enough, and it is in the wrong place."
+        painter.drawEllipse(self.rect().adjusted(1, 1, -1, -1))
         painter.end()
 
 
@@ -1031,7 +1046,7 @@ class TagManagerWidget(QWidget):
             prev_ring.hide()
         self._color_kbdnav_index = index
         _, _, ring = self._color_picker_dots[index]
-        color = self._current_theme.get("tags_kbdnav_ring", self._current_theme.get("accent", "#ffffff"))
+        color = self._current_theme.get("tags_kbdnav_ring", self._current_theme.get("accent_light", "#ffffff"))
         ring.set_color(color)
         ring.show()
         ring.raise_()
@@ -1607,10 +1622,11 @@ class TagManagerWidget(QWidget):
             self._book_grid.set_placeholder_color(self._placeholder_color_tags)
         # Keyboard-cursor focus ring color (2026-09-08 follow-up) — was
         # hardcoded white, which reads poorly against light-background themes
-        # (live report). Same optional-override-with-fallback convention as
-        # library_item_keyboard_color/focus_folder_list_dot elsewhere in this
-        # app: tags_kbdnav_ring falls back to accent.
-        kbdnav_ring_color = resolved.get('tags_kbdnav_ring', resolved.get('accent', '#ffffff'))
+        # (live report); briefly fell back to accent, then switched to
+        # accent_light after a live "not sharp/needs to be lighter" report —
+        # matches focus_folder_list_dot's own convention for a similarly
+        # thin/small focus affordance.
+        kbdnav_ring_color = resolved.get('tags_kbdnav_ring', resolved.get('accent_light', '#ffffff'))
         if hasattr(self, '_book_grid'):
             self._book_grid.set_kbdnav_color(kbdnav_ring_color)
         if hasattr(self, '_color_kbdnav_index') and self._color_kbdnav_index is not None:

@@ -29,6 +29,16 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
   shape as the "unpolish/polish on a parent does NOT re-resolve a child's cached style" CLAUDE.md
   gotcha, though not confirmed to be that specific mechanism yet.
 
+### Tags list type-ahead letter jump
+- [2026-09-08] Idea from live testing: pressing a letter while the tag list has the keyboard
+  cursor cycles through tags starting with that letter (repeat presses advance to the next match,
+  same behavior as Qt's own native list type-ahead search). Asked about specifically re:
+  performance, especially around panel slides — assessed as cheap and not a concern: the tag list
+  is a small scroll area of already-materialized row widgets (tens of tags in practice, not
+  thousands), a keypress-triggered linear scan over their text is O(n) on a small n with no I/O,
+  and it's a discrete per-keypress action, not something that runs per-frame during a slide
+  animation. Not started — deferred as a nice-to-have, not blocking anything.
+
 ### Keyboard navigation — remaining surfaces
 Branch `feature/traveling-focus-marker` (not merged). The whole Settings panel (Themes, Look,
 Controls, Audio, Library) plus Speed, Sleep, and Sprint are all arrow-navigable as of
