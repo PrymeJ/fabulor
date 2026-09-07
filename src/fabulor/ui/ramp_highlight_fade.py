@@ -21,8 +21,9 @@ draws ONLY its text (no fill of its own to hide the overlay) — the button's
 temporarily sourced from the overlay instead of its own QSS `background-color`.
 """
 from PySide6.QtCore import Qt, QVariantAnimation, QEasingCurve
-from PySide6.QtGui import QColor, QPainter
+from PySide6.QtGui import QColor, QPainter, QPainterPath
 from PySide6.QtWidgets import QWidget
+from .focus_marker import _BUTTON_CORNER_RADIUS
 
 # Matches focus_marker.py's own _FADE_MS exactly, by explicit live design call
 # (2026-09-08): the ramp button's highlight should visually finish fading at the
@@ -31,9 +32,18 @@ _FADE_MS = 750
 
 
 class _RampHighlightOverlay(QWidget):
-    """Sibling overlay painting a solid, alpha-fading rect BEHIND one ramp
-    button — see this module's docstring for the stacking order and why it
-    matters."""
+    """Sibling overlay painting a solid, alpha-fading ROUNDED rect BEHIND one
+    ramp button — see this module's docstring for the stacking order and why
+    it matters. Rounded, not a plain fillRect: the ramp buttons render with a
+    4px corner radius from the panel-level QSS (get_speed_stylesheet's base
+    QPushButton rule — the per-instance ramp stylesheet never overrides
+    border-radius, so that rule still applies underneath), which is exactly
+    what TravelingFocusMarker itself traces (_BUTTON_CORNER_RADIUS, imported
+    from there rather than a second hardcoded 4.0 so the two can't drift
+    apart). A square-cornered overlay visibly overshot the button's real
+    rounded shape at each corner — reported live 2026-09-08 with a
+    screenshot: a flat square edge peeking out past the marker's own rounded
+    trace."""
 
     def __init__(self, parent):
         super().__init__(parent)
@@ -47,7 +57,10 @@ class _RampHighlightOverlay(QWidget):
 
     def paintEvent(self, event):
         painter = QPainter(self)
-        painter.fillRect(self.rect(), self._color)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        path = QPainterPath()
+        path.addRoundedRect(self.rect(), _BUTTON_CORNER_RADIUS, _BUTTON_CORNER_RADIUS)
+        painter.fillPath(path, self._color)
         painter.end()
 
 
