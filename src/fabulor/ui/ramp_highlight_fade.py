@@ -9,15 +9,16 @@ tick would mean reconstructing the WHOLE per-button stylesheet (hover, pressed,
 the mouse-hover-suppression rules) each frame, and risks the fade visibly
 fighting a real hover/press during the animation.
 
-A sibling overlay widget avoids all of that — same technique tag_manager.py's
-_ThumbFocusRing/_DotFocusRing already use for the same underlying reason (Qt
-paints a parent before its children, so an overlay is the only way to guarantee
-something paints on TOP regardless of the button's own content). The overlay is
-a solid rect in the button's OWN hover color, alpha-animated 255->0 over the
-marker's own _FADE_MS — the button's real QSS keeps painting underneath
-unchanged, so hover/press still work normally through the fade, and cancelling
-the fade (a fresh arrow-press, or this button regaining focus) is just hiding
-the overlay, no stylesheet reconstruction needed either way.
+A sibling overlay widget avoids the stylesheet-juggling problem, but the first
+version of this (2026-09-08) got the STACKING wrong: it raised the overlay ABOVE
+the button, so at full opacity it painted over the button's own text — reported
+live as "it fades away the text too... a dark rectangle." The overlay must sit
+BEHIND the button, and the button's own background must go transparent for the
+fade's duration, so the sequence each frame is: overlay's fading color paints
+first (the new background), then the button's own native paint runs on top and
+draws ONLY its text (no fill of its own to hide the overlay) — the button's
+`color`/font stays exactly as normal throughout, only its background is
+temporarily sourced from the overlay instead of its own QSS `background-color`.
 """
 from PySide6.QtCore import Qt, QVariantAnimation, QEasingCurve
 from PySide6.QtGui import QColor, QPainter
@@ -30,9 +31,9 @@ _FADE_MS = 750
 
 
 class _RampHighlightOverlay(QWidget):
-    """Sibling overlay painting a solid, alpha-fading rect over one ramp button —
-    see this module's docstring for why an overlay rather than a stylesheet
-    animation."""
+    """Sibling overlay painting a solid, alpha-fading rect BEHIND one ramp
+    button — see this module's docstring for the stacking order and why it
+    matters."""
 
     def __init__(self, parent):
         super().__init__(parent)
@@ -59,17 +60,31 @@ class RampHighlightFade:
     def __init__(self):
         self._overlay: _RampHighlightOverlay | None = None
         self._anim: QVariantAnimation | None = None
+        self._btn: QWidget | None = None
+        self._btn_normal_stylesheet: str = ""
 
     def begin(self, btn: QWidget, hover_color: QColor) -> None:
         """(Re)start a fade-out on `btn`, from `hover_color` at full opacity down
         to fully transparent, over _FADE_MS. A previous fade on a DIFFERENT
-        button (if any) is cancelled and its overlay hidden first."""
+        button (if any) is cancelled and fully restored first."""
         self.cancel()
-        overlay = _RampHighlightOverlay(btn)
-        overlay.setGeometry(btn.rect())
+        # The button's own background must go transparent for the fade's
+        # duration — otherwise its normal QSS background-color paints ON TOP
+        # of the overlay every frame (buttons paint after their siblings once
+        # the overlay is lowered) and the fade is invisible. `background:
+        # transparent` overrides the QPushButton rule's background-color
+        # without touching color/border/font, and Qt's cascade lets a later
+        # declaration win within the same selector — appending it after the
+        # button's existing stylesheet is enough, no need to parse/rebuild it.
+        self._btn_normal_stylesheet = btn.styleSheet()
+        btn.setStyleSheet(
+            self._btn_normal_stylesheet + " QPushButton { background: transparent; }"
+        )
+        overlay = _RampHighlightOverlay(btn.parentWidget())
+        overlay.setGeometry(btn.geometry())
         overlay.set_color(hover_color)
         overlay.show()
-        overlay.raise_()
+        overlay.lower()  # BEHIND the button, not above it — see module docstring
         anim = QVariantAnimation()
         anim.setDuration(_FADE_MS)
         anim.setEasingCurve(QEasingCurve.Type.InOutQuad)
@@ -82,19 +97,38 @@ class RampHighlightFade:
             overlay.set_color(c)
 
         anim.valueChanged.connect(_on_tick)
-        anim.finished.connect(overlay.deleteLater)
+        anim.finished.connect(self._on_finished)
         anim.start()
         self._overlay = overlay
         self._anim = anim
+        self._btn = btn
+
+    def _on_finished(self) -> None:
+        # The fade completed on its own (never interrupted by cancel()) —
+        # restore the button's real stylesheet and drop the overlay.
+        self._restore_and_clear()
 
     def cancel(self) -> None:
-        """Stop any in-flight fade and remove its overlay immediately — the
-        caller is about to reassert (or has already reasserted) the button's
-        own normal highlighted style itself, so there's nothing left for the
-        overlay to sit on top of."""
+        """Stop any in-flight fade, restore the button's real stylesheet
+        (undoing begin()'s `background: transparent` override), and remove
+        the overlay — all immediately. MUST restore the stylesheet itself:
+        _apply_preset_ramp_colors (the only thing that would otherwise
+        reassert it) runs on theme/selection changes, NOT on every focus
+        move, so a caller of cancel() (a fresh arrow-press/Tab landing on a
+        DIFFERENT button, or _enter_patrol's unconditional call on every
+        resume) cannot be assumed to trigger a reassert on its own — an
+        earlier version of this method assumed exactly that and left the
+        button's background permanently transparent after any interrupted
+        fade."""
+        self._restore_and_clear()
+
+    def _restore_and_clear(self) -> None:
         if self._anim is not None:
             self._anim.stop()
             self._anim = None
+        if self._btn is not None:
+            self._btn.setStyleSheet(self._btn_normal_stylesheet)
+            self._btn = None
         if self._overlay is not None:
             self._overlay.deleteLater()
             self._overlay = None
