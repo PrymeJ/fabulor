@@ -437,18 +437,21 @@ class SleepTimerPanel(QWidget):
                 # synthetic kbdnav_hover PROPERTY because they never receive real Qt focus —
                 # see theme_manager.py's _set_kbdnav_swatch_hover), these buttons are ordinary
                 # QPushButtons that DO receive real focus when MainWindow._handle_panel_grid_
-                # arrows moves the cursor onto them. SCOPED to [kbdnav="true"] (was a bare
-                # :focus rule until 2026-09-08) — these buttons keep real Qt focus by design
-                # even after the traveling marker stops being drawn (idle self-fade, or an
-                # instant clear() on mouse takeover — see _set_keyboard_nav_active/
-                # _update_focus_marker in app.py), so an unscoped rule stayed lit
-                # indefinitely: reported live as "the marker stops and disappears... but the
-                # highlight stays even if I use the mouse." Scoping makes it disappear the
-                # same instant [kbdnav] flips false, matching clear()'s own timing. Must be
-                # its own rule in THIS per-instance setStyleSheet regardless, since it wins
-                # over any shared panel-level QSS — same reason :hover/:pressed need
-                # restating above.
-                f"QWidget#sleep_panel[kbdnav=\"true\"] QPushButton:focus {{ "
+                # arrows moves the cursor onto them. SCOPED to
+                # [kbdnav="true"][kbdnav_marker_active="true"] (was a bare :focus rule until
+                # 2026-09-08, then just [kbdnav="true"]) — these buttons keep real Qt focus by
+                # design even after the traveling marker stops being drawn. [kbdnav="true"]
+                # alone answers "is keyboard mode active", which stays true through the
+                # marker's OWN idle self-fade — a different question from "is the marker
+                # actually visible right now", so that alone left the highlight lit long
+                # after the fade finished: reported live 2026-09-08, "the marker disappears
+                # after inactivity, but the highlight lingers until I hover with mouse
+                # somewhere or press arrows or Tab." kbdnav_marker_active is set by
+                # MainWindow._on_focus_marker_dormant_changed, called directly from
+                # TravelingFocusMarker on every dormant<->active transition. Must be its own
+                # rule in THIS per-instance setStyleSheet regardless, since it wins over any
+                # shared panel-level QSS — same reason :hover/:pressed need restating above.
+                f"QWidget#sleep_panel[kbdnav=\"true\"][kbdnav_marker_active=\"true\"] QPushButton:focus {{ "
                 f"background-color: rgb({hover_c.red()}, {hover_c.green()}, {hover_c.blue()}); }}"
                 # Keyboard-mode hover suppression, same contract/reasoning as Settings'
                 # #pattern_button rules (get_settings_stylesheet): while the keyboard is

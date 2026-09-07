@@ -4946,6 +4946,44 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self._kbdnav_cursor_anchor = None
             self._kbdnav_cursor_poll.stop()
 
+    def _on_focus_marker_dormant_changed(self, dormant: bool) -> None:
+        """Called by TravelingFocusMarker itself (it holds `main_window` and calls back
+        directly, no signal plumbing needed) whenever it transitions to/from being visibly
+        hidden WHILE keyboard mode is still logically active — its own idle self-fade
+        finishing (dormant=True), a fresh Tab/arrow-press resuming patrol on a target
+        (dormant=False), or clear() firing for a reason other than [kbdnav] itself flipping
+        false (dormant=True; e.g. focus moving out of the marker's tracked scope while
+        keyboard mode stays on).
+
+        Exists because `kbdnav="true"` on the panel (see _set_keyboard_nav_active) answers
+        "is keyboard mode active", not "is the marker actually visible right now" — those
+        are different questions once the marker's own idle-fade is in the picture. The
+        ramp buttons' (Speed/Sleep/Sprint) keyboard-highlight QSS rule used to be gated on
+        [kbdnav="true"] alone, which stays true through the whole idle-fade, so the
+        highlight stayed lit long after the marker itself had faded to nothing — reported
+        live 2026-09-08: "the marker disappears after inactivity, but the highlight
+        lingers." A second property, `kbdnav_marker_active`, tracks the narrower question;
+        the ramp buttons' QSS rule is now gated on BOTH properties.
+
+        Same shape as _set_keyboard_nav_active's own repolish (set property, unpolish,
+        polish every button under the panel) — deliberately not reusing that method itself,
+        since this property is orthogonal to `kbdnav` and must be settable independently of
+        it (dormant can flip true/false many times while `kbdnav` stays true throughout)."""
+        panel_key = self._kbdnav_active_panel_key()
+        panel = self._kbdnav_panel_widget(panel_key) if panel_key is not None else None
+        if panel is None:
+            return
+        value = "false" if dormant else "true"
+        if panel.property("kbdnav_marker_active") == value:
+            return
+        panel.setProperty("kbdnav_marker_active", value)
+        panel.style().unpolish(panel)
+        panel.style().polish(panel)
+        for btn in panel.findChildren(QPushButton):
+            btn.style().unpolish(btn)
+            btn.style().polish(btn)
+            btn.update()
+
     def _on_kbdnav_cursor_poll(self) -> None:
         """Hand the UI back to the mouse when the cursor is genuinely ON a control it could
         act on — a Look-tab button or a settings tab — not merely because it moved.

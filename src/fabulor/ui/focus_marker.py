@@ -615,11 +615,21 @@ class TravelingFocusMarker(QWidget):
 
     def clear(self) -> None:
         """Focus left the scope (or the panel closed). Stop everything, hide."""
+        was_dormant = self._phase == _Phase.IDLE
         self._target = None
         self._perimeter = None
         self._phase = _Phase.IDLE
         self._stop_all_timers()
         self.hide()
+        # Covers the one path where a ramp button's [kbdnav]-gated highlight
+        # could otherwise outlive the marker: _update_focus_marker's
+        # "focus moved out of scope but keyboard mode is STILL active" branch
+        # calls clear() without [kbdnav] itself flipping false (that only
+        # happens via _set_keyboard_nav_active, a separate call). The
+        # _on_fade_finished notification covers the idle-fade case; this
+        # covers every other way the marker can go from showing to hidden.
+        if not was_dormant:
+            self.main_window._on_focus_marker_dormant_changed(True)
 
     def reposition(self) -> None:
         """Re-map the target's rect after a layout shift (e.g. a tab switch that moved things).
@@ -632,6 +642,7 @@ class TravelingFocusMarker(QWidget):
     # ── phase transitions ────────────────────────────────────────────────────────────
 
     def _enter_patrol(self) -> None:
+        was_dormant = self._phase == _Phase.IDLE
         self._phase = _Phase.PATROL
         self._alpha = 255
         self._slow_factor = 1.0
@@ -648,6 +659,12 @@ class TravelingFocusMarker(QWidget):
             self._clock.restart()
             self._motion_timer.start()
         self.update()
+        # Tell MainWindow the marker is visibly active again — see
+        # _on_fade_finished's own notification for why this exists (a QSS
+        # highlight riding on [kbdnav="true"] alone has no way to know the
+        # marker has gone dormant vs. is genuinely showing).
+        if was_dormant:
+            self.main_window._on_focus_marker_dormant_changed(False)
 
     def _begin_slowing(self) -> None:
         if self._target is None or self._phase != _Phase.PATROL:
@@ -681,6 +698,16 @@ class TravelingFocusMarker(QWidget):
         self._phase = _Phase.IDLE
         self._alpha = 0
         self.hide()
+        # A ramp button's own keyboard-highlight QSS rule (Speed/Sleep/Sprint's
+        # _apply_preset_ramp_colors) is gated on the panel's [kbdnav="true"]
+        # property alone, which stays true for the whole time keyboard mode
+        # is logically active — including while the marker itself has
+        # idle-faded to nothing. Without this notification the highlight had
+        # no way to know the marker had gone dormant and stayed lit
+        # indefinitely after the fade finished, reported live 2026-09-08:
+        # "the marker disappears after inactivity, but the highlight lingers
+        # until I hover with mouse somewhere or press arrows or Tab."
+        self.main_window._on_focus_marker_dormant_changed(True)
 
     # ── driven ticks ─────────────────────────────────────────────────────────────────
 
