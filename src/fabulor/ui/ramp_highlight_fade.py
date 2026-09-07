@@ -100,7 +100,16 @@ class RampHighlightFade:
         overlay.lower()  # BEHIND the button, not above it — see module docstring
         anim = QVariantAnimation()
         anim.setDuration(_FADE_MS)
-        anim.setEasingCurve(QEasingCurve.Type.InOutQuad)
+        # LINEAR, not InOutQuad — must match focus_marker.py's own _fade_anim,
+        # which sets no easing curve at all (Qt's default is Linear). Traced
+        # live 2026-09-08: with InOutQuad, alpha stays above 90% opacity for
+        # the first ~10% of the duration and then drops from 82 to 0 in the
+        # LAST 40% — the two fades were correctly synced in TIME (confirmed
+        # by [RAMP-FADE-TRACE] timestamps, both landing within ~25ms of each
+        # other) but not in CURVE, so the button read as barely dimming at
+        # all until near the very end, then dropping fast — exactly the
+        # reported "corners gone, but it snaps."
+        anim.setEasingCurve(QEasingCurve.Type.Linear)
         anim.setStartValue(255)
         anim.setEndValue(0)
 
