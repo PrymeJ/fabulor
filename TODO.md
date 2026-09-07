@@ -23,6 +23,18 @@ so it can escape into an unrelated row). Settings' own rows have never shown thi
 2026-09-07 investigation concluded it was "never actually safe there either, just lucky" — not
 yet reproduced or fixed, flagged here so it isn't forgotten if it ever surfaces.
 
+### Book-detail keyboard shortcut consistency across panels
+- [2026-09-08] Tags' thumbnail grid gained Shift+Enter/Shift+Space AND Alt+Enter/Alt+Space, both
+  opening book detail (right-click equivalent) — Alt added alongside Shift specifically because
+  Library already uses Alt+Enter for the same action there, and the two panels having different
+  modifiers for the identical gesture was judged confusing. Two follow-ups deliberately deferred
+  rather than done as part of that fix: (1) give Library's own keyboard nav a matching Shift+Enter,
+  so both panels accept either modifier consistently; (2) decide whether Speed/Sleep/Sprint's
+  Shift-modifier "other click" convention (established 2026-09-07 Session 1) should ALSO accept
+  Alt+Enter for consistency — those three panels don't have a book-detail-shaped action, so what
+  "the other click" would even mean for Alt there needs its own decision, not just a mechanical
+  modifier addition.
+
 ### Listening Sprint backward-seek compensation doesn't net forward+backward excursions
 - [2026-08-11] The pure tick-to-tick `_last_known_pos` diff in `SprintPanel.update_sprint_state`
   can't tell a genuine rewind from "seeked forward then came back" — seeking forward 20 minutes then
