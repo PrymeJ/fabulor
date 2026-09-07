@@ -666,7 +666,21 @@ class TagManagerWidget(QWidget):
                 if tag:
                     self._open_tag(tag)
             return True
-        current = self._kbdnav_row_index if self._kbdnav_row_index is not None else -1
+        # Pick up from wherever the MOUSE is currently hovering, when no keyboard
+        # cursor is active yet — live design call, 2026-09-08: "can down arrow be
+        # made to go to the next tag after grimdark [the currently mouse-hovered
+        # row], while still taking away the mouse highlight? This way it would be
+        # made like just one marker." ScrollHoverTracker.hovered_row is exactly
+        # the hook its own docstring names for this ("so a future keyboard cursor
+        # can coordinate with it rather than guess") — read ONLY when there is no
+        # existing keyboard cursor (self._kbdnav_row_index is None), so an
+        # in-progress keyboard session never gets silently reset to wherever the
+        # mouse happens to be resting from an earlier, unrelated hover.
+        if self._kbdnav_row_index is None:
+            hovered = self._row_hover.hovered_row
+            current = rows.index(hovered) if hovered in rows else -1
+        else:
+            current = self._kbdnav_row_index
         if key == Qt.Key.Key_Down:
             self._set_kbdnav_row(min(current + 1, len(rows) - 1) if current >= 0 else 0)
         elif key == Qt.Key.Key_Up:
