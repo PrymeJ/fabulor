@@ -971,6 +971,7 @@ class SprintPanel(QWidget):
             # MainWindow when the traveling marker starts fading) doesn't need to
             # re-derive the ramp index/theme math — see ramp_highlight_fade.py.
             btn._ramp_hover_color = QColor(hover_c)
+            btn._ramp_base_color = QColor(c)
             btn.setStyleSheet(
                 f"QPushButton {{ background-color: rgb({c.red()}, {c.green()}, {c.blue()}); "
                 f"color: {btn_text}; border: none; }}"
@@ -1000,9 +1001,13 @@ class SprintPanel(QWidget):
         if btn not in self._sprint_presets_buttons:
             return
         hover_color = getattr(btn, '_ramp_hover_color', None)
-        if hover_color is None:
+        base_color = getattr(btn, '_ramp_base_color', None)
+        if hover_color is None or base_color is None:
             return
-        self._ramp_highlight_fade.begin(btn, hover_color)
+        self._ramp_highlight_fade.begin(
+            btn, hover_color, base_color,
+            'QWidget#sprint_panel[kbdnav="true"][kbdnav_marker_active="true"] QPushButton:focus'
+        )
 
     def cancel_ramp_highlight_fade(self) -> None:
         """Called by MainWindow whenever the marker resumes patrol — see

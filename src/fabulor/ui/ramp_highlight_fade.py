@@ -3,65 +3,39 @@
 The ramp buttons (Speed's speed grid, Sleep's/Sprint's duration-preset grids) are
 plain QPushButtons styled via per-instance setStyleSheet (see each panel's
 _apply_preset_ramp_colors) for their base/hover/pressed/keyboard-focus colors.
-Animating that highlight in sync with TravelingFocusMarker's own fade (see
-focus_marker.py's _FADE_MS) by juggling setStyleSheet strings on every animation
-tick would mean reconstructing the WHOLE per-button stylesheet (hover, pressed,
-the mouse-hover-suppression rules) each frame, and risks the fade visibly
-fighting a real hover/press during the animation.
 
-A sibling overlay widget avoids the stylesheet-juggling problem, but the first
-version of this (2026-09-08) got the STACKING wrong: it raised the overlay ABOVE
-the button, so at full opacity it painted over the button's own text — reported
-live as "it fades away the text too... a dark rectangle." The overlay must sit
-BEHIND the button, and the button's own background must go transparent for the
-fade's duration, so the sequence each frame is: overlay's fading color paints
-first (the new background), then the button's own native paint runs on top and
-draws ONLY its text (no fill of its own to hide the overlay) — the button's
-`color`/font stays exactly as normal throughout, only its background is
-temporarily sourced from the overlay instead of its own QSS `background-color`.
+Two earlier designs were tried and abandoned this same session (2026-09-08),
+both confirmed wrong by live screenshots, not assumption:
+
+1. A sibling overlay RAISED above the button — painted over the button's own
+   text at full opacity ("it fades away the text too... a dark rectangle").
+2. A sibling overlay LOWERED behind the button, with the button's background
+   made transparent so the overlay would show through — the fade LOGIC was
+   confirmed correct via live tracing (alpha genuinely ran 254->0 over the
+   right ~750ms), but the color never visibly changed on screen until the
+   very end (two screenshots at "marker stopped" and "marker almost done
+   fading" showed the IDENTICAL highlight color, then it snapped) — a Qt
+   repaint/compositing gap specific to a lowered sibling behind a
+   transparent-background widget, not a logic bug.
+
+This version interpolates the button's OWN `:focus` background-color directly,
+via setStyleSheet, on every animation tick — no overlay widget at all. It is
+the button's own native paint updating, which is guaranteed to actually
+repaint (unlike a lowered sibling's compositing), at the cost of a
+setStyleSheet call per frame instead of a cheap widget update(). The button's
+full base stylesheet (hover/pressed/kbdnav rules) is preserved verbatim; only
+one extra `:focus` rule is appended with the CURRENT interpolated color,
+exploiting Qt's stylesheet cascade (a later declaration for the same selector
+wins) rather than reconstructing the whole sheet.
 """
-from PySide6.QtCore import Qt, QVariantAnimation, QEasingCurve
-from PySide6.QtGui import QColor, QPainter, QPainterPath
+from PySide6.QtCore import QVariantAnimation, QEasingCurve
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QWidget
-from .focus_marker import _BUTTON_CORNER_RADIUS
 
 # Matches focus_marker.py's own _FADE_MS exactly, by explicit live design call
 # (2026-09-08): the ramp button's highlight should visually finish fading at the
 # same moment the marker itself finishes fading, not before or after.
 _FADE_MS = 750
-
-
-class _RampHighlightOverlay(QWidget):
-    """Sibling overlay painting a solid, alpha-fading ROUNDED rect BEHIND one
-    ramp button — see this module's docstring for the stacking order and why
-    it matters. Rounded, not a plain fillRect: the ramp buttons render with a
-    4px corner radius from the panel-level QSS (get_speed_stylesheet's base
-    QPushButton rule — the per-instance ramp stylesheet never overrides
-    border-radius, so that rule still applies underneath), which is exactly
-    what TravelingFocusMarker itself traces (_BUTTON_CORNER_RADIUS, imported
-    from there rather than a second hardcoded 4.0 so the two can't drift
-    apart). A square-cornered overlay visibly overshot the button's real
-    rounded shape at each corner — reported live 2026-09-08 with a
-    screenshot: a flat square edge peeking out past the marker's own rounded
-    trace."""
-
-    def __init__(self, parent):
-        super().__init__(parent)
-        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
-        self._color = QColor("#ffffff")
-        self.hide()
-
-    def set_color(self, color: QColor) -> None:
-        self._color = color
-        self.update()
-
-    def paintEvent(self, event):
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        path = QPainterPath()
-        path.addRoundedRect(self.rect(), _BUTTON_CORNER_RADIUS, _BUTTON_CORNER_RADIUS)
-        painter.fillPath(path, self._color)
-        painter.end()
 
 
 class RampHighlightFade:
@@ -71,77 +45,66 @@ class RampHighlightFade:
     always cancels whatever fade was already showing."""
 
     def __init__(self):
-        self._overlay: _RampHighlightOverlay | None = None
         self._anim: QVariantAnimation | None = None
         self._btn: QWidget | None = None
         self._btn_normal_stylesheet: str = ""
+        self._focus_selector: str = ""
 
-    def begin(self, btn: QWidget, hover_color: QColor) -> None:
-        """(Re)start a fade-out on `btn`, from `hover_color` at full opacity down
-        to fully transparent, over _FADE_MS. A previous fade on a DIFFERENT
-        button (if any) is cancelled and fully restored first."""
+    def begin(self, btn: QWidget, hover_color: QColor, base_color: QColor,
+              focus_selector: str) -> None:
+        """(Re)start a fade-out on `btn`'s :focus background, from `hover_color`
+        down to `base_color` (its own normal, un-highlighted ramp color), over
+        _FADE_MS. `focus_selector` is the exact QSS selector string that
+        currently paints the highlight (e.g.
+        'QWidget#speed_panel[kbdnav="true"][kbdnav_marker_active="true"] QPushButton:focus')
+        — passed in rather than hardcoded here so this module stays panel-
+        agnostic; each panel already builds this selector for its own base
+        stylesheet and can hand over the same string. A previous fade on a
+        DIFFERENT button (if any) is cancelled and fully restored first."""
         self.cancel()
-        # The button's own background must go transparent for the fade's
-        # duration — otherwise its normal QSS background-color paints ON TOP
-        # of the overlay every frame (buttons paint after their siblings once
-        # the overlay is lowered) and the fade is invisible. `background:
-        # transparent` overrides the QPushButton rule's background-color
-        # without touching color/border/font, and Qt's cascade lets a later
-        # declaration win within the same selector — appending it after the
-        # button's existing stylesheet is enough, no need to parse/rebuild it.
         self._btn_normal_stylesheet = btn.styleSheet()
-        btn.setStyleSheet(
-            self._btn_normal_stylesheet + " QPushButton { background: transparent; }"
-        )
-        overlay = _RampHighlightOverlay(btn.parentWidget())
-        overlay.setGeometry(btn.geometry())
-        overlay.set_color(hover_color)
-        overlay.show()
-        overlay.lower()  # BEHIND the button, not above it — see module docstring
+        self._focus_selector = focus_selector
+        self._btn = btn
         anim = QVariantAnimation()
         anim.setDuration(_FADE_MS)
         # LINEAR, not InOutQuad — must match focus_marker.py's own _fade_anim,
-        # which sets no easing curve at all (Qt's default is Linear). Traced
-        # live 2026-09-08: with InOutQuad, alpha stays above 90% opacity for
-        # the first ~10% of the duration and then drops from 82 to 0 in the
-        # LAST 40% — the two fades were correctly synced in TIME (confirmed
-        # by [RAMP-FADE-TRACE] timestamps, both landing within ~25ms of each
-        # other) but not in CURVE, so the button read as barely dimming at
-        # all until near the very end, then dropping fast — exactly the
-        # reported "corners gone, but it snaps."
+        # which sets no easing curve at all (Qt's default is Linear). An
+        # InOutQuad curve on an EARLIER overlay-based version of this fade
+        # kept the color visually unchanged for the first ~40% of the
+        # duration then dropped it fast at the end — live-traced and
+        # confirmed as a curve mismatch, not a timing bug (both fades were
+        # already starting/ending within ~25ms of each other).
         anim.setEasingCurve(QEasingCurve.Type.Linear)
-        anim.setStartValue(255)
-        anim.setEndValue(0)
+        anim.setStartValue(hover_color)
+        anim.setEndValue(base_color)
 
-        def _on_tick(alpha):
-            c = QColor(hover_color)
-            c.setAlpha(alpha)
-            overlay.set_color(c)
+        def _on_tick(color):
+            btn.setStyleSheet(
+                self._btn_normal_stylesheet
+                + f" {focus_selector} {{ background-color: {color.name()}; }}"
+            )
 
         anim.valueChanged.connect(_on_tick)
         anim.finished.connect(self._on_finished)
         anim.start()
-        self._overlay = overlay
         self._anim = anim
-        self._btn = btn
 
     def _on_finished(self) -> None:
         # The fade completed on its own (never interrupted by cancel()) —
-        # restore the button's real stylesheet and drop the overlay.
+        # restore the button's real stylesheet (drops the appended override
+        # rule, so the button's normal :focus rule — still fully lit, since
+        # [kbdnav_marker_active] flips false separately via
+        # MainWindow._on_focus_marker_dormant_changed — takes back over
+        # rendering nothing, since kbdnav_marker_active is already false by
+        # the time this fires).
         self._restore_and_clear()
 
     def cancel(self) -> None:
-        """Stop any in-flight fade, restore the button's real stylesheet
-        (undoing begin()'s `background: transparent` override), and remove
-        the overlay — all immediately. MUST restore the stylesheet itself:
-        _apply_preset_ramp_colors (the only thing that would otherwise
-        reassert it) runs on theme/selection changes, NOT on every focus
-        move, so a caller of cancel() (a fresh arrow-press/Tab landing on a
-        DIFFERENT button, or _enter_patrol's unconditional call on every
-        resume) cannot be assumed to trigger a reassert on its own — an
-        earlier version of this method assumed exactly that and left the
-        button's background permanently transparent after any interrupted
-        fade."""
+        """Stop any in-flight fade and restore the button's real stylesheet
+        immediately — a fresh arrow-press/Tab (MainWindow._on_focus_marker_
+        fade_cancel, called unconditionally on every marker resume) must snap
+        the highlight back to full brightness instantly, not leave the
+        override rule's last interpolated color in place."""
         self._restore_and_clear()
 
     def _restore_and_clear(self) -> None:
@@ -151,6 +114,3 @@ class RampHighlightFade:
         if self._btn is not None:
             self._btn.setStyleSheet(self._btn_normal_stylesheet)
             self._btn = None
-        if self._overlay is not None:
-            self._overlay.deleteLater()
-            self._overlay = None
