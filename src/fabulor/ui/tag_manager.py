@@ -78,6 +78,13 @@ _TAG_SCROLLBAR_EDGE_GAP = 5
 # that is ~8 flicks end to end.
 _TAG_SCROLL_ROWS = 6
 
+# Thumbnail row pitch for _TagBookGrid (the tag-detail panel's book grid) —
+# _TagBookThumb is a fixed 47x47 (see its setFixedSize call) and the grid's
+# own QGridLayout uses a uniform 3px spacing (self._grid.setSpacing(3)), so
+# every row after the first sits exactly 50px further down. Used by
+# _TagBookGrid.wheelEvent to correct scroll drift — see that method.
+_TAG_GRID_ROW_PITCH = 50
+
 
 def _tag_list_height(rows: int) -> int:
     """Exact pixel height of `rows` tag rows — N rows, N-1 gaps."""
@@ -336,6 +343,18 @@ class _TagBookGrid(QScrollArea):
         self._kbdnav_pos: tuple[int, int] | None = None
         self._kbdnav_color = "#ffffff"
 
+        # Right-click-to-jump (ui/scrollbar_jump.py) lands on a pixel-exact
+        # position by default — would clip a thumbnail row here, same reason
+        # this was needed for Library/Stats and the tag LIST view before
+        # their own row-snap fixes (see _TAG_ROW_PITCH's own registration,
+        # above). _TAG_GRID_ROW_PITCH is a fixed, uniform stride (every
+        # thumbnail is 47x47 with 3px grid spacing), so the snap is a plain
+        # floor-to-multiple.
+        scrollbar_jump.register_snap(
+            self.verticalScrollBar(),
+            lambda v: (v // _TAG_GRID_ROW_PITCH) * _TAG_GRID_ROW_PITCH
+        )
+
     def set_placeholder_color(self, color: str):
         if self._placeholder_color != color:
             self._placeholder_color = color
@@ -457,6 +476,36 @@ class _TagBookGrid(QScrollArea):
 
     def parent_remove(self, path: str):
         pass
+
+    def wheelEvent(self, event):
+        # Every thumbnail row sits on a fixed, uniform _TAG_GRID_ROW_PITCH
+        # stride, so the scrollbar should always rest on a multiple of it —
+        # but Qt's native wheel handling (this method does NOT override the
+        # per-notch amount/direction — super() runs it unchanged) only ever
+        # applies a relative delta with no knowledge of that pitch, so
+        # repeated scrolling drifts a row's cut line further off the pitch
+        # over time. Live-reported as "the mouse step was tuned to scroll
+        # without causing drifts, but they drift" once the grid held enough
+        # thumbnails (100+) to actually scroll multiple pages — this grid
+        # never had the fix its sibling lists already got (Library/Stats
+        # 2026-08-12, the tag LIST view earlier this same 2026-09-08 branch).
+        # Same idiom as StatsRowListView.wheelEvent (stats_panel.py): let
+        # native scroll apply its unchanged delta first, then round the
+        # RESULT to the nearest row boundary on the next event-loop tick
+        # (the corrected value isn't available yet inside this call, since
+        # eventFilter/override callbacks run BEFORE QAbstractItemView/
+        # QScrollArea applies its own scroll).
+        super().wheelEvent(event)
+        bar = self.verticalScrollBar()
+
+        def _snap_after_native_scroll():
+            v = bar.value()
+            snapped = round(v / _TAG_GRID_ROW_PITCH) * _TAG_GRID_ROW_PITCH
+            snapped = max(bar.minimum(), min(bar.maximum(), snapped))
+            if snapped != v:
+                bar.setValue(snapped)
+
+        QTimer.singleShot(0, _snap_after_native_scroll)
 
     def parent_detail(self, path: str):
         pass
@@ -679,7 +728,12 @@ class TagManagerWidget(QWidget):
         panel_layout.addSpacing(0)
 
         self._reserved_row = QWidget()
-        self._reserved_row.setFixedHeight(21)
+        # 24, not 21 (live design follow-up, 2026-09-08) — grew to match the
+        # color-picker dots' own 24x24 box (see _add_picker_dot's comment):
+        # the keyboard-cursor ring needed room the old 20px dot/21px row
+        # could not give it without being clipped. Pushes the book-count
+        # label and thumbnail grid down by 3px — explicitly OK'd live.
+        self._reserved_row.setFixedHeight(24)
         reserved_layout = QStackedLayout(self._reserved_row)
         reserved_layout.setContentsMargins(0, 0, 0, 0)
         reserved_layout.setStackingMode(QStackedLayout.StackingMode.StackOne)
@@ -696,7 +750,19 @@ class TagManagerWidget(QWidget):
 
         def _add_picker_dot(color_key, color_hex):
             dot = QLabel("●")
-            dot.setFixedSize(20, 20)
+            # 24x24, not 20x20 (live design follow-up, 2026-09-08) — the ring
+            # is a CHILD of this label (Qt clips a child to its parent's own
+            # rect), so no ring geometry could ever avoid being clipped while
+            # the label itself stayed 20x20: an 18x18 ring centered on the
+            # glyph's true painted center (measured below) needs vertical
+            # room from y=5 to y=23, which a 20px-tall parent cannot give it
+            # regardless of the ring's own size/position. Reported live as
+            # "more space at the top than bottom, and its bottom gets
+            # clipped." 24x24 gives the needed room; _reserved_row/
+            # _color_picker_row grew to match (see their own construction,
+            # above) — explicitly OK'd live: "we can safely push the N books
+            # label and the thumbnails here if the ring needs those 2 or 3px."
+            dot.setFixedSize(24, 24)
             dot.setAlignment(Qt.AlignmentFlag.AlignCenter)
             dot.setStyleSheet("font-size: 27px;" if color_hex is None
                                else f"font-size: 27px; color: {color_hex};")
@@ -706,20 +772,27 @@ class TagManagerWidget(QWidget):
             dot.mousePressEvent = lambda e, k=color_key: self._set_tag_color(k)
             picker_layout.addWidget(dot)
             ring = _DotFocusRing(dot)
-            # The "●" glyph at this font-size does NOT paint centered within
-            # the label's 20x20 box — measured offscreen (pixel bounding box
-            # of the rendered glyph): actual visual center (9.5, 12.0), a
-            # painted size of roughly 10x11px, not the box's geometric center
-            # (10, 10) — a ~2.5px downward font-metrics offset
-            # (QFontMetrics.boundingRect is baseline-relative, not
-            # visual-circle-relative). A ring sized tight to that glyph
-            # (first attempt: 12x12) was reported live as "impossible to see,
-            # clashes with the placeholder" — a ring HUGGING the dot reads as
-            # part of the dot rather than as a distinct focus indicator.
-            # Sized/positioned here to sit OUTSIDE the glyph with a 1-2px gap
-            # instead (18x18, same center) — the row's 9px inter-dot spacing
-            # leaves enough clearance for this without touching a neighbor.
-            ring.setGeometry(1, 3, 18, 18)
+            # The "●" glyph's visual center does NOT match this label's
+            # geometric center — confirmed live across two rounds (first
+            # "clipped at the bottom", then, after enlarging the box and
+            # recentring from an offscreen pixel measurement, "still not
+            # centered, more space at the top"). The offscreen measurement
+            # method itself is not trustworthy here — see CLAUDE.md's "DO NOT
+            # verify a settings-panel/tab visual layout bug with headless
+            # test scripts alone" — so ring.setGeometry below is now a bare,
+            # directly-tunable number rather than derived from a recomputed
+            # offscreen bounding box; nudge it directly against what's
+            # visible live rather than re-measuring. A ring sized tight to
+            # the glyph (first attempt: 12x12) was reported live as
+            # "impossible to see, clashes with the placeholder" — a ring
+            # HUGGING the dot reads as part of the dot rather than as a
+            # indicator. y=4 (x still 3) is a live-nudged value, not derived
+            # from any measurement — see the note above on why the
+            # offscreen-measured offset is not being trusted anymore. Tuned
+            # live across three rounds: y=5 read as "more space at top",
+            # y=3 read as "wrong direction" (too much space at bottom); y=4
+            # split the difference.
+            ring.setGeometry(3, 4, 18, 18)
             ring.hide()
             self._color_picker_dots.append((dot, color_key, ring))
 
