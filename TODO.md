@@ -32,18 +32,6 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
   panels — the highlight now disappears the instant `[kbdnav]` flips false, same timing as
   `clear()`.
 
-### Ramp-up button highlight: animated fade instead of an instant snap-off
-- [2026-09-08] Follow-up to the fix above, explicitly deferred: the highlight now disappears
-  instantly when keyboard mode ends, matching the marker's `clear()` timing — but the marker's
-  OWN idle self-fade (patrol → slow → wait → fade, see `focus_marker.py`'s `_fade_anim`) is a
-  smooth animation, and the button's highlight still just snaps off underneath it rather than
-  fading in sync. Live design ask: make the ramp button's highlight fade out together with the
-  marker's fade, in both cases (idle self-fade AND mouse-takeover clear). Not a QSS-only fix —
-  `setStyleSheet`-driven background colors aren't natively animatable; needs a real animated
-  color property on the ramp buttons (a `QVariantAnimation`-driven `Property(QColor)`, the same
-  general shape `ClickSlider`/`FreezableLabel` already use elsewhere in this app for animated
-  colors) wired to fire whenever `TravelingFocusMarker` begins fading or clears. Touches all
-  three panels (Speed/Sleep/Sprint) since they share the same ramp-button pattern. Not started.
 
 ### Diacritic-insensitive library search
 - [2026-09-08] Raised live: an author like Meša Selimović can't be searched by typing "mesa" (no

@@ -4984,6 +4984,41 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             btn.style().polish(btn)
             btn.update()
 
+    def _on_focus_marker_fade_begin(self, target) -> None:
+        """Called by TravelingFocusMarker._begin_fading, directly, the instant the marker
+        itself starts fading (not when it finishes — _on_focus_marker_dormant_changed
+        covers that). Live design ask, 2026-09-08: "can we make it fade out back to the
+        ramp-up button's original color along with the marker's fade?" — the ramp button
+        the marker is currently sitting on should dim in sync with the marker, not snap
+        off abruptly once the marker is already gone.
+
+        Only Speed/Sleep/Sprint's preset-ramp buttons have this animated fade (see
+        ramp_highlight_fade.py) — every other keyboard target (Settings buttons, the tab
+        bar, folder_list_widget, etc.) is unaffected; this is a no-op for them since none
+        of those panels define begin_ramp_highlight_fade."""
+        panel_key = self._kbdnav_active_panel_key()
+        panel = self._kbdnav_panel_widget(panel_key) if panel_key is not None else None
+        if panel is None or target is None:
+            return
+        begin = getattr(panel, 'begin_ramp_highlight_fade', None)
+        if begin is not None:
+            begin(target)
+
+    def _on_focus_marker_fade_cancel(self) -> None:
+        """Called by TravelingFocusMarker._enter_patrol, unconditionally, whenever the
+        marker (re)starts patrol — a fresh arrow-press/Tab, whether landing on a NEW
+        button or the SAME one whose highlight was still mid-fade. Live design ask:
+        "a fresh arrow-press/mouse-hover during the fade instantly snaps the highlight
+        back to full brightness." Mirrors _on_focus_marker_fade_begin's panel lookup;
+        also a no-op for any panel without an animated ramp fade."""
+        panel_key = self._kbdnav_active_panel_key()
+        panel = self._kbdnav_panel_widget(panel_key) if panel_key is not None else None
+        if panel is None:
+            return
+        cancel = getattr(panel, 'cancel_ramp_highlight_fade', None)
+        if cancel is not None:
+            cancel()
+
     def _on_kbdnav_cursor_poll(self) -> None:
         """Hand the UI back to the mouse when the cursor is genuinely ON a control it could
         act on — a Look-tab button or a settings tab — not merely because it moved.

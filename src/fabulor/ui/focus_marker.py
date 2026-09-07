@@ -665,6 +665,16 @@ class TravelingFocusMarker(QWidget):
         # marker has gone dormant vs. is genuinely showing).
         if was_dormant:
             self.main_window._on_focus_marker_dormant_changed(False)
+        # Cancel any in-flight ramp-button highlight fade unconditionally, not
+        # only when was_dormant — a fresh arrow-press/Tab landing on a button
+        # whose highlight was STILL mid-fade (interrupted before finishing)
+        # must snap it back to full brightness instantly, live design call:
+        # "a fresh arrow-press/mouse-hover during the fade instantly snaps the
+        # highlight back to full brightness." _apply_preset_ramp_colors (via
+        # the panel's own update on this focus change) reasserts the button's
+        # normal style right after this; cancel() only needs to remove the
+        # overlay so it isn't left dimming on top of that.
+        self.main_window._on_focus_marker_fade_cancel()
 
     def _begin_slowing(self) -> None:
         if self._target is None or self._phase != _Phase.PATROL:
@@ -689,6 +699,14 @@ class TravelingFocusMarker(QWidget):
         self._phase = _Phase.FADING
         self._fade_anim.stop()
         self._fade_anim.start()
+        # Tell MainWindow the marker itself is starting to fade, so the ramp
+        # button (Speed/Sleep/Sprint) it's currently sitting on can start
+        # fading its OWN keyboard highlight in sync — live design call,
+        # 2026-09-08: "can we make it fade out back to the ramp-up button's
+        # original color along with the marker's fade?" A no-op for any
+        # target that isn't a ramp button (see
+        # MainWindow._on_focus_marker_fade_begin).
+        self.main_window._on_focus_marker_fade_begin(self._target)
 
     def _on_fade_finished(self) -> None:
         if self._phase != _Phase.FADING:

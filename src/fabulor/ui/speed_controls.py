@@ -2,6 +2,7 @@ from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushBu
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor
 from ..themes import THEMES, preset_ramp_rgb
+from .ramp_highlight_fade import RampHighlightFade
 from mpv import ShutdownError
 
 # Canonical presets shown in the "Default speed" row. When a non-preset default
@@ -47,6 +48,11 @@ class SpeedControlsPanel(QWidget):
             3.25, 3.50, 4.00
         ]
         self._speed_grid_buttons = []
+        # Animated highlight fade for the ramp buttons — see ramp_highlight_fade.py.
+        # One instance per panel; MainWindow._on_focus_marker_fade_begin (app.py)
+        # calls begin_ramp_highlight_fade below whenever the traveling marker starts
+        # its own fade on a widget belonging to this panel.
+        self._ramp_highlight_fade = RampHighlightFade()
         self.def_speed_buttons = {}
         self.step_buttons = {}
         self.undo_buttons = {}
@@ -301,6 +307,10 @@ class SpeedControlsPanel(QWidget):
             # time-preset ramp, see sleep_timer.py's update_panel_styling).
             hover_c = c.lighter(130)
             pressed_c = c.darker(130)
+            # Cached on the button itself so begin_ramp_highlight_fade (called from
+            # MainWindow when the traveling marker starts fading) doesn't need to
+            # re-derive the ramp index/theme math — see ramp_highlight_fade.py.
+            btn._ramp_hover_color = QColor(hover_c)
             btn.setStyleSheet(
                 f"QPushButton {{ background-color: rgb({c.red()}, {c.green()}, {c.blue()}); "
                 f"color: {btn_text}; border: none; }}"
@@ -336,6 +346,27 @@ class SpeedControlsPanel(QWidget):
                 f"QWidget#speed_panel[kbdnav=\"true\"] QPushButton:focus:hover {{ "
                 f"background-color: rgb({hover_c.red()}, {hover_c.green()}, {hover_c.blue()}); }}"
             )
+
+    def begin_ramp_highlight_fade(self, btn) -> None:
+        """Called by MainWindow when the traveling marker starts fading on `btn`
+        (see app.py's _on_focus_marker_fade_begin) — starts the SAME fade on this
+        button's own highlight, synced to the marker's timing. No-op for a button
+        that isn't one of this panel's ramp buttons (defensive; MainWindow already
+        checks panel membership before calling, but a stale/late call after a
+        rebuild should never crash)."""
+        if btn not in self._speed_grid_buttons:
+            return
+        hover_color = getattr(btn, '_ramp_hover_color', None)
+        if hover_color is None:
+            return
+        self._ramp_highlight_fade.begin(btn, hover_color)
+
+    def cancel_ramp_highlight_fade(self) -> None:
+        """Called by MainWindow whenever the marker resumes patrol (a fresh
+        arrow-press or Tab) — an in-flight fade, if any, must stop immediately
+        rather than keep dimming a button that is (or is about to be) freshly
+        highlighted again."""
+        self._ramp_highlight_fade.cancel()
 
     def update_visuals(self, theme_name=None):
         """Full sync: the ramp (see _apply_preset_ramp_colors) plus every

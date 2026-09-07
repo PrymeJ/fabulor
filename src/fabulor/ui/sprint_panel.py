@@ -8,6 +8,7 @@ from ..themes import preset_ramp_rgb
 from ..player import _CHAPTER_WALK_TOLERANCE
 from mpv import ShutdownError
 from .line_edit_dragfix import DragSafeLineEdit
+from .ramp_highlight_fade import RampHighlightFade
 
 logger = logging.getLogger(__name__)
 
@@ -152,6 +153,9 @@ class SprintPanel(QWidget):
         grid.setSpacing(8)
         presets_minutes = [5, 10, 15, 20, 25, 30, 45, 60, 90, 120]
         self._sprint_presets_buttons = []
+        # Animated highlight fade for the ramp buttons — see ramp_highlight_fade.py
+        # and SpeedControlsPanel's identical wiring for the full explanation.
+        self._ramp_highlight_fade = RampHighlightFade()
         for i, val in enumerate(presets_minutes):
             btn = QPushButton(f"{val} min")
             btn.setFixedSize(57, 30)
@@ -963,6 +967,10 @@ class SprintPanel(QWidget):
                          preset_ramp_rgb(t, i, len(self._sprint_presets_buttons)).split(',')))
             hover_c = c.lighter(130)
             pressed_c = c.darker(130)
+            # Cached on the button itself so begin_ramp_highlight_fade (called from
+            # MainWindow when the traveling marker starts fading) doesn't need to
+            # re-derive the ramp index/theme math — see ramp_highlight_fade.py.
+            btn._ramp_hover_color = QColor(hover_c)
             btn.setStyleSheet(
                 f"QPushButton {{ background-color: rgb({c.red()}, {c.green()}, {c.blue()}); "
                 f"color: {btn_text}; border: none; }}"
@@ -984,6 +992,22 @@ class SprintPanel(QWidget):
                 f"QWidget#sprint_panel[kbdnav=\"true\"] QPushButton:focus:hover {{ "
                 f"background-color: rgb({hover_c.red()}, {hover_c.green()}, {hover_c.blue()}); }}"
             )
+
+    def begin_ramp_highlight_fade(self, btn) -> None:
+        """Called by MainWindow when the traveling marker starts fading on `btn` —
+        see SpeedControlsPanel.begin_ramp_highlight_fade for the full explanation
+        (identical contract, mirrored here for the sprint-duration ramp)."""
+        if btn not in self._sprint_presets_buttons:
+            return
+        hover_color = getattr(btn, '_ramp_hover_color', None)
+        if hover_color is None:
+            return
+        self._ramp_highlight_fade.begin(btn, hover_color)
+
+    def cancel_ramp_highlight_fade(self) -> None:
+        """Called by MainWindow whenever the marker resumes patrol — see
+        SpeedControlsPanel.cancel_ramp_highlight_fade."""
+        self._ramp_highlight_fade.cancel()
 
     def update_panel_styling(self):
         """Full sync: the ramp (see _apply_preset_ramp_colors) plus the grace mode
