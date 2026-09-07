@@ -1174,7 +1174,27 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.excluded_books_section.set_count(self.excluded_books_popup.book_count)
         self.excluded_books_section.set_expandable(is_expandable)
         self.excluded_books_section.set_expanded(self.excluded_books_popup.is_expanded)
+        # Restoring the LAST excluded book drops book_count to 0, and reposition() below
+        # hides the popup entirely in that case (see its own docstring). If the popup itself
+        # currently holds real Qt focus (the normal case: the user pressed Enter/Space on its
+        # own focused row to trigger this restore), hide() strands focus on a now-hidden
+        # widget with nothing to reclaim it — QApplication.focusWidget() is then neither None
+        # nor MainWindow, which _focus_allows_global_shortcuts() reads as "a panel-local widget
+        # still owns this key," permanently blocking every global shortcut until a mouse click
+        # elsewhere resets focus. Reported live 2026-09-08: "hit Enter to un-exclude a book,
+        # then Esc to close Settings — after that, no keyboard shortcut works... until
+        # clicking somewhere." Same root cause class as the "clear focus AFTER hide(), never
+        # before" CLAUDE.md rule, just the opposite failure mode — here nothing reclaims focus
+        # at all, in either order. Fixed by redirecting to the SAME target
+        # _on_excluded_books_exit_upward already uses when the user leaves the popup via Up
+        # (Persist search filter's row, directly above it) — functionally the popup vanishing
+        # out from under focus is the same "the user is no longer in the popup" event.
+        had_focus = QApplication.focusWidget() is self.excluded_books_popup
         self.excluded_books_popup.reposition(self.excluded_books_section, self.library_tab)
+        if had_focus and not self.excluded_books_popup.isVisible():
+            rows = self.panel_manager.settings_tab_button_rows()
+            if rows:
+                self._focus_settings_control(rows[-1][0])
 
     def _on_persist_filter_master(self, enabled: bool):
         if enabled:
