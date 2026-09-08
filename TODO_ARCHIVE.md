@@ -5,6 +5,15 @@ list scannable. Kept, not deleted, per the project's normal practice of not thro
 that isn't fully duplicated in NOTES.md/SESSION.md/a commit message. Order is the same relative
 order these entries had in TODO.md before the split (2026-07-30).
 
+- **[2026-09-08] CLOSED, verified fixed: fill-highlight marker style's selected+focused+hovered
+  pattern_button case.** Flagged as unchecked in the same session the `kbdnav_style` fix landed —
+  a theme swatch (`#pattern_button[selected="true"]`, ID + attribute selector, higher specificity
+  than a bare `:focus`/`:focus:hover`) that is simultaneously the active selection AND keyboard-
+  focused AND mouse-hovered was suspected of the same specificity problem plain hover had before
+  that fix. Confirmed live-checked (Pryme, next session) and already covered: the `kbdnav_style`
+  fix's `[selected="true"]:hover` variant of the `:focus:hover` pairing handles this case too — no
+  further work needed.
+
 - **[2026-07-29] CLOSED, not a Fabulor bug: sidebar/theme-swatch right-click dispatch loss.** See
   NOTES.md ("CLOSED, cause is outside Fabulor: right-click loss reproduces on the bare X11 desktop
   with no app involved") for the full account. Right-click misses were independently confirmed to
