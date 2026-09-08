@@ -185,9 +185,9 @@ def build_cover_theme(pixmap: QPixmap) -> dict:
         "sidebar_opacity":          0.85,
         "panel_opacity_hover":      0.92,
         # Panels / settings
-        "settings_tab_hover_bg":    _hex(*sec_accent),
-        "settings_tab_hover_opacity": 0.85,
-        "settings_tab_hover_text":  _hex(*bg_deep),
+        "tab_hover_bg":             _hex(*sec_accent),
+        "tab_hover_opacity":        0.85,
+        "tab_hover_text":           _hex(*bg_deep),
         "settings_theme_names_dimmed": _hex(*text_dim),
         # Misc
         "dropdown_curr_chap":       _hex(*sec_dark),

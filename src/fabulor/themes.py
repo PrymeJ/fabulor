@@ -72,13 +72,7 @@ library_input_bg:     Background color for sort/view dropdowns and the search fi
 library_input_text:   Text color for sort/view dropdowns and the search field in the library. Fallback: text.
 search_error_text:    (Optional) Text color for the search field when no results are found. Fallback: #ffaaaa.
 
-GROUP 8 — SETTINGS PANEL
-settings_tab_hover_bg:      Background color for unselected tabs when hovered. Fallback: accent.
-settings_tab_hover_opacity: Opacity for unselected tabs when hovered. Fallback: 0.85.
-settings_tab_hover_text:    Text color for unselected tabs when hovered. Fallback: text.
-settings_theme_names_dimmed: Color for theme names in the Settings panel that are currently unselected/dimmed.
-
-GROUP 9 — STATS, BOOK DETAILS AND TAGS
+GROUP 8 — STATS, BOOK DETAILS AND TAGS
 tag_list_text:           (Optional) Color for text inside the tag list. Fallback: text.
 tag_list_text_hover:     (Optional) Color for text inside the tag list when hovered. Fallback: accent_light.
 session_history_row_one: (Optional) Background color for odd rows in the book detail History tab. Fallback: library_row_one → bg_main.
@@ -93,7 +87,8 @@ tassel_head:             (Optional) Color of the dangling tassel's bound head (t
 tassel_fringe:           (Optional) Color of the dangling tassel's fringe (the fanned threads below the head). Fallback: accent_light.
 stats_carousel_stripe:   (Optional) Background color for the Recently Finished scroll row's edge-scroll arrow sliver (stats_panel.py FinishedScrollRow). Fallback: accent_dark.
 
-GROUP 10 — MISC UI
+GROUP 9 — MISC UI
+settings_theme_names_dimmed: Color for theme names in the Settings panel that are currently unselected/dimmed.
 focus_marker:         (Optional) Color of the traveling-border-marker keyboard-focus dot (ui/focus_marker.py, "dot" style only). Fallback: text.
 focus_marker_alpha:   (Optional) Opacity (0.0 to 1.0, NOT 0-255) ceiling for the focus marker dot. Fallback: 1.0.
 focus_marker_palette: (Optional) List of 2+ hex colors the traveling-border-marker's "rotate" style. Fallback: [accent_light, accent_dark]
@@ -104,20 +99,28 @@ focus_sleep_disable_btn: (Optional) Same idea as focus_audio_tab_reset, for the 
 focus_folder_list_dot: (Optional) Color of the small keyboard-cursor dot _FolderListItemDelegate paints on the Library folder list's current row (right edge, independent of selection — see that class's docstring for why a dot rather than a fill). Fallback: accent_light.
 tags_kbdnav_ring: (Optional) Color of the keyboard-cursor focus ring on the tag detail panel's thumbnail grid (_ThumbFocusRing) and the color picker's neutral dot (_DotFocusRing — a colored dot's own ring instead matches that dot's own color). Fallback: accent_light.
 excluded_scrollbar: (Optional) Background of the Excluded Books popup's scrollbar handle (ui/excluded_books.py). Plain accent blended visually into ExcludedBooksSection's expand arrow directly above it (also accent) — falls back to a derived darkened tint (see _derive_subdued in excluded_books.py; desaturating was tried first and rejected live as muddy) rather than accent itself. Fallback: a darkened accent (same hue/saturation), not accent.
-cover_preview_bg:     Background color for book cover previews in the library. Fallback: bg_deep → #000000.
 kbdnav_fill_highlight: (Optional) Override for the "fill highlight" keyboard-nav marker style's focused-control background (see config.get_keyboard_marker_style, get_panel_base_stylesheet). Fallback: derived from accent via themes.derive_lighter_accent_rgb (lighten/desaturate). Added 2026-09-08 because no single derivation constant reads well across every theme's accent — some themes' accents are already near-white/high-value, others deeply saturated, so the derived fallback alone can't fit all of them; set this per-theme when the derived color doesn't work.
+tab_hover_bg:      Background color for an unselected tab when hovered OR (2026-09-09) when
+                    the traveling-marker-vs-fill-highlight keyboard-nav style is set to
+                    "fill_highlight" and keyboard focus is genuinely on the tab bar itself —
+                    both cases share this one key, deliberately, for visual consistency (see
+                    MainWindow._update_focus_marker's kbdnav_tab_focused branch). Shared across
+                    every tab bar in the app: get_settings_stylesheet AND get_stats_stylesheet. Fallback: accent.
+tab_hover_opacity: Opacity for the above. Fallback: 0.85.
+tab_hover_text:    Text color for the above. Fallback: text.
+cover_preview_bg:     Background color for book cover previews in the library. Fallback: bg_deep → #000000.
 
-GROUP 11 — PLACEHOLDER COVERS
+GROUP 10 — PLACEHOLDER COVERS
 placeholder_cover:    Color for the Fabulor logo shown in the player cover area when a book has no cover art. Fallback chain: library_narrator → text → #888888.
 placeholder_library:  Color for the Fabulor logo shown in library thumbnail grid cells (no-cover books, all four view modes). Fallback chain: placeholder_cover → library_narrator → text → #888888.
 placeholder_stats:    Color for the Fabulor logo shown in stats panel book thumbnails (BookDayRow, FinishedBookThumb). Fallback chain: placeholder_cover → library_narrator → text → #888888.
 placeholder_tags:     Color for the Fabulor logo shown in tag panel book thumbnails. Fallback chain: placeholder_stats → placeholder_cover → library_narrator → text → #888888.
 
-GROUP 12 — CAROUSEL
+GROUP 11 — CAROUSEL
 carousel_bg:          Fill color for the full-width stripe in the no-book state. Fallback: bg_deep.
 carousel_stripe:      Color of the 2px horizontal lines at the top and bottom of the stripe. Fallback: auto-calculated from carousel_bg (lightness-shifted) → accent_light → text.
 
-GROUP 13 — DYNAMIC GRADIENTS
+GROUP 12 — DYNAMIC GRADIENTS
 The theme engine supports linear gradients for several components. Define them using these keys:
 Prefixes: bg, sidebar, accent, slider_fill
 gradient_[prefix]_start: Hex color for the start of the gradient.
@@ -179,9 +182,9 @@ THEMES = {
         "library_slider_fill":           "#A40A0A",
         "library_input_bg":              "#06263F",
         "library_input_text":            "#D77A60",
-        "settings_tab_hover_bg":         "#FF0000",
-        "settings_tab_hover_opacity":    0.9,
-        "settings_tab_hover_text":       "#150C79",
+        "tab_hover_bg":         "#FF0000",
+        "tab_hover_opacity":    0.9,
+        "tab_hover_text":       "#150C79",
         "settings_theme_names_dimmed":   "#F5A5A5",
         "tag_list_text":                 "#86C6FF",
         "tag_list_text_hover":           "#FC1543",
@@ -239,9 +242,9 @@ THEMES = {
         "library_slider_fill":           "#8A5A2E",
         "library_input_bg":              "#DED0B4",
         "library_input_text":            "#241A0E",
-        "settings_tab_hover_bg":         "#8A5A2E",
-        "settings_tab_hover_opacity":    0.85,
-        "settings_tab_hover_text":       "#F5EDDD",
+        "tab_hover_bg":         "#8A5A2E",
+        "tab_hover_opacity":    0.85,
+        "tab_hover_text":       "#F5EDDD",
         "settings_theme_names_dimmed":   "#9C8968",
         "session_history_row_one":       "#F5EDDD",
         "session_history_row_two":       "#EAE0C8",
@@ -301,9 +304,9 @@ THEMES = {
         "library_slider_fill":           "#8A0000",
         "library_input_bg":              "#1E0A0A",
         "library_input_text":            "#D8C0C0",
-        "settings_tab_hover_bg":         "#8A0000",
-        "settings_tab_hover_opacity":    0.85,
-        "settings_tab_hover_text":       "#D8C0C0",
+        "tab_hover_bg":         "#8A0000",
+        "tab_hover_opacity":    0.85,
+        "tab_hover_text":       "#D8C0C0",
         "settings_theme_names_dimmed":   "#7A5A5A",
         "session_history_row_one":       "#140606",
         "session_history_row_two":       "#1A0808",
@@ -362,9 +365,9 @@ THEMES = {
         "library_slider_fill":           "#8F8F87",
         "library_input_bg":              "#1E1E1E",
         "library_input_text":            "#C4C4BA",
-        "settings_tab_hover_bg":         "#8F8F87",
-        "settings_tab_hover_opacity":    0.85,
-        "settings_tab_hover_text":       "#141414",
+        "tab_hover_bg":         "#8F8F87",
+        "tab_hover_opacity":    0.85,
+        "tab_hover_text":       "#141414",
         "settings_theme_names_dimmed":   "#6E6E66",
         "session_history_row_one":       "#181818",
         "session_history_row_two":       "#121212",
@@ -422,9 +425,9 @@ THEMES = {
         "library_slider_fill":           "#2E7A6A",
         "library_input_bg":              "#AEBAB8",
         "library_input_text":            "#141E1C",
-        "settings_tab_hover_bg":         "#2E7A6A",
-        "settings_tab_hover_opacity":    0.85,
-        "settings_tab_hover_text":       "#D6DEDC",
+        "tab_hover_bg":         "#2E7A6A",
+        "tab_hover_opacity":    0.85,
+        "tab_hover_text":       "#D6DEDC",
         "settings_theme_names_dimmed":   "#6E7A78",
         "session_history_row_one":       "#D6DEDC",
         "session_history_row_two":       "#CADAD6",
@@ -465,7 +468,7 @@ THEMES = {
         "library_row_one":               "#000000",
         "library_row_two":               "#0C0C0C",
         "library_item_hover_alpha":      0.15,
-        "settings_tab_hover_text":       "#000000",
+        "tab_hover_text":       "#000000",
         "settings_theme_names_dimmed":   "#FFA807",
         "session_history_row_one":       "#201F1F",
         "session_history_row_two":       "#161616",
@@ -519,9 +522,9 @@ THEMES = {
         "library_slider_fill":           "#2EAA4A",
         "library_input_bg":              "#1A2A1A",
         "library_input_text":            "#B4EEC3",
-        "settings_tab_hover_bg":         "#2EAA4A",
-        "settings_tab_hover_opacity":    0.85,
-        "settings_tab_hover_text":       "#0A0F0A",
+        "tab_hover_bg":         "#2EAA4A",
+        "tab_hover_opacity":    0.85,
+        "tab_hover_text":       "#0A0F0A",
         "settings_theme_names_dimmed":   "#9EC59E",
         "streak_grid_outline":           "#3C024E",
         "streak_grid_dot":               "#83F19C",
@@ -576,9 +579,9 @@ THEMES = {
         "library_slider_fill":           "#3A6A8A",
         "library_input_bg":              "#080722",
         "library_input_text":            "#64AAC3",
-        "settings_tab_hover_bg":         "#4A7A9A",
-        "settings_tab_hover_opacity":    0.85,
-        "settings_tab_hover_text":       "#E8E8E0",
+        "tab_hover_bg":         "#4A7A9A",
+        "tab_hover_opacity":    0.85,
+        "tab_hover_text":       "#E8E8E0",
         "settings_theme_names_dimmed":   "#97B6C9",
         "session_history_row_one":       "#141212",
         "session_history_row_two":       "#0A0A0A",
@@ -775,9 +778,9 @@ THEMES = {
         "library_slider_fill":           "#5AACCC",
         "library_input_bg":              "#2E323A",
         "library_input_text":            "#E8ECF0",
-        "settings_tab_hover_bg":         "#5AACCC",
-        "settings_tab_hover_opacity":    0.85,
-        "settings_tab_hover_text":       "#181C20",
+        "tab_hover_bg":         "#5AACCC",
+        "tab_hover_opacity":    0.85,
+        "tab_hover_text":       "#181C20",
         "settings_theme_names_dimmed":   "#6495AE",
         "streak_grid_outline":           "#60036A",
         "streak_grid_dot":               "#38F2FF",
@@ -881,9 +884,9 @@ THEMES = {
         "library_slider_fill":           "#6A9A50",
         "library_input_bg":              "#120D0D",
         "library_input_text":            "#A8CD8F",
-        "settings_tab_hover_bg":         "#8AB86A",
-        "settings_tab_hover_opacity":    0.89,
-        "settings_tab_hover_text":       "#1A1A1A",
+        "tab_hover_bg":         "#8AB86A",
+        "tab_hover_opacity":    0.89,
+        "tab_hover_text":       "#1A1A1A",
         "settings_theme_names_dimmed":   "#75A963",
         "session_history_row_one":       "#4A2819",
         "session_history_row_two":       "#3E261C",
@@ -984,9 +987,9 @@ THEMES = {
         "library_slider_fill":           "#D4D4D4",
         "library_input_bg":              "#333333",
         "library_input_text":            "#D4D4D4",
-        "settings_tab_hover_bg":         "#D4D4D4",
-        "settings_tab_hover_opacity":    0.85,
-        "settings_tab_hover_text":       "#333333",
+        "tab_hover_bg":         "#D4D4D4",
+        "tab_hover_opacity":    0.85,
+        "tab_hover_text":       "#333333",
         "settings_theme_names_dimmed":   "#B4B4B4",
         "session_history_row_one":       "#2B2B2B",
         "session_history_row_two":       "#292929",
@@ -1047,9 +1050,9 @@ THEMES = {
         "library_slider_fill":           "#5AA898",
         "library_input_bg":              "#1A3028",
         "library_input_text":            "#E8F0EE",
-        "settings_tab_hover_bg":         "#6AB8A8",
-        "settings_tab_hover_opacity":    0.85,
-        "settings_tab_hover_text":       "#0E1A18",
+        "tab_hover_bg":         "#6AB8A8",
+        "tab_hover_opacity":    0.85,
+        "tab_hover_text":       "#0E1A18",
         "settings_theme_names_dimmed":   "#62B29A",
         "streak_grid_outline":           "#472807",
         "streak_grid_dot":               "#E1E3B1",
@@ -1262,9 +1265,9 @@ THEMES = {
         "library_slider_fill":           "#D42020",
         "library_input_bg":              "#1A0A0A",
         "library_input_text":            "#F2D8D8",
-        "settings_tab_hover_bg":         "#D42020",
-        "settings_tab_hover_opacity":    0.85,
-        "settings_tab_hover_text":       "#F2D8D8",
+        "tab_hover_bg":         "#D42020",
+        "tab_hover_opacity":    0.85,
+        "tab_hover_text":       "#F2D8D8",
         "settings_theme_names_dimmed":   "#CA7E7E",
         "session_history_row_one":       "#181818",
         "session_history_row_two":       "#131416",
@@ -1330,9 +1333,9 @@ THEMES = {
         "library_input_bg":              "#3A1818",
         "library_input_text":            "#F6B95E",
         "search_error_text":             "#FF56F1",
-        "settings_tab_hover_bg":         "#D46A1A",
-        "settings_tab_hover_opacity":    0.85,
-        "settings_tab_hover_text":       "#1A0A0A",
+        "tab_hover_bg":         "#D46A1A",
+        "tab_hover_opacity":    0.85,
+        "tab_hover_text":       "#1A0A0A",
         "settings_theme_names_dimmed":   "#D15135",
         "streak_grid_outline":           "#430B0B",
         "streak_grid_dot":               "#E0D38A",
@@ -1545,9 +1548,9 @@ THEMES = {
         "library_slider_fill":           "#7AAA4C",
         "library_input_bg":              "#3A5238",
         "library_input_text":            "#C7E3AB",
-        "settings_tab_hover_bg":         "#D4A84C",
-        "settings_tab_hover_opacity":    0.85,
-        "settings_tab_hover_text":       "#1A2A1A",
+        "tab_hover_bg":         "#D4A84C",
+        "tab_hover_opacity":    0.85,
+        "tab_hover_text":       "#1A2A1A",
         "settings_theme_names_dimmed":   "#8BB677",
         "streak_grid_outline":           "#255F13",
         "streak_grid_dot":               "#D9D8C7",
@@ -1611,68 +1614,6 @@ THEMES = {
         "tassel_head":                   "#73F2C3",
         "placeholder_cover":             "#00A86B",
         "carousel_stripe":               "#C44B17",
-    },
-    "Midnight Children": {
-        "bg_deep":                       "#0A1228",
-        "bg_main":                       "#101A38",
-        "bg_sidebar":                    "#0A1228",
-        "bg_dropdown":                   "#162248",
-        "panel_opacity_hover":           0.92,
-        "undo_hover":                    "#23B7D6",
-        "text":                          "#EBD6A2",
-        "text_on_light_bg":              "#0A1228",
-        "accent":                        "#E8943A",
-        "accent_light":                  "#F0A84A",
-        "accent_dark":                   "#B8681E",
-        "button_text":                   "#0A1228",
-        "slider_progress":               "#F2F1AF",
-        "slider_overall_bg":             "#162248",
-        "slider_overall_fill":           "#E8943A",
-        "slider_chapter_bg":             "#162248",
-        "slider_chapter_fill":           "#F0A84A",
-        "slider_vol_bg":                 "#162248",
-        "slider_vol_fill":               "#E8943A",
-        "notch_color":                   "#FBFFAC",
-        "notch_opacity":                 180,
-        "dropdown_curr_chap":            "#CE8A31",
-        "dropdown_text":                 "#EFEF9B",
-        "dropdown_time_text":            "#EFEF9B",
-        "sidebar_text":                  "#E0B587",
-        "sidebar_text_hover":            "#E97546",
-        "sidebar_opacity":               0.85,
-        "library_bg":                    "#101A38",
-        "library_grid_bg":               "#101A38",
-        "library_row_one":               "#101A38",
-        "library_row_two":               "#141E40",
-        "library_item_hover_color":      "#3F86E2",
-        "library_item_hover_alpha":      0.25,
-        "library_title":                 "#E9AF1D",
-        "library_author":                "#7BA1EE",
-        "library_narrator":              "#879AC0",
-        "library_year":                  "#C7B294",
-        "library_elapsed":               "#A9B5CD",
-        "library_total":                 "#A9B5CD",
-        "library_percentage":            "#E8943A",
-        "library_slider_bg":             "#162248",
-        "library_slider_fill":           "#E8943A",
-        "library_input_bg":              "#162248",
-        "library_input_text":            "#E8ECF4",
-        "settings_tab_hover_bg":         "#E8943A",
-        "settings_tab_hover_opacity":    0.85,
-        "settings_tab_hover_text":       "#0A1228",
-        "settings_theme_names_dimmed":   "#C4AB60",
-        "streak_grid_outline":           "#0E2451",
-        "streak_grid_dot":               "#EDDD89",
-        "bookmark_body":                 "#E8943A",
-        "bookmark_icon":                 "#223A7B",
-        "tassel_head":                   "#223A7B",
-        "focus_marker_palette":         ["#1631FF", "#E97546"],
-        "placeholder_cover":             "#E8943A",
-        "carousel_bg":                   "#0A1228",
-        "carousel_stripe":               "#2D1BE6",
-        "gradient_bg_start":             "#0A1228",
-        "gradient_bg_end":               "#121D3D",
-        "gradient_bg_angle":             135,
     },
     "Melnibonéan": {
         "bg_deep":                       "#2A353C",
@@ -1763,9 +1704,9 @@ THEMES = {
         "library_slider_fill":           "#C496B8",
         "library_input_bg":              "#3A3244",
         "library_input_text":            "#F0E8F0",
-        "settings_tab_hover_bg":         "#C496B8",
-        "settings_tab_hover_opacity":    0.85,
-        "settings_tab_hover_text":       "#1E1A24",
+        "tab_hover_bg":         "#C496B8",
+        "tab_hover_opacity":    0.85,
+        "tab_hover_text":       "#1E1A24",
         "settings_theme_names_dimmed":   "#B488B4",
         "streak_grid_outline":           "#591048",
         "streak_grid_dot":               "#E6D3B5",
@@ -1778,7 +1719,71 @@ THEMES = {
         "placeholder_cover":             "#C47BB1",
         "placeholder_stats":             "#AD80A2",
         "carousel_stripe":               "#CC89B6",
-    },    
+    },
+        "Midnight Children": {
+        "bg_deep":                       "#0A1228",
+        "bg_main":                       "#101A38",
+        "bg_sidebar":                    "#0A1228",
+        "bg_dropdown":                   "#162248",
+        "panel_opacity_hover":           0.92,
+        "undo_hover":                    "#23B7D6",
+        "text":                          "#EBD6A2",
+        "text_on_light_bg":              "#0A1228",
+        "accent":                        "#E8943A",
+        "accent_light":                  "#F0A84A",
+        "accent_dark":                   "#B8681E",
+        "button_text":                   "#0A1228",
+        "slider_progress":               "#F2F1AF",
+        "slider_overall_bg":             "#162248",
+        "slider_overall_fill":           "#E8943A",
+        "slider_chapter_bg":             "#162248",
+        "slider_chapter_fill":           "#F0A84A",
+        "slider_vol_bg":                 "#162248",
+        "slider_vol_fill":               "#E8943A",
+        "notch_color":                   "#FBFFAC",
+        "notch_opacity":                 180,
+        "dropdown_curr_chap":            "#CE8A31",
+        "dropdown_text":                 "#EFEF9B",
+        "dropdown_time_text":            "#EFEF9B",
+        "sidebar_text":                  "#E0B587",
+        "sidebar_text_hover":            "#E97546",
+        "sidebar_opacity":               0.85,
+        "library_bg":                    "#101A38",
+        "library_grid_bg":               "#101A38",
+        "library_row_one":               "#101A38",
+        "library_row_two":               "#141E40",
+        "library_item_hover_color":      "#3F86E2",
+        "library_item_hover_alpha":      0.25,
+        "library_title":                 "#E9AF1D",
+        "library_author":                "#7BA1EE",
+        "library_narrator":              "#879AC0",
+        "library_year":                  "#C7B294",
+        "library_elapsed":               "#A9B5CD",
+        "library_total":                 "#A9B5CD",
+        "library_percentage":            "#E8943A",
+        "library_slider_bg":             "#162248",
+        "library_slider_fill":           "#E8943A",
+        "library_input_bg":              "#162248",
+        "library_input_text":            "#E8ECF4",
+        "tab_hover_bg":                  "#142496",
+        "tab_hover_opacity":             0.85,
+        "tab_hover_text":                "#527BF0",
+        "streak_grid_outline":           "#0E2451",
+        "streak_grid_dot":               "#EDDD89",
+        "bookmark_body":                 "#E8943A",
+        "bookmark_icon":                 "#223A7B",
+        "tassel_head":                   "#223A7B",
+        "settings_theme_names_dimmed":   "#C4AB60",
+        "focus_marker_palette":          ["#1631FF", "#E97546"],
+        "focus_marker_tab_palette":      ["#EFEC61", "#2871F0"],
+        "focus_marker_selected_palette": ["#3766c1", "#EDF0BB"],
+        "placeholder_cover":             "#E8943A",
+        "carousel_bg":                   "#0A1228",
+        "carousel_stripe":               "#2D1BE6",
+        "gradient_bg_start":             "#0A1228",
+        "gradient_bg_end":               "#121D3D",
+        "gradient_bg_angle":             135,
+    },
     "Miss Havisham": {
         "bg_deep":                       "#2E2B33",
         "bg_main":                       "#423E48",
@@ -1956,9 +1961,9 @@ THEMES = {
         "library_slider_fill":           "#B85878",
         "library_input_bg":              "#2E2842",
         "library_input_text":            "#E5C4E5",
-        "settings_tab_hover_bg":         "#C86A8A",
-        "settings_tab_hover_opacity":    0.85,
-        "settings_tab_hover_text":       "#1A1428",
+        "tab_hover_bg":         "#C86A8A",
+        "tab_hover_opacity":    0.85,
+        "tab_hover_text":       "#1A1428",
         "settings_theme_names_dimmed":   "#E5B4D0",
         "streak_grid_outline":           "#591048",
         "streak_grid_dot":               "#E6D3B5",
@@ -2015,9 +2020,9 @@ THEMES = {
         "library_slider_fill":           "#B8A87A",
         "library_input_bg":              "#333333",
         "library_input_text":            "#F0ECDC",
-        "settings_tab_hover_bg":         "#C8B898",
-        "settings_tab_hover_opacity":    0.85,
-        "settings_tab_hover_text":       "#1A1E20",
+        "tab_hover_bg":         "#C8B898",
+        "tab_hover_opacity":    0.85,
+        "tab_hover_text":       "#1A1E20",
         "settings_theme_names_dimmed":   "#BBBBBB",
         "streak_grid_outline":           "#453D2D",
         "streak_grid_dot":               "#806F54",
@@ -2071,9 +2076,9 @@ THEMES = {
         "library_slider_fill":           "#7A5F7A",
         "library_input_bg":              "#232F35",
         "library_input_text":            "#D8B3D2",
-        "settings_tab_hover_bg":         "#9AA8B8",
-        "settings_tab_hover_opacity":    0.85,
-        "settings_tab_hover_text":       "#141E22",
+        "tab_hover_bg":         "#9AA8B8",
+        "tab_hover_opacity":    0.85,
+        "tab_hover_text":       "#141E22",
         "settings_theme_names_dimmed":   "#AC84A5",
         "streak_grid_outline":           "#232836",
         "streak_grid_dot":               "#806F54",
@@ -2133,9 +2138,9 @@ THEMES = {
         "library_slider_fill":           "#6A8A9A",
         "library_input_bg":              "#2A343E",
         "library_input_text":            "#D8E4EC",
-        "settings_tab_hover_bg":         "#6A8A9A",
-        "settings_tab_hover_opacity":    0.85,
-        "settings_tab_hover_text":       "#D8E4EC",
+        "tab_hover_bg":         "#6A8A9A",
+        "tab_hover_opacity":    0.85,
+        "tab_hover_text":       "#D8E4EC",
         "settings_theme_names_dimmed":   "#ADBAC1",
         "streak_grid_outline":           "#1E262E",
         "streak_grid_dot":               "#FBF2C8",
@@ -2191,8 +2196,8 @@ THEMES = {
         "library_slider_fill":           "#8B1AE8",
         "library_input_bg":              "#1A232C",
         "library_input_text":            "#90BEBE",
-        "settings_tab_hover_opacity":    0.9,
-        "settings_tab_hover_text":       "#0B0A0A",
+        "tab_hover_opacity":    0.9,
+        "tab_hover_text":       "#0B0A0A",
         "settings_theme_names_dimmed":   "#A7D9E8",
         "session_history_row_one":       "#1E2333",
         "session_history_row_two":       "#161A26",
@@ -2249,9 +2254,9 @@ THEMES = {
         "library_slider_fill":           "#78B8A0",
         "library_input_bg":              "#243533",
         "library_input_text":            "#C2BF96",
-        "settings_tab_hover_bg":         "#78B8A0",
-        "settings_tab_hover_opacity":    0.85,
-        "settings_tab_hover_text":       "#1A2624",
+        "tab_hover_bg":         "#78B8A0",
+        "tab_hover_opacity":    0.85,
+        "tab_hover_text":       "#1A2624",
         "settings_theme_names_dimmed":   "#94C1B4",
         "session_history_row_one":       "#2C3C3A",
         "streak_grid_outline":           "#3B400E",
@@ -2352,9 +2357,9 @@ THEMES = {
         "library_slider_fill":           "#C45A7A",
         "library_input_bg":              "#3B2B41",
         "library_input_text":            "#C8A8B8",
-        "settings_tab_hover_bg":         "#C86A8A",
-        "settings_tab_hover_opacity":    0.85,
-        "settings_tab_hover_text":       "#2A2030",
+        "tab_hover_bg":         "#C86A8A",
+        "tab_hover_opacity":    0.85,
+        "tab_hover_text":       "#2A2030",
         "settings_theme_names_dimmed":   "#E0C3D6",
         "tag_list_text":                 "#E6B9CA",
         "session_history_row_one":       "#3F3042",
@@ -2649,9 +2654,9 @@ THEMES = {
         "library_slider_fill":           "#D4AA3A",
         "library_input_bg":              "#2A2A2A",
         "library_input_text":            "#F2E8D0",
-        "settings_tab_hover_bg":         "#D4AA3A",
-        "settings_tab_hover_opacity":    0.85,
-        "settings_tab_hover_text":       "#0A0A0A",
+        "tab_hover_bg":         "#D4AA3A",
+        "tab_hover_opacity":    0.85,
+        "tab_hover_text":       "#0A0A0A",
         "settings_theme_names_dimmed":   "#929231",
         "session_history_row_one":       "#1C1C1C",
         "session_history_row_two":       "#141414",
@@ -2709,9 +2714,9 @@ THEMES = {
         "library_slider_fill":           "#E87A3A",
         "library_input_bg":              "#5A3A28",
         "library_input_text":            "#F2D8C0",
-        "settings_tab_hover_bg":         "#E87A3A",
-        "settings_tab_hover_opacity":    0.85,
-        "settings_tab_hover_text":       "#F2D8C0",
+        "tab_hover_bg":         "#E87A3A",
+        "tab_hover_opacity":    0.85,
+        "tab_hover_text":       "#F2D8C0",
         "settings_theme_names_dimmed":   "#BF8558",
         "session_history_row_one":       "#4D3425",
         "session_history_row_two":       "#452D1E",
@@ -2842,9 +2847,9 @@ THEMES = {
         "library_slider_fill":           "#8AB8CC",
         "library_input_bg":              "#3E4E58",
         "library_input_text":            "#E8F0F2",
-        "settings_tab_hover_bg":         "#AAC8D8",
-        "settings_tab_hover_opacity":    0.85,
-        "settings_tab_hover_text":       "#1E2A30",
+        "tab_hover_bg":         "#AAC8D8",
+        "tab_hover_opacity":    0.85,
+        "tab_hover_text":       "#1E2A30",
         "settings_theme_names_dimmed":   "#98A9B3",
         "session_history_row_one":       "#32424A",
         "session_history_row_two":       "#2C3840",
@@ -2988,9 +2993,9 @@ THEMES = {
         "library_slider_fill":           "#2AA8A0",
         "library_input_bg":              "#143440",
         "library_input_text":            "#E0F0EE",
-        "settings_tab_hover_bg":         "#3AB8B0",
-        "settings_tab_hover_opacity":    0.85,
-        "settings_tab_hover_text":       "#0A1A24",
+        "tab_hover_bg":         "#3AB8B0",
+        "tab_hover_opacity":    0.85,
+        "tab_hover_text":       "#0A1A24",
         "settings_theme_names_dimmed":   "#64C6C1",
         "session_history_row_one":       "#102936",
         "session_history_row_two":       "#0D212B",
@@ -3096,9 +3101,9 @@ THEMES = {
         "library_slider_fill":           "#B84AB8",
         "library_input_bg":              "#2A1838",
         "library_input_text":            "#F0E8F4",
-        "settings_tab_hover_bg":         "#D46AD4",
-        "settings_tab_hover_opacity":    0.85,
-        "settings_tab_hover_text":       "#140A1A",
+        "tab_hover_bg":         "#D46AD4",
+        "tab_hover_opacity":    0.85,
+        "tab_hover_text":       "#140A1A",
         "settings_theme_names_dimmed":   "#E7BACF",
         "streak_grid_outline":           "#2A1838",
         "streak_grid_dot":               "#DBD68E",
@@ -3293,9 +3298,9 @@ THEMES = {
         "library_slider_fill":           "#E8B020",
         "library_input_bg":              "#342E24",
         "library_input_text":            "#F8F0E0",
-        "settings_tab_hover_bg":         "#F0C030",
-        "settings_tab_hover_opacity":    0.85,
-        "settings_tab_hover_text":       "#1A1812",
+        "tab_hover_bg":         "#F0C030",
+        "tab_hover_opacity":    0.85,
+        "tab_hover_text":       "#1A1812",
         "settings_theme_names_dimmed":   "#AF904D",
         "session_history_row_one":       "#292929",  
         "session_history_row_two":       "#242424",
@@ -3397,6 +3402,18 @@ def derive_lighter_accent_rgb(accent_hex: str) -> str:
     return ",".join(str(round(c * 255)) for c in (nr, ng, nb))
 
 
+def _kbdnav_fill_rgb(t: dict) -> str:
+    """The "fill highlight" keyboard-nav style's actual color for theme dict `t`: the
+    per-theme `kbdnav_fill_highlight` override (Group 10) if set, else
+    derive_lighter_accent_rgb(accent). Extracted 2026-09-09 so get_panel_base_stylesheet and
+    get_settings_stylesheet (which needs its own copy for the tab-bar rule — see
+    get_settings_stylesheet's own QTabBar fill-highlight rule) can't drift out of sync the way
+    two independently-maintained copies of this override/fallback logic would risk — same
+    concern as the upsert_book/upsert_books_batch sync rule elsewhere in this codebase."""
+    override = t.get('kbdnav_fill_highlight')
+    return _hex_to_rgb(override) if override else derive_lighter_accent_rgb(t['accent'])
+
+
 def _get_gradient_style(t, prefix, fallback_color, opacity=1.0):
     """Helper to construct qlineargradient or fallback to flat color/rgba."""
     start = t.get(f"gradient_{prefix}_start")
@@ -3439,7 +3456,7 @@ def _get_gradient_style(t, prefix, fallback_color, opacity=1.0):
 # or falls back to one of its own other keys (slider_progress -> text_on_light_bg
 # -> text). Letting them inherit from the base template made The Color Purple's
 # explicit value leak into every theme that doesn't set its own.
-_NO_BASE_INHERIT_KEYS = ("bookmark_body", "bookmark_icon", "tassel_cord", "tassel_head", "tassel_fringe", "streak_grid_outline", "streak_grid_dot", "slider_progress", "placeholder_cover", "focus_marker_palette", "focus_marker_tab_palette", "focus_marker_selected_palette", "excluded_scrollbar")
+_NO_BASE_INHERIT_KEYS = ("bookmark_body", "bookmark_icon", "tassel_cord", "tassel_head", "tassel_fringe", "streak_grid_outline", "streak_grid_dot", "slider_progress", "placeholder_cover", "focus_marker_palette", "focus_marker_tab_palette", "focus_marker_selected_palette", "excluded_scrollbar", "kbdnav_fill_highlight")
 
 
 # Panel-backdrop alpha override (2026-07-28). None = use each theme's own
@@ -3979,15 +3996,7 @@ def get_panel_base_stylesheet(theme_name="default"):
     """
     t = _resolve_theme(theme_name)
     accent_style = _get_gradient_style(t, "accent", t['accent'])
-    # kbdnav_fill_highlight override (2026-09-08, Group 10 — see themes.py's own key-doc
-    # comment): no single derive_lighter_accent_rgb tuning reads well across every theme's
-    # accent (some are already near-white, others deeply saturated), so a theme can set this
-    # key (a plain hex string, matching every other override key's convention) to bypass the
-    # derivation entirely. Converted through _hex_to_rgb so the QSS rule's rgb(...) usage is
-    # identical regardless of which source won.
-    kbdnav_fill_override = t.get('kbdnav_fill_highlight')
-    kbdnav_fill_rgb = (_hex_to_rgb(kbdnav_fill_override) if kbdnav_fill_override
-                       else derive_lighter_accent_rgb(t['accent']))
+    kbdnav_fill_rgb = _kbdnav_fill_rgb(t)
 
     return f"""
         QWidget#settings_panel, QWidget#speed_panel, QWidget#sleep_panel, QWidget#sprint_panel {{
@@ -4119,9 +4128,9 @@ def get_settings_stylesheet(theme_name="default"):
     t = _resolve_theme(theme_name)
     text_rgb = _hex_to_rgb(t['text'])
     accent_style = _get_gradient_style(t, "accent", t['accent'])
-    tab_hover_bg = t.get('settings_tab_hover_bg', t['accent'])
-    tab_hover_opacity = t.get('settings_tab_hover_opacity', 0.85)
-    tab_hover_text = t.get('settings_tab_hover_text', t['text'])
+    tab_hover_bg = t.get('tab_hover_bg', t['accent'])
+    tab_hover_opacity = t.get('tab_hover_opacity', 0.85)
+    tab_hover_text = t.get('tab_hover_text', t['text'])
     panel_dimmed_color = t.get('settings_theme_names_dimmed', t['accent_dark'])
 
     return get_panel_base_stylesheet(theme_name) + f"""
@@ -4225,6 +4234,52 @@ def get_settings_stylesheet(theme_name="default"):
             border: 2px solid {t['accent_light']};
         }}
         QWidget#settings_panel[kbdnav="true"][kbdnav_style="traveling"] QTabBar::tab:hover:!selected {{
+            background: {t['bg_deep']};
+            color: rgba({text_rgb}, 0.9);
+        }}
+        /* "Fill highlight" style, tab-bar case (2026-09-09) — the gap Pryme reported: no
+           visual distinction for "keyboard focus is on the tab bar itself" (vs. genuinely no
+           focus) under fill_highlight, since QTabBar::tab:selected already paints an
+           unconditional accent fill regardless of focus. An EARLIER attempt at this used
+           `QTabBar:focus::tab:selected` — a :focus PSEUDO-STATE chained directly ahead of a
+           ::sub-control on the SAME widget — and caused live, unverifiable paint artifacts
+           between tabs on theme switch (removed 2026-09-08, see SESSION.md). This rule
+           deliberately avoids that combinator shape entirely: it's a DESCENDANT selector
+           (ancestor attribute selector + a plain ::tab:selected sub-control, no pseudo-state
+           chained onto QTabBar itself) — the exact same proven shape as the hover-suppression
+           rule immediately above this one and at line ~4189, just gated on a DIFFERENT,
+           narrower property: `kbdnav_tab_focused`, NOT `kbdnav_fill_active`. The broader
+           property means "keyboard nav is active somewhere in this panel" — true even while
+           focus is on a BUTTON inside a tab, which would paint this tab's fill AND the
+           button's fill at once (the "which one does Enter act on" ambiguity the whole
+           modality system exists to avoid). `kbdnav_tab_focused` is exclusively true when the
+           tab bar itself is the genuinely focused widget — see
+           MainWindow._update_focus_marker's fill_highlight branch, which is the sole writer.
+
+           COLOR SOURCE (2026-09-09 live correction): uses tab_hover_bg/opacity/text — the SAME
+           color the mouse-hover rule above uses — NOT kbdnav_fill_rgb (the pattern-button fill
+           color). Pryme's explicit call: keyboard focus on the tab bar should look like mouse
+           hover for consistency, not like a focused pattern_button; the pattern_button fill
+           stays untouched. Since both mouse and keyboard now read the identical key, no new
+           theme key was needed — just this rename (see the key's own doc comment above,
+           GROUP 8) and this rule reading it instead of the derived fill color. */
+        QWidget#settings_panel[kbdnav="true"][kbdnav_tab_focused="true"] QTabBar::tab:selected {{
+            background: rgba({_hex_to_rgb(tab_hover_bg)}, {tab_hover_opacity});
+            color: {tab_hover_text};
+        }}
+        /* Mouse-hover takeaway (2026-09-09 live report): "if mouse is hovering over tab 3, if I
+           choose tab 2 with the key... mouse hover is not taken away." Most-recent-input-wins,
+           same principle the traveling style's own [kbdnav_style="traveling"] suppression rule
+           above already applies — but that rule is scoped to "traveling", so fill_highlight had
+           NO equivalent at all. Deliberately scoped to [kbdnav_tab_focused="true"] (not the
+           broader kbdnav="true"/kbdnav_fill_active) so this ONLY suppresses hover while the
+           keyboard is genuinely driving the tab bar specifically — a hovered tab while keyboard
+           focus is on a button inside some tab is a different case entirely (not addressed
+           here; that's the broader hover-pickup-vs-highlight-consolidation work flagged in
+           TODO.md as intentionally deferred). Restates the resting (non-hover, non-selected)
+           tab appearance, same shape as every other suppression rule in this file — QSS has no
+           `inherit`. */
+        QWidget#settings_panel[kbdnav="true"][kbdnav_tab_focused="true"] QTabBar::tab:hover:!selected {{
             background: {t['bg_deep']};
             color: rgba({text_rgb}, 0.9);
         }}
@@ -4741,9 +4796,9 @@ def get_stats_stylesheet(theme_name="default"):
     t = _resolve_theme(theme_name)
     text_rgb = _hex_to_rgb(t['text'])
     accent_style = _get_gradient_style(t, "accent", t['accent'])
-    tab_hover_bg = t.get('settings_tab_hover_bg', t['accent'])
-    tab_hover_opacity = t.get('settings_tab_hover_opacity', 0.85)
-    tab_hover_text = t.get('settings_tab_hover_text', t['text'])
+    tab_hover_bg = t.get('tab_hover_bg', t['accent'])
+    tab_hover_opacity = t.get('tab_hover_opacity', 0.85)
+    tab_hover_text = t.get('tab_hover_text', t['text'])
     panel_dimmed_color = t.get('settings_theme_names_dimmed', t['accent_dark'])
     finished_color = t.get('stats_finished_title', t.get('accent_light', t.get('accent_dark', '#BA7BBA')))
 

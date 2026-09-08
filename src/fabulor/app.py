@@ -413,6 +413,8 @@ class UICallbackInterface:
             marker.clear()
     def refresh_kbdnav_style_property(self):
         self._main.refresh_kbdnav_style_property()
+    def clear_all_kbdnav_fill_active(self):
+        self._main.clear_all_kbdnav_fill_active()
 
 
 class LibraryInterface:
@@ -5109,18 +5111,68 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         _update_focus_marker's fill_highlight branch."""
         self._set_kbdnav_property(panel, "kbdnav_fill_active", active)
 
+    def clear_all_kbdnav_fill_active(self) -> None:
+        """Force `kbdnav_fill_active` false on ALL FOUR kbdnav panels (settings/speed/sleep/
+        sprint), not just whichever one is currently open.
+
+        Live regression, 2026-09-09: switching the style toggle from fill_highlight BACK to
+        traveling left the fill rendering ON TOP OF the traveling marker in Settings (Speed/
+        Sleep/Sprint reported correct — consistent with fill_highlight simply never having been
+        tested there yet, not evidence the cause is Settings-specific). Root cause:
+        `_set_kbdnav_fill_active_property` is called ONLY from _update_focus_marker's
+        fill_highlight branch — under "traveling" style nothing ever touches this property at
+        all, so a panel that was left `kbdnav_fill_active="true"` from an EARLIER fill_highlight
+        session stays stuck at "true" forever once the style switches back, since Qt properties
+        persist on the widget instance across style changes. `_update_keyboard_marker_style`
+        already had the mirror-image fix for the opposite direction (clearing the traveling
+        marker on switching TO fill_highlight) but nothing symmetric for switching TO traveling.
+        Iterates all four panel keys (not just `_kbdnav_active_panel_key()`) because the stale
+        property could be sitting on a DIFFERENT panel than whichever one happens to be open
+        when the switch is made.
+
+        Also clears `kbdnav_tab_focused` (Settings only — the other three panels have no tab
+        bar) for the identical reason: it is likewise written only by the fill_highlight branch
+        and would otherwise survive a switch back to "traveling" stuck at "true", making the
+        selected tab show a stray fill alongside the real traveling marker."""
+        for panel_key in ("settings", "speed", "sleep", "sprint"):
+            panel = self._kbdnav_panel_widget(panel_key)
+            if panel is not None:
+                self._set_kbdnav_fill_active_property(panel, False)
+                if panel_key == "settings":
+                    self._set_kbdnav_property(panel, "kbdnav_tab_focused", False)
+
     def _set_kbdnav_property(self, panel, prop_name: str, active: bool) -> None:
         """Set `prop_name` on `panel` and repolish it + every child QPushButton, skipping the
-        work if the value is already correct. Shared plumbing for the two DISTINCT, never-
-        simultaneously-true properties `kbdnav_marker_active` (traveling style) and
-        `kbdnav_fill_active` (fill_highlight style) — see _on_focus_marker_dormant_changed's
-        CORRECTION note for why they must not be the same property."""
+        work if the value is already correct. Shared plumbing for the three DISTINCT, never-
+        simultaneously-true-for-the-same-purpose properties `kbdnav_marker_active` (traveling
+        style), `kbdnav_fill_active` (fill_highlight style), and `kbdnav_tab_focused`
+        (fill_highlight, tab-bar-specific) — see _on_focus_marker_dormant_changed's CORRECTION
+        note for why the first two must not be the same property.
+
+        CORRECTION (2026-09-09 live report, intermittent — worked for some themes, then didn't
+        on the SAME theme moments later): the repolish loop below only ever walked
+        `QPushButton` children, never the settings tab bar itself. `QTabBar`'s `::tab`
+        sub-controls cache their own style state and do NOT re-resolve just because an ancestor
+        was unpolish/polish'd — this exact fact is already the reason `_set_keyboard_nav_active`
+        has its own separate `tabs.tabBar()` unpolish/polish block (see that method's own
+        comment, 2026-09-04) — but this NEWER, more general helper never got the same
+        treatment when it was added, so `kbdnav_tab_focused` changes could set the property
+        correctly while the tab bar kept painting from a stale cached style, appearing to work
+        only when some UNRELATED event (a theme switch, which does its own full stylesheet
+        reapply) happened to repolish the tab bar for an entirely different reason first."""
         value = "true" if active else "false"
         if panel.property(prop_name) == value:
             return
         panel.setProperty(prop_name, value)
         panel.style().unpolish(panel)
         panel.style().polish(panel)
+        if panel is getattr(self, 'settings_panel', None):
+            tabs = getattr(self, 'tabs', None)
+            if tabs is not None:
+                bar = tabs.tabBar()
+                bar.style().unpolish(bar)
+                bar.style().polish(bar)
+                bar.update()
         for btn in panel.findChildren(QPushButton):
             btn.style().unpolish(btn)
             btn.style().polish(btn)
@@ -5386,10 +5438,25 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             panel = self._kbdnav_panel_widget(panel_key) if panel_key is not None else None
             if panel is None:
                 return
-            active = self._keyboard_nav_active and self._focus_marker_in_scope(
-                QApplication.focusWidget())
+            focus = QApplication.focusWidget()
+            active = self._keyboard_nav_active and self._focus_marker_in_scope(focus)
             self._set_kbdnav_fill_active_property(panel, active)
             self._set_kbdnav_property(panel, "kbdnav_marker_active", active)
+            # Tab-bar case (2026-09-09 live report: "fill highlight doesn't highlight the
+            # selected tab"). kbdnav_fill_active alone can't drive the tab's own QSS rule,
+            # because that property means "keyboard nav is active somewhere in this panel" —
+            # true even while focus is actually on a BUTTON inside a tab, which would then
+            # paint the tab's fill AND the button's fill simultaneously (the exact "which one
+            # does Enter act on" ambiguity this whole modality system exists to avoid — see
+            # _set_keyboard_nav_active's own docstring for the 2026-09-03 incident that
+            # established that principle). A narrower, tab-bar-EXCLUSIVE property is needed:
+            # true only when the tab bar itself is the genuinely focused widget. The tab's own
+            # QSS rule (get_settings_stylesheet) reads THIS property, not kbdnav_fill_active —
+            # see that rule's comment for why a :focus pseudo-state chained onto ::tab:selected
+            # was tried first and rejected (paint artifacts, 2026-09-08).
+            tabs = getattr(self, 'tabs', None)
+            tab_bar_focused = active and tabs is not None and focus is tabs.tabBar()
+            self._set_kbdnav_property(panel, "kbdnav_tab_focused", tab_bar_focused)
             return
         marker = getattr(self, 'focus_marker', None)
         if marker is None:

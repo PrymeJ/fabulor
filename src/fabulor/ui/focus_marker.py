@@ -10,7 +10,7 @@ short trailing stretch of the border behind it, fading toward the tail (a "comet
 (default) outlines the WHOLE border at all times with a color sweep continuously traveling around
 it — no moving position or trail, every point on the perimeter is lit at once and only the COLOR
 travels ("a 1px border with rotating hues"). The sweep walks `focus_marker_palette` (a theme-driven
-list of 2+ colors, see themes.py GROUP 10), not an HSV hue rotation — hue rotation on this app's
+list of 2+ colors, see themes.py GROUP 9), not an HSV hue rotation — hue rotation on this app's
 near-white/pale theme text colors is close to a visual no-op (near-zero saturation), so the marker
 blends between real, separately-saturated palette colors instead. Switching styles only changes
 `paintEvent` / `_marker_color` — the perimeter, phases, and timers (self._t as a moving position

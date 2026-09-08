@@ -659,7 +659,8 @@ correctly — the contrast is what made these visible, so they are not regressio
 
   **Original design notes, kept for reference:** smaller than it first looks, because the opacity
   machinery already exists. **What was already there** (found 2026-07-28 after the user pointed at
-  `settings_tab_hover_opacity`): `panel_opacity_hover` is a per-theme float (0.88-0.95 across the
+  `tab_hover_opacity`, renamed 2026-09-09 from `settings_tab_hover_opacity`): `panel_opacity_hover`
+  is a per-theme float (0.88-0.95 across the
   theme set, every theme sets one) and the panel background is ALREADY painted as
   `rgba(bg_main, panel_opacity_hover)` — `themes.py:3458` in `get_settings_stylesheet`, with a
   second consumer around `:3724`. So the three states are mostly a matter of choosing the alpha and

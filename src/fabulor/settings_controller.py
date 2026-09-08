@@ -100,6 +100,14 @@ class SettingsController:
         # to whatever unrelated event happens to touch it next.
         if style == "fill_highlight":
             self.ui_callbacks.clear_focus_marker()
+        else:
+            # Symmetric fix, live-reported 2026-09-09: switching TO traveling left a STALE
+            # kbdnav_fill_active="true" stuck on whichever panel was open during an earlier
+            # fill_highlight session, painting the fill on top of the real traveling marker
+            # there — see MainWindow.clear_all_kbdnav_fill_active's own docstring for the full
+            # mechanism. Clears all four panels, not just the currently active one, since the
+            # stale property could be sitting on a panel that isn't open right now.
+            self.ui_callbacks.clear_all_kbdnav_fill_active()
         # kbdnav_style must also be re-stamped right now, not left to the next unrelated
         # keyboard-nav transition — see MainWindow.refresh_kbdnav_style_property's own docstring
         # for the live regression this fixes (the QSS hover-suppression-vs-fill gate read a
