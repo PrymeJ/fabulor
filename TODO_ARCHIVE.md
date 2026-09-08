@@ -5,6 +5,29 @@ list scannable. Kept, not deleted, per the project's normal practice of not thro
 that isn't fully duplicated in NOTES.md/SESSION.md/a commit message. Order is the same relative
 order these entries had in TODO.md before the split (2026-07-30).
 
+- **[2026-09-09] CLOSED: confirmation-dialog Escape behavior is inconsistent app-wide.** Originally
+  scoped as "not yet started, no sites enumerated" — a full audit (background research agent) found
+  nine armed-confirmation sites total: Book Detail's four (remove/exclude book, mark
+  finished/unfinished, delete all listening history, per-row delete-session), Tag Manager's
+  delete-a-tag, Stats' reset-all-stats, Sprint's reset-all-sprint-data plus a generic
+  conflict-confirm overlay, Sleep's own conflict-confirm overlay. Six already handled Escape
+  correctly; three did not (Stats' reset, both panels' conflict-confirm overlay) — fixed by moving
+  Sprint's/Sleep's Escape handling from a silently-unreachable `keyPressEvent` override into a
+  proper `showEvent`-installed `eventFilter` (matching Stats' own already-correct pattern; neither
+  panel's widget ever holds real Qt focus, so `keyPressEvent` on the panel itself was dead code).
+  The scope then grew past the original ask, per follow-on live requests in the same session: Delete
+  now arms three of these confirmations from anywhere on the relevant surface (Stats' reset, Sprint's
+  reset, Book Detail's "Delete listening history"); and the whole set was generalized to "any key
+  other than Space/Enter dismisses the confirmation and swallows that press," closing a further Tab-
+  specific gap that recurred at three Book Detail confirmations (Tab is dispatched inside
+  `BookDetailPanel.eventFilter`, which runs before `keyPressEvent`, so a swallow check placed there
+  could never see it) and, independently, at Tags' delete-tag confirm (Tab checked ahead of its own
+  swallow block). A related, pre-existing subtle bug (`_history_selected_index` could silently point
+  at a `'confirming'`-state row without its visual updating) was traced afterward and found already
+  closed as a side effect of the swallow-and-dismiss fix — no separate patch needed. Full narrative:
+  SESSION.md, 2026-09-09 Session 1. Live-check list: TESTING.md's "Confirmation-dialog keyboard
+  consistency" section. Commits `dd3b0e6`, `fc29062`, `9eeddbc`, `ca9036f`, `cab02e4`.
+
 - **[2026-09-08] CLOSED, verified fixed: fill-highlight marker style's selected+focused+hovered
   pattern_button case.** Flagged as unchecked in the same session the `kbdnav_style` fix landed —
   a theme swatch (`#pattern_button[selected="true"]`, ID + attribute selector, higher specificity

@@ -115,19 +115,6 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
     where the mouse is, and make the keys win unless the mouse hovered over something else. This
     principle should be observed throughout the app with a holistic approach."
 
-### Confirmation-dialog Escape behavior is inconsistent app-wide (not yet started)
-- [2026-09-08] Pryme, immediately after the Stats hover/marker session above: "I will need you to
-  find all instances where a confirmation to delete something is armed. In some instances Esc
-  cancels them, and in some instances it closes the panel. The behavior will need to be uniform."
-  Scope: every "delete this / are you sure" 7-second-armed confirm in the app (Stats' Reset all
-  stats, Book Detail's Remove/Delete listening history/per-session delete, Tags' delete-tag
-  confirm, Sprint's Reset sprint stats, Sleep's equivalent if one exists, Library's Excluded Books
-  restore-confirm shape if it has one, and any other `_confirming_*`/armed-then-timeout pattern
-  found by grep) needs an audit of what Escape currently does at each site — some appear to
-  dismiss just the confirm (reverting to the normal delete-icon state), others apparently fall
-  through to the panel's own Escape handler and close the whole panel instead. Not yet started;
-  no sites have been enumerated yet.
-
 ### Settings keyboard-focus regressions found while testing Tags (check after Tags is done)
 - [2026-09-08] Excluded Books focus strand — FIXED. Un-excluding the LAST remaining book drops
   `ExcludedBooksPopup.book_count` to 0, and `reposition()` hides the popup entirely in that case.
