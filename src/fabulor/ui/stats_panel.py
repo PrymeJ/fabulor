@@ -11,13 +11,13 @@ logger = logging.getLogger(__name__)
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTabWidget, QLabel,
     QGridLayout, QSpinBox, QScrollArea, QPushButton, QApplication,
-    QListView, QStyledItemDelegate, QStyle,
+    QListView, QStyledItemDelegate, QStyle, QStyleOptionSpinBox,
 )
 from PySide6.QtCore import (
     Qt, QRect, QRectF, Signal, QSize, QPoint, QPointF, QEvent, QThreadPool, QTimer, Property,
     QPropertyAnimation, QEasingCurve, QAbstractListModel, QModelIndex, QObject, QRunnable, Slot,
 )
-from PySide6.QtGui import QPainter, QColor, QFont, QPixmap, QImage, QIcon, QEnterEvent, QPen, QPainterPath, QKeyEvent, QCursor
+from PySide6.QtGui import QPainter, QColor, QFont, QPixmap, QImage, QIcon, QEnterEvent, QPen, QPainterPath, QKeyEvent, QCursor, QPolygon
 from PySide6.QtWidgets import QAbstractScrollArea
 from .cover_loader import CoverLoaderWorker, to_grayscale
 from .library import _cover_cache
@@ -3018,6 +3018,99 @@ class TasselOverlay(QWidget):
             cb()
 
 
+class _ThemedSpinBox(QSpinBox):
+    """Draws its own up/down triangles instead of relying on QSpinBox::up-button/::down-button
+    QSS. Same root cause and same fix shape as library.py's `_ThemedComboBox` (see that class's
+    own docstring): on this app's target desktop (KDE/Plasma, Wayland, Fusion style), the native
+    style paints its own arrow glyph into these sub-controls regardless of QSS — the buttons
+    rendered as plain solid-color rectangles with no arrow indicating direction at all (live-
+    reported 2026-09-09, day_start_spin — the app's only QSpinBox; confirmed live across 10+
+    themes with the fix below, not just the one theme first tested). Paints the base control
+    (background/border/text/buttons) normally via the style — only the two arrow glyphs are
+    added on top, so the working parts of the native paint (button hover/press feedback) are
+    untouched, same as _ThemedComboBox leaves its own base paint alone.
+
+    The control's top-right/bottom-right corners (QSS `border-radius: 4px` on QSpinBox itself)
+    are NOT drawn by the native style at all — confirmed live (2026-09-09) as PRE-EXISTING,
+    present even with the triangle painting below fully removed, so it is not something this
+    class's own paint caused (an earlier version here also tried an inset fillRect matching
+    _ThemedComboBox's corner_clearance trick, on the theory that IT was squaring the corners
+    off — that theory was live-tested and disproven, so that fillRect was removed rather than
+    kept as a no-op). QSpinBox::up-button/::down-button's QSS has no border-radius of its own
+    and the native style paints their background as a flat rectangle spanning the CONTROL's
+    full rounded corner, covering where the curve should be. Fixed by explicitly re-drawing
+    the missing curve: after the native paint, redraw the whole control's rounded-rect BORDER
+    on top, which paints over the flat-rectangle edge with the correct curve and leaves
+    everything else (backgrounds, text, the buttons' own fill) untouched."""
+
+    def __init__(self, panel: "StatsPanel", parent=None):
+        super().__init__(parent)
+        self._panel = panel
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        accent = self._panel._accent_color
+        opt = QStyleOptionSpinBox()
+        self.initStyleOption(opt)
+        up_rect = self.style().subControlRect(
+            QStyle.ComplexControl.CC_SpinBox, opt, QStyle.SubControl.SC_SpinBoxUp, self)
+        down_rect = self.style().subControlRect(
+            QStyle.ComplexControl.CC_SpinBox, opt, QStyle.SubControl.SC_SpinBoxDown, self)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        # Redraw the control's own rounded border on top of whatever the native buttons just
+        # flat-painted over its top-right/bottom-right corners — see the class docstring for
+        # why this, not a fillRect inset, is the actual fix. border_color/radius match the
+        # QSpinBox QSS rule's own `border: 1px solid {accent}` / `border-radius: 4px` exactly,
+        # so this reads as a continuation of that border, not a second, different-looking one.
+        painter.setPen(QPen(accent, 1))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        border_rect = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+        painter.drawRoundedRect(border_rect, 4, 4)
+        painter.setPen(Qt.PenStyle.NoPen)
+        # Live-reported 2026-09-09: an accent-colored triangle washed out to near-invisible on
+        # HOVER, since the button's own hover background (QSpinBox::up-button:hover, themes.py)
+        # is ALSO accent — same color as the triangle, painted on top of itself. Needs a color
+        # that stays visibly darker than both the resting (accent_dark) and hover (accent)
+        # button backgrounds, not tied to either — see on_theme_changed's own comment for why
+        # this reads _spinbox_arrow_color instead of `accent`.
+        painter.setBrush(self._panel._spinbox_arrow_color)
+        # Centered on each button's own rect BY CENTROID, not by a naive cy±half-height offset
+        # around rect.center(): a triangle's centroid sits 1/3 of the way from its base to its
+        # apex, not at the midpoint of its bounding box, so cy±h alone leaves the visible shape
+        # off-center by (base_to_apex_span)/3 - h — confirmed by the live report ("not centered
+        # horizontally and vertically"). Half-width/half-height define the triangle's own SIZE;
+        # the vertical placement is then solved so the three vertices' average y lands exactly
+        # on cy, for both orientations.
+        tri_half_w, tri_half_h = 3, 2
+        h_total = 2 * tri_half_h
+        # Centroid sits h_total/3 from the base toward the apex — placing the base at
+        # cy + h_total/3 (up) or cy - h_total/3 (down) makes the CENTROID land exactly on cy.
+        base_offset = h_total / 3
+        # Live-measured nudge (2026-09-09): the centroid math above is geometrically correct
+        # but the RESULT still read as off-center against the actual rendered button — Pryme's
+        # own eyes, not re-derived. +1 right for both; the up/down arrows need DIFFERENT y
+        # nudges (settled at +2/+0) since the two buttons are not symmetric around their shared
+        # boundary — tuned in several live rounds, not derived.
+        nudge_x = 1
+        nudge_y_up, nudge_y_down = 2, 0
+        for rect, is_up in ((up_rect, True), (down_rect, False)):
+            cx = rect.center().x() + nudge_x
+            cy = rect.center().y() + (nudge_y_up if is_up else nudge_y_down)
+            if is_up:
+                base_y = cy + base_offset
+                points = [QPoint(cx - tri_half_w, round(base_y)),
+                          QPoint(cx + tri_half_w, round(base_y)),
+                          QPoint(cx, round(base_y - h_total))]
+            else:
+                base_y = cy - base_offset
+                points = [QPoint(cx - tri_half_w, round(base_y)),
+                          QPoint(cx + tri_half_w, round(base_y)),
+                          QPoint(cx, round(base_y + h_total))]
+            painter.drawPolygon(QPolygon(points))
+        painter.end()
+
+
 def _next_streak_rollover(day_start_hour: int) -> datetime:
     """Wall-clock instant at which the adjusted streak-grid day next advances."""
     from datetime import timedelta
@@ -3035,6 +3128,7 @@ class StatsPanel(QWidget):
         self.setObjectName("stats_panel")
         self.setAttribute(Qt.WA_StyledBackground, True)
         self._accent_color = QColor("#9B59B6")
+        self._spinbox_arrow_color = QColor("#1A1A1A")
         self._tassel_body_color = QColor("#9B59B6")
         self._tassel_icon_color = QColor("#000000")
         self._tassel_cord_color = QColor("#000000")
@@ -3187,6 +3281,11 @@ class StatsPanel(QWidget):
         from ..themes import _resolve_theme
         theme = _resolve_theme(theme)
         self._accent_color = QColor(theme.get("accent", "#9B59B6"))
+        # day_start_spin's up/down arrow triangles (_ThemedSpinBox) — must stay visible
+        # against BOTH the button's resting background (accent_dark) and its hover background
+        # (accent), so it can't be tied to either; live design call 2026-09-09: try bg_main
+        # first (the app's own dark background tone, not derived from accent at all).
+        self._spinbox_arrow_color = QColor(theme.get("bg_main", "#1A1A1A"))
         # bookmark_body/bookmark_icon are independently overridable; their
         # fallbacks reproduce the original derivations exactly.
         accent_light = theme.get("accent_light", "#9B59B6")
@@ -3419,7 +3518,7 @@ class StatsPanel(QWidget):
         layout.addWidget(day_header)
 
         pref_row = QHBoxLayout()
-        self.day_start_spin = QSpinBox()
+        self.day_start_spin = _ThemedSpinBox(self)
         self.day_start_spin.setContextMenuPolicy(Qt.ContextMenuPolicy.NoContextMenu)
         self.day_start_spin.setRange(0, 23)
         self.day_start_spin.setValue(self.config.get_day_start_hour())

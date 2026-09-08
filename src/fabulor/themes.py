@@ -4979,6 +4979,19 @@ def get_stats_stylesheet(theme_name="default"):
         QWidget#stats_panel[kbdnav="true"][kbdnav_style="traveling"] QPushButton#pattern_button[selected="true"]:hover {{
             background: {t['accent']};
         }}
+        /* Fill-highlight, tab-bar case — mirrors get_settings_stylesheet's identical rule
+           (added 2026-09-08) using the SAME tab_hover_bg/opacity/text key mouse hover already
+           uses, for the same "keyboard focus should look like mouse hover on a tab, not like a
+           focused pattern_button" consistency call. Gated on `kbdnav_tab_focused`, NOT
+           `kbdnav_fill_active` — see get_settings_stylesheet's own rule comment for why the
+           broader property would double-paint a tab's fill alongside a focused button's.
+           MainWindow._kbdnav_tab_bar_for("stats") is what makes this property ever go true for
+           Stats' own tab bar (added 2026-09-09 — it was hardcoded to Settings' tab bar only
+           and Stats' fill-highlight tab case silently never fired at all until this). */
+        QWidget#stats_panel[kbdnav="true"][kbdnav_tab_focused="true"] QTabBar::tab:selected {{
+            background: rgba({_hex_to_rgb(tab_hover_bg)}, {tab_hover_opacity});
+            color: {tab_hover_text};
+        }}
         QSpinBox {{
             background-color: {t['bg_dropdown']};
             color: {t['text']};

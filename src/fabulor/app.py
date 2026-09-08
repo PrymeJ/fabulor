@@ -768,6 +768,15 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # while the tab bar is focused re-anchors the marker to Look's tab rect.
         if hasattr(self, 'tabs'):
             self.tabs.currentChanged.connect(lambda _idx: self._update_focus_marker())
+        # Same wiring for Stats' own QTabWidget, added 2026-09-09 — missed when Stats joined
+        # the keyboard-nav system (2026-09-08): without it, Left/Right on Stats' tab bar moves
+        # currentIndex() but produces no FocusIn/FocusOut (the tab bar itself never loses real
+        # Qt focus), so _update_focus_marker was never re-triggered — reported live as the
+        # marker only ever showing on "⚙" (wherever it happened to be from the last GENUINE
+        # focus transition, e.g. Tab/arrow-Up into the tab bar from its content) and visibly
+        # continuing to animate on a tab already navigated away from.
+        if hasattr(self, 'stats_panel'):
+            self.stats_panel.tabs.currentChanged.connect(lambda _idx: self._update_focus_marker())
         # Pause the carousel timer during theme fades to prevent freeze/ghost artifacts.
         # stateChanged covers Running (stop), Stopped (resume), and abort paths.
         self.theme_manager._fade_anim.stateChanged.connect(self._on_fade_state_changed)
@@ -5070,9 +5079,24 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
     def _kbdnav_panel_widget(self, panel_key: str):
         """The QWidget the `kbdnav` QSS property is set on for `panel_key` — settings_panel/
-        speed_panel/sleep_panel/sprint_panel. Single mapping used by _set_keyboard_nav_active;
-        see _kbdnav_active_panel_key's docstring for why this indirection exists."""
+        speed_panel/sleep_panel/sprint_panel/stats_panel. Single mapping used by
+        _set_keyboard_nav_active; see _kbdnav_active_panel_key's docstring for why this
+        indirection exists."""
         return getattr(self, f"{panel_key}_panel", None)
+
+    def _kbdnav_tab_bar_for(self, panel_key: str):
+        """The QTabBar for `panel_key`'s own QTabWidget, or None if that panel has no tabs
+        (Speed/Sleep/Sprint) or isn't a recognised kbdnav panel at all. Single mapping added
+        2026-09-09 so a tab-bar-specific check (currently only _update_focus_marker's
+        fill_highlight kbdnav_tab_focused branch) needs one new entry here to support a future
+        tabbed panel, rather than a second hardcoded `focus is <specific>.tabs.tabBar()` check
+        at every call site — exactly the gap that let Stats' tab bar silently never work after
+        Settings' was hardcoded here first."""
+        if panel_key == "settings":
+            return self.tabs.tabBar() if hasattr(self, 'tabs') else None
+        if panel_key == "stats":
+            return self.stats_panel.tabs.tabBar() if hasattr(self, 'stats_panel') else None
+        return None
 
     def _set_keyboard_nav_active(self, active: bool) -> None:
         """Single owner of `_keyboard_nav_active` AND its visual consequences.
@@ -5131,16 +5155,18 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             # live 2026-09-04: the tab bar first, then the buttons, each via a [KBDNAV] trace
             # showing clean True/False alternation while the highlight visibly persisted).
             # update() alone is not enough — the unpolish/polish pair is what re-resolves
-            # [kbdnav] for them. Settings-only: Speed/Sleep/Sprint have no tab bar, and
-            # repolishing Settings' tab bar while a DIFFERENT panel is open would be pointless
-            # work on a widget that isn't even the one currently gated by this property.
-            if panel_key == "settings":
-                tabs = getattr(self, 'tabs', None)
-                if tabs is not None:
-                    bar = tabs.tabBar()
-                    bar.style().unpolish(bar)
-                    bar.style().polish(bar)
-                    bar.update()
+            # [kbdnav] for them. Only for panels that HAVE a tab bar (Speed/Sleep/Sprint don't;
+            # generalized 2026-09-09 via _kbdnav_tab_bar_for — was hardcoded to
+            # `panel_key == "settings"` only, so Stats' own tab bar never got repolished here
+            # even after Stats gained its own tab-bar-scoped kbdnav QSS rules, reproducing the
+            # exact stale-cached-style bug this block exists to prevent). Repolishing a tab bar
+            # while a DIFFERENT panel is the active one is still avoided — _kbdnav_tab_bar_for
+            # only returns non-None for panel_key itself, never some other panel's tab bar.
+            bar = self._kbdnav_tab_bar_for(panel_key)
+            if bar is not None:
+                bar.style().unpolish(bar)
+                bar.style().polish(bar)
+                bar.update()
             # EVERY button under the panel, not just the current tab's and not filtered by
             # object name. Two reasons, both learned the hard way:
             #   * settings_tab_button_rows() only reports the CURRENT tab, so flipping the flag
@@ -5262,20 +5288,20 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         Iterates every panel key (not just `_kbdnav_active_panel_key()`) because the stale
         property could be sitting on a DIFFERENT panel than whichever one happens to be open
         when the switch is made. "stats" added when Stats joined the modality system (same day,
-        later pass) — it has no fill-highlight tab-bar rule of its own yet (that's a visual-
-        styling concern deferred past this pass — see TODO.md), but `kbdnav_fill_active` itself
-        is the generic per-panel property every kbdnav panel shares, so it needs the same clear.
+        later pass) — `kbdnav_fill_active` is the generic per-panel property every kbdnav panel
+        shares, so it needs the same clear regardless of whether that panel has a tab bar.
 
-        Also clears `kbdnav_tab_focused` (Settings only — the other panels have no tab bar with
-        a fill-highlight rule wired to it yet) for the identical reason: it is likewise written
-        only by the fill_highlight branch and would otherwise survive a switch back to
-        "traveling" stuck at "true", making the selected tab show a stray fill alongside the
-        real traveling marker."""
+        Also clears `kbdnav_tab_focused` for every panel that HAS a tab bar (checked via
+        _kbdnav_tab_bar_for, not hardcoded to "settings" — Stats gained its own fill-highlight
+        tab-bar rule the same day this comment was last wrong about that) for the identical
+        reason: it is likewise written only by the fill_highlight branch and would otherwise
+        survive a switch back to "traveling" stuck at "true", making the selected tab show a
+        stray fill alongside the real traveling marker."""
         for panel_key in ("settings", "speed", "sleep", "sprint", "stats"):
             panel = self._kbdnav_panel_widget(panel_key)
             if panel is not None:
                 self._set_kbdnav_fill_active_property(panel, False)
-                if panel_key == "settings":
+                if self._kbdnav_tab_bar_for(panel_key) is not None:
                     self._set_kbdnav_property(panel, "kbdnav_tab_focused", False)
 
     def _set_kbdnav_property(self, panel, prop_name: str, active: bool) -> None:
@@ -5296,20 +5322,25 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         treatment when it was added, so `kbdnav_tab_focused` changes could set the property
         correctly while the tab bar kept painting from a stale cached style, appearing to work
         only when some UNRELATED event (a theme switch, which does its own full stylesheet
-        reapply) happened to repolish the tab bar for an entirely different reason first."""
+        reapply) happened to repolish the tab bar for an entirely different reason first.
+
+        SECOND CORRECTION (2026-09-09, same day): the fix above was hardcoded to
+        `panel is self.settings_panel`, so Stats' tab bar reproduced the identical bug the
+        moment Stats gained its own fill-highlight tab-bar rule — generalized via
+        _kbdnav_tab_bar_for(panel_key) instead of a second hardcoded panel-identity check."""
         value = "true" if active else "false"
         if panel.property(prop_name) == value:
             return
         panel.setProperty(prop_name, value)
         panel.style().unpolish(panel)
         panel.style().polish(panel)
-        if panel is getattr(self, 'settings_panel', None):
-            tabs = getattr(self, 'tabs', None)
-            if tabs is not None:
-                bar = tabs.tabBar()
-                bar.style().unpolish(bar)
-                bar.style().polish(bar)
-                bar.update()
+        panel_key = next((k for k in ("settings", "speed", "sleep", "sprint", "stats")
+                           if self._kbdnav_panel_widget(k) is panel), None)
+        bar = self._kbdnav_tab_bar_for(panel_key) if panel_key is not None else None
+        if bar is not None:
+            bar.style().unpolish(bar)
+            bar.style().polish(bar)
+            bar.update()
         for btn in panel.findChildren(QPushButton):
             btn.style().unpolish(btn)
             btn.style().polish(btn)
@@ -5591,8 +5622,16 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             # QSS rule (get_settings_stylesheet) reads THIS property, not kbdnav_fill_active —
             # see that rule's comment for why a :focus pseudo-state chained onto ::tab:selected
             # was tried first and rejected (paint artifacts, 2026-09-08).
-            tabs = getattr(self, 'tabs', None)
-            tab_bar_focused = active and tabs is not None and focus is tabs.tabBar()
+            #
+            # CORRECTION (2026-09-09, second live report same day: "Highlight fill mode has no
+            # impact on the tabs" — on Stats specifically): this was hardcoded to
+            # self.tabs.tabBar() (Settings' own QTabWidget) only. Stats has a SEPARATE
+            # QTabWidget instance (self.stats_panel.tabs) and was never checked, so
+            # kbdnav_tab_focused could never go true there even once Stats joined the
+            # kbdnav panel set. Generalized via _kbdnav_tab_bar_for(panel_key) so any future
+            # tabbed panel needs only one new entry there, not a second hardcoded check here.
+            tab_bar = self._kbdnav_tab_bar_for(panel_key)
+            tab_bar_focused = active and tab_bar is not None and focus is tab_bar
             self._set_kbdnav_property(panel, "kbdnav_tab_focused", tab_bar_focused)
             return
         marker = getattr(self, 'focus_marker', None)
