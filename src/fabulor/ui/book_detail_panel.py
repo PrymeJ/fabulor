@@ -1400,6 +1400,23 @@ class BookDetailPanel(QWidget):
         if key == Qt.Key.Key_Delete or key == Qt.Key.Key_X:
             if 0 <= self._history_selected_index < len(self._history_rows):
                 self._history_rows[self._history_selected_index]._on_trash_clicked()
+                return True
+            # No row highlighted (added 2026-09-09, live design ask): "Delete listening
+            # history" was previously unreachable by keyboard at all — Up at row 0 used to
+            # just clamp/no-op (see _move_history_selection), so there was no state where a
+            # row WASN'T selected once you'd entered the list, and Delete with nothing
+            # selected did nothing. Now that Up-at-row-0 deselects back to -1 (see below),
+            # this is the natural landing spot for the same action Del/X performs
+            # everywhere else in this panel — arm the SAME confirmation the button's own
+            # click already does (_on_delete_book_stats), not a separate path. Guarded on
+            # the button's own visibility (mirrors _populate_history's has_history gate —
+            # _on_delete_book_stats itself has no internal guard, since normally only a
+            # visible, clickable button could ever reach it) and on nothing already being
+            # armed, so a stray Delete while the confirm is already showing doesn't
+            # re-trigger _position_delete_history_confirm() pointlessly.
+            if (self._delete_history_btn.isVisible()
+                    and not self._delete_history_confirm_label.isVisible()):
+                self._on_delete_book_stats()
             return True
         if key in (Qt.Key.Key_Space, Qt.Key.Key_Return, Qt.Key.Key_Enter):
             row = self._confirming_history_row
@@ -1410,21 +1427,39 @@ class BookDetailPanel(QWidget):
         return False
 
     def _move_history_selection(self, direction: int):
-        """Up/Down: moves keyboard row selection by one, clamped (no wrap). Reuses
+        """Up/Down: moves keyboard row selection by one, clamped (no wrap) — EXCEPT Up at row 0,
+        which deselects back to "no row highlighted" (-1) rather than clamping in place. Reuses
         _HistoryRow.set_keyboard_selected — the SAME _slide_overlay/_state transition real
         mouse hover uses, so the visual is identical to hovering that row with the mouse (per
-        spec: 'hover styling animates an X on the right side, this will be the indicator')."""
+        spec: 'hover styling animates an X on the right side, this will be the indicator').
+
+        The Up-at-row-0-deselects behavior was added 2026-09-09 (live design ask, alongside the
+        Delete-key support in _history_key_event): with no row ever deselectable once the list
+        had been entered, Delete had no reachable path to "Delete listening history" — arming it
+        needs a state where NO row is selected, and Up at the top is the natural, low-friction
+        way to reach that state without leaving the tab. Down at the LAST row still clamps in
+        place — deliberately asymmetric: unlike Stats' Day/Week/Month row list (which has an
+        outer tab bar to hand off to on Up-at-first-row), this panel has nowhere further "up"
+        that a deselect-then-exit two-step would usefully reach — Book Detail's whole panel
+        already holds real Qt focus at all times, and Left/Right already cycles tabs regardless
+        of row-selection state (see keyPressEvent's dispatch order) — so deselecting IS the
+        full return-to-tab-level behavior here, not a first step toward a separate target."""
         n = len(self._history_rows)
         if n == 0:
             return
         if self._history_selected_index == -1:
             new_index = 0
+        elif self._history_selected_index == 0 and direction < 0:
+            new_index = -1
         else:
             new_index = self._history_selected_index + direction
-        if not (0 <= new_index < n):
+        if not (-1 <= new_index < n):
             return
         if 0 <= self._history_selected_index < n:
             self._history_rows[self._history_selected_index].set_keyboard_selected(False)
+        if new_index == -1:
+            self._history_selected_index = -1
+            return
         # Also clear any row the real mouse is currently hovering, if it's not the new
         # target — _history_selected_index only tracks KEYBOARD selection, so a row the
         # mouse is resting on (never touched _history_selected_index at all) would
