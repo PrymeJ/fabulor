@@ -1760,7 +1760,71 @@ Any `QWidget` subclass (not `QFrame`, not `QLabel`) that owns a background-color
 
 *Reorganization note (2026-07-13): the "Critical Architecture Rules" section was restructured to remove repetition — it previously existed as two passes (a full-prose section and a later condensed second pass covering many of the same rules). The two were merged: rules that appeared in both now appear once, under whichever fact they share, with no information dropped. Rules unique to either pass are unchanged. See the note directly under the "Critical Architecture Rules" heading for detail.*
 
-*Last updated: 2026-09-08 Session 4 — Stats Day/Week/Month row-list keyboard-nav follow-through
+*Last updated: 2026-09-09 Session 1 — App-wide confirmation-dialog keyboard consistency: audited
+all nine "arm a destructive confirmation, auto-revert after 7s" sites (Book Detail's four, Tag
+Manager's delete-a-tag, Stats' reset-all-stats, Sprint's reset-all-sprint-data + a generic
+conflict-confirm overlay, Sleep's own conflict-confirm overlay), then unified them on two rules:
+Escape (or ANY key other than Space/Enter/Return) cancels just the confirmation and swallows that
+press — never falling through to close the whole panel or perform the key's normal action — and,
+at three of them, Delete now arms the confirmation from anywhere on the relevant surface.
+Committed `dd3b0e6`, `fc29062`, `9eeddbc`, `ca9036f`.
+
+**New load-bearing fact, discovered twice independently in the same pass, worth stating once
+here rather than leaving it implicit in two separate commit messages:** a `keyPressEvent`
+override on a panel WIDGET is not reliably reachable for every key that widget's own confirm
+logic needs to intercept — TWO different keys failed this way, for two different underlying
+reasons, at three different confirmations, before the actual fix landed.
+
+- **Escape, at Sprint's and Sleep's conflict-confirm overlays.** Neither panel's widget ever
+  holds real Qt focus (`PanelManager._claim_panel_focus` targets a child button instead —
+  see the "Keyboard focus ownership" section above), so a `keyPressEvent` override on the
+  PANEL itself was silently dead code regardless of what it contained. Confirmed via a direct
+  synthetic test (not assumed) that `QObject::installEventFilter`'s documented reverse-install
+  order is real: the MOST RECENTLY installed filter runs first, so `MainWindow`'s own
+  `__init__`-time `QApplication`-wide filter — installed before any panel exists — runs BEFORE
+  a panel's `keyPressEvent` would ever get the chance, for any key that filter chain claims
+  first. The fix is the same shape Stats' `StatsPanel.eventFilter` already used correctly:
+  install the panel's OWN `QApplication`-wide filter in `showEvent` (i.e. AFTER `MainWindow`'s),
+  so it intercepts first. Any future confirm/dismiss logic on Sprint, Sleep, or a similar panel
+  that doesn't itself hold real focus must go in `eventFilter`, not `keyPressEvent`.
+- **Tab, at three Book Detail confirmations and separately at Tags' delete-tag confirm.**
+  Different root cause, same shape of bug: Tab is deliberately dispatched entirely inside
+  `BookDetailPanel.eventFilter` (sealed there specifically to stop it leaking to the library
+  underneath — see that branch's own long-standing comment), which runs before
+  `BookDetailPanel.keyPressEvent` is ever reached — so a swallow-and-dismiss check added to
+  `keyPressEvent`/`_history_key_event` could never see a Tab press at all. Found live, THREE
+  separate times, all traced to the one root cause and fixed in ONE place: the top of
+  `eventFilter`'s own Tab branch, ahead of every tab-specific thing that branch already does
+  (entering metadata edit mode, the Tags-tab field-focus toggle) — covering all four Book
+  Detail confirms (two top-level: remove/mark-finished; two History-tab-local: bulk delete,
+  per-row delete) in that one place, since the branch runs regardless of which tab is active.
+  The IDENTICAL root cause was independently found and fixed the same session for Tags' own
+  delete-tag confirm (`tag_manager.py`'s `_handle_tag_detail_keys`), where Tab was checked
+  unconditionally ahead of the `_confirming_delete` swallow block, for the same underlying
+  reason: Tab and "every other key" were never actually the same dispatch path to begin with.
+
+**The transferable lesson, stated once for future reuse:** a swallow/dismiss check placed inside
+one method only protects the keys that are ACTUALLY DISPATCHED THROUGH that method. Before
+declaring a "catch every key except X/Y/Z" rule complete at any site, check whether every key in
+that catch-all genuinely reaches the code doing the catching — Tab, Escape, and any
+app-installed-`eventFilter`-intercepted key are the recurring exceptions in this codebase, not a
+one-off, having now caused this same class of gap at four confirmations across two files.
+
+**Design note on the swallow-vs-navigate question itself:** the confirm-dismiss rule chose
+"swallow the triggering key entirely" (pure dismiss, no side navigation on that same press) over
+"dismiss AND also perform the key's normal action" — the ONE pre-existing site that already had
+any such behavior (Tags' delete-tag confirm) already swallowed, and it was kept as the reference
+design rather than switched to match click-outside's own "dismiss AND land on the click target"
+behavior. The two aren't actually parallel: a click's meaning is inherently spatial (it always
+lands somewhere concrete), while a key's meaning is entirely contextual — letting Down both
+cancel a confirm and silently move a row selection underneath it was judged a busier, less
+predictable side effect than a click landing somewhere visible. Live-check list: TESTING.md's
+new "Confirmation-dialog keyboard consistency" section. Full narrative, including the two failed
+first attempts (an unreachable `keyPressEvent` override; a widened-but-still-incomplete Delete
+scope corrected twice from live feedback) and the exact live reports that caught each gap:
+SESSION.md, 2026-09-09 Session 1.
+
+*Previously: 2026-09-08 Session 4 — Stats Day/Week/Month row-list keyboard-nav follow-through
 from live testing (branch `feature/traveling-focus-marker`, still NOT merged): a pre-existing
 pointing-hand-cursor-over-dead-space bug, a mouse/keyboard hover fight that took two failed ad hoc
 attempts before being rewritten as a real port of the traveling marker's own poll mechanism, and a

@@ -1,3 +1,49 @@
+## Confirmation-dialog keyboard consistency — Escape/Delete/swallow-and-dismiss — 2026-09-09 Session 1
+
+Nine sites total. All nine share the same two rules now: Escape (and every other non-Space/
+Enter key) cancels JUST the confirmation, panel/tab stays open; Delete arms a confirmation
+where one was added this session (Stats/Sprint reset, Book Detail's history-delete).
+
+### Escape cancels the confirmation, not the whole panel
+- [ ] Stats ⚙ tab → "Reset all listening stats" → arm it → Escape: confirmation reverts, Stats panel stays open
+- [ ] Sprint panel → "Reset all sprint data" (only reachable when no sprint is active) → arm it → Escape: reverts, panel stays open
+- [ ] Sprint panel → trigger the conflict-confirm overlay (e.g. try to start a sprint while Sleep is active) → Escape: reverts, panel stays open
+- [ ] Sleep panel → trigger its own conflict-confirm overlay (e.g. try to start Sleep while a sprint is active) → Escape: reverts, panel stays open
+
+### Delete arms a confirmation, from anywhere on the relevant surface (not just when focus is on the button)
+- [ ] Book Detail → History tab, arrow down to select a row, then Up at row 0: row deselects (does not just stay put)
+- [ ] Book Detail → History tab, with NO row selected → Delete: arms "Delete listening history"
+- [ ] Book Detail → History tab, with a row selected → Delete: arms THAT row's own "Delete this session?" (unchanged, still works)
+- [ ] Stats ⚙ tab → Delete, with focus anywhere on that tab (the day-start-hour spinbox, a toggle button, the tab bar itself) — not just the reset button: arms "Reset all listening stats"
+- [ ] Stats → a DIFFERENT tab (Overall/Day/Week/Month/Timeline) → Delete: does nothing (the button isn't there)
+- [ ] Sprint panel → Delete, with focus anywhere on the panel (not just the reset button), while the button is genuinely visible (no sprint active): arms "Reset all sprint data"
+- [ ] Sprint panel → while a sprint IS active (reset button hidden) → Delete: does nothing
+- [ ] Sprint panel → focus the custom sprint-duration or grace-duration text field → Delete: deletes a character forward, does NOT arm the reset confirmation
+- [ ] Only Delete works for these — X does nothing (dropped as a synonym; confirm it's genuinely inert, not just untested)
+
+### Any key other than Space/Enter dismisses an armed confirmation and does nothing else (swallow, not also navigate)
+Test with Up/Down/Left/Right and at least one letter key at each site — the confirmation should
+revert and the key's normal action (row move, tab switch, etc.) should NOT also happen on that
+same press. A second press of the same key, now that nothing is armed, should behave normally.
+- [ ] Stats "Reset all stats" armed → Up/Down/Left/Right/a letter: reverts, no side navigation
+- [ ] Sprint "Reset all sprint data" armed → same
+- [ ] Sprint's conflict-confirm overlay armed → same
+- [ ] Sleep's conflict-confirm overlay armed → same
+- [ ] Book Detail "Remove/exclude book" armed → Left/Right does NOT also cycle to a different tab
+- [ ] Book Detail "Mark finished/unfinished" armed → same
+- [ ] Book Detail "Delete listening history" armed → Up/Down does NOT also move the row-selection cursor
+- [ ] Book Detail per-row "Delete this session?" armed on one row → Up/Down does NOT move the keyboard-hover cursor among the OTHER rows either — the whole row list should be inert until the confirm is dismissed
+- [ ] Tags panel, delete-a-tag confirm armed → Up/Down/Left/Right: reverts (this one already worked before this session — regression-check only)
+
+### Tab specifically (the gap that recurred three times in one pass)
+Tab in Book Detail is dispatched in `eventFilter`, separately from every other key — verify it
+independently, not just as "one of the arrow keys" above.
+- [ ] Book Detail → arm "Remove/exclude book" (from ANY tab, since the confirm is header-level, not tab-local) → Tab: dismisses, does NOT enter metadata edit mode
+- [ ] Book Detail → arm "Mark finished/unfinished" → Tab: dismisses, same check
+- [ ] Book Detail → History tab → arm "Delete listening history" → Tab: dismisses, does NOT enter metadata edit mode
+- [ ] Book Detail → History tab → arm a per-row "Delete this session?" → Tab: dismisses, same check
+- [ ] Tags panel → arm delete-a-tag → Tab: dismisses, does NOT move focus into the (read-only-while-confirming) tag-name field
+
 ## Stats Day/Week/Month row-list keyboard nav — hover/cursor fixes, blur interaction — 2026-09-08 Session 4
 
 **LIVE-ONLY, blur specifically.** The two central bugs here (mouse/keyboard hover fight, marker
