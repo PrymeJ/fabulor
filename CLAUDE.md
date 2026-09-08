@@ -1760,7 +1760,89 @@ Any `QWidget` subclass (not `QFrame`, not `QLabel`) that owns a background-color
 
 *Reorganization note (2026-07-13): the "Critical Architecture Rules" section was restructured to remove repetition — it previously existed as two passes (a full-prose section and a later condensed second pass covering many of the same rules). The two were merged: rules that appeared in both now appear once, under whichever fact they share, with no information dropped. Rules unique to either pass are unchanged. See the note directly under the "Critical Architecture Rules" heading for detail.*
 
-*Last updated: 2026-09-08 Session 3 — Fill-highlight follow-up fixes, and a theme-key rename.
+*Last updated: 2026-09-08 Session 4 — Stats Day/Week/Month row-list keyboard-nav follow-through
+from live testing (branch `feature/traveling-focus-marker`, still NOT merged): a pre-existing
+pointing-hand-cursor-over-dead-space bug, a mouse/keyboard hover fight that took two failed ad hoc
+attempts before being rewritten as a real port of the traveling marker's own poll mechanism, and a
+focus-strand bug that made the marker bleed onto Book Detail. Committed `6845317`, `929cc85`.
+
+**Mouse/keyboard hover fight — the fix is now the reference implementation for this app's
+"most-recent-input-wins" principle on a `QAbstractItemView`, and TWO EARLIER ATTEMPTS at the
+identical Stats bug both failed live before this one shipped.** Keyboard Up/Down/PgUp/PgDn/
+Home/End on `StatsRowListView` (Day/Week/Month) move `_hovered_row` — the SAME state mouse hover
+writes, by explicit live design call ("down arrow goes to the first row, highlights using the
+current mouse hover"). `keyPressEvent`'s own `self.scrollTo(...)` moves row content under a
+stationary cursor, and Qt still re-evaluates what's under it and can re-fire `entered` for
+whatever row the mouse now occupies — even with zero real movement. Attempt 1 (exact
+`QCursor.pos()` equality, refreshed on every `mouseMoveEvent`) failed live: this desktop's
+cursor-position reporting is not reliably exact-equal across two reads even with the physical
+mouse untouched (matches this file's own existing Wayland/KDE cursor-and-hover-quirk catalog), so
+the gate was a near-always-true "moved" reading — "goes back to mouse... more aggressively"
+(worse than before the fix, since the accompanying cursor-shape fix made Qt's hover
+re-evaluation fire more reliably). Attempt 2 (a flat 150ms suppression window after every
+keyboard move) never addressed the deeper problem: reacting to `entered` AT ALL inherits its
+firing-order ambiguity relative to `scrollTo()`, which is a Qt internal, not a contract.
+
+**The fix that actually worked ports `MainWindow._kbdnav_cursor_poll`/`_KBDNAV_CURSOR_JITTER_PX`
+verbatim in shape** (the traveling-focus-marker's own, proven mechanism, already used by
+Settings/Speed/Sleep/Sprint) rather than inventing a fourth mechanism: `StatsRowListView` gets its
+own `QTimer` (`_kbdnav_hover_poll`, same 60ms/3px constants as the app-level version, see
+`_STATS_KBDNAV_HOVER_POLL_MS`/`_STATS_KBDNAV_HOVER_JITTER_PX`) that independently samples
+`QCursor.pos()` on its own clock — never reacting to any Qt hover SIGNAL while keyboard mode is
+active (`_on_entered` is silenced outright) — and only hands control back to the mouse once it has
+moved past jitter tolerance AND is genuinely resting over a real, DIFFERENT row (mirrors
+`_cursor_over_navigable_control`'s two-part test: moved, AND actually over something). **If any
+future panel needs this same "keyboard wins unless the mouse genuinely moved onto something else"
+behavior, start from this poll design — an anchor-refresh design (the shape both failed Stats
+attempts used, and the shape the still-paused Settings/Speed/Sleep/Sprint hover-pickup TODO item
+tried and abandoned twice, see TODO.md) has now failed at this exact problem three separate
+times.** Pryme's own framing, worth keeping verbatim for any future session extending this:
+"Make the keys pickup from where the mouse is, and make the keys win unless the mouse hovered over
+something else. This principle should be observed throughout the app with a holistic approach" —
+named explicitly as not-yet-applied to Library's own pagination (same symptom: "Library doesn't
+get it correctly either. Pagination makes it jump to the mouse"), deferred to TODO.md.
+
+A SECOND, related bug surfaced from the same live re-test once the poll shipped: `showEvent` and
+`leaveEvent` (both pre-existing, from the 2026-08-09 blur-grab hover-flicker fix) fire on EVERY
+one of `TransportBarBlurOverlay._grab_and_blur`'s 5-15x/sec hide/show ticks while blur is enabled
+and a book plays, completely unrelated to real mouse input — and both were unconditionally
+re-deriving/blanking `_hovered_row` from the current cursor position on every single tick,
+defeating the poll's exclusivity entirely. Pryme's own diagnosis pinned it directly: "The problem
+is the blur. If I turn it off, I can navigate there with arrows. If it is on, mouse always wins."
+Fixed by making both handlers defer to keyboard-hover mode exactly like `_on_entered` does — an
+EARLIER version of the `showEvent` fix had called `_exit_kbdnav_hover_mode()` unconditionally
+there, reasoning (wrongly) that a blur-grab-triggered visibility change was "unrelated to keyboard
+state" and should always win; it is in fact the opposite, being the highest-frequency source of
+spurious hover reclaims in the whole system.
+
+**Third bug, found live during the SAME re-test session, not part of any original report: the
+marker bled onto Book Detail when opened over Stats with blur on.** Traced to
+`TransportBarBlurOverlay.frost_panel_backdrop`'s one-shot backdrop grab (fires once, when Book
+Detail's slide-in finishes) passing Book Detail itself as the `panel` to hide for
+`_grab_and_blur`'s grab (a deliberate self-exclusion, so the panel BEHIND it shows through the
+frost) — Book Detail had just been given real Qt focus by `_claim_panel_focus` moments earlier at
+open-start, and `_grab_and_blur`'s bare `panel.hide()`/`panel.show()` had no focus handling around
+either call. Per this file's own already-documented Qt gotcha (hide() on a still-focused widget
+silently re-grants focus to whatever else is around — see the "Keyboard focus ownership" section's
+consequence 3), this hide handed focus back to whatever was focused in Stats BEFORE Book Detail
+opened, firing a genuine FocusIn there that re-triggered the marker via the normal
+`TabFocusReason`/`_update_focus_marker` path — and `panel.show()` never reclaimed focus
+afterward, so it could stay stranded on the underlay rather than only flickering. Fixed by
+saving/restoring focus around the hide, joining the two OTHER known side effects
+`_grab_and_blur` already compensates for at the exact same hide/show pair: cursor shape
+(2026-07-21 fix) and mouse hit-testing (2026-08-01 fix). **Any future addition to
+`_grab_and_blur`'s hide/show block should check whether the hidden panel could plausibly hold real
+Qt focus at that moment — this is now the third independently-discovered side effect of the same
+two lines, not a one-off.** Confirmed working live: "I confirm it fixed. It doesn't reappear."
+Also confirmed in the same pass that Session 3's `[STATS-FOCUS-TRACE]` diagnostic probe (armed for
+a separate, unrelated intermittent stuck-focus bug) stopped reproducing once the
+`_on_tab_changed`-tab-bar-reclaim fix from earlier this session landed — the probe was removed as
+no-longer-needed. Live-check list: TESTING.md's new "Stats Day/Week/Month row-list keyboard nav"
+section. Full trace, including the exact wording of both failed attempts and Pryme's own
+mid-session correction about not extending working logic between panels: SESSION.md 2026-09-08
+Session 4.
+
+*Previously: 2026-09-08 Session 3 — Fill-highlight follow-up fixes, and a theme-key rename.
 Two real regressions found in Session 2 earlier the same day: `kbdnav_fill_active` could get stuck
 `"true"` on a panel after switching from "fill_highlight" back to "traveling" — nothing ever
 cleared it under traveling style, since it's written only from the fill_highlight branch — fixed

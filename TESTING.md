@@ -1,3 +1,50 @@
+## Stats Day/Week/Month row-list keyboard nav — hover/cursor fixes, blur interaction — 2026-09-08 Session 4
+
+**LIVE-ONLY, blur specifically.** The two central bugs here (mouse/keyboard hover fight, marker
+bleeding onto Book Detail) only reproduce with the transport-bar blur setting ON — it drives the
+5-15x/sec hide/show grab cycle both bugs trace back to. All 507 automated tests passed throughout
+every attempt in this area, including the two that later failed live — do not treat a green test
+run as coverage for anything in this section.
+
+### Row-list cursor shape
+- [ ] Day/Week/Month, a period with few sessions (Finished-books carousel hidden): hover down past
+      the last real row into the empty space below it — cursor is a plain arrow, not a pointing hand
+- [ ] Move back up onto a real row: cursor returns to the pointing hand
+- [ ] Click in the empty space below the last row: no-op, no crash
+- [ ] Mouse leaves the row list entirely (off the bottom, into the tab bar area): cursor is the
+      arrow, not stuck as a hand
+
+### Mouse/keyboard hover fight (blur ON)
+- [ ] Arrow down into a Day/Week/Month tab's row list, rest the mouse on a DIFFERENT row than the
+      keyboard cursor, keep pressing Up/Down repeatedly: the keyboard's highlight stays on the
+      keyboard's own row — it does not snap to wherever the mouse is resting, on any single press
+- [ ] Same test with PgUp/PgDn/Home/End instead of Up/Down
+- [ ] After a burst of keyboard presses, physically move the mouse onto a different real row: the
+      highlight now correctly follows the mouse (reclaim still works — this isn't testing that
+      mouse control is broken, only that it doesn't fire from a stationary cursor)
+- [ ] Repeat the whole check with the transport-bar blur setting OFF: same correct behavior (this
+      was already working before blur was in the mix — confirms the fix didn't regress the no-blur
+      case while fixing the blur case)
+- [ ] Repeat with blur ON while a book is actively playing (the grab cycle only runs then) vs.
+      paused/no book (grab cycle idle) — the fight should be gone in both, but the playing case is
+      the one that actually exercises the fix
+
+### Marker bleeding onto Book Detail (blur ON, traveling marker style)
+- [ ] Settings > Controls > Keyboard marker style = "Traveling marker". Open Stats, arrow into a
+      tab (e.g. Day), press Enter/Space on a row to open Book Detail: the marker does NOT appear
+      anywhere on Book Detail, during or after its slide-in animation
+- [ ] Same check with the marker genuinely mid-patrol (still actively animating, not yet dormant)
+      the instant Enter is pressed — the in-flight animation must not continue rendering onto Book
+      Detail once it's open
+- [ ] Close Book Detail back to Stats: keyboard focus lands somewhere sane (the tab bar or the row
+      that was open), not stranded — arrow keys work immediately, no extra Tab/click needed
+- [ ] Repeat with blur OFF: same correct behavior (this bug was blur-specific; confirms no
+      regression to the already-correct no-blur case)
+- [ ] Repeat opening Book Detail from Library (not Stats) with blur ON and the marker mid-patrol on
+      some other keyboard-navigable panel state, if reachable — the underlying fix
+      (`_grab_and_blur`'s focus save/restore) is general, not Stats-specific, so this should also
+      be clean
+
 ## Traveling focus marker — keyboard/mouse modality, Look-tab arrows — 2026-09-04
 
 **LIVE-ONLY.** Every bug in this section was invisible to scripted checks: three separate offscreen

@@ -81,6 +81,52 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
     hover-suppression symptom on its own, unrelated to anything in this feature attempt — it was
     never stress-tested for that, only run a handful of times without failing, which the rest of
     this entry's own reasoning says is not strong evidence either way.
+  - **2026-09-08 Session 4 update — a THIRD, different mechanism was independently built for
+    Stats' Day/Week/Month row lists and shipped working, live-confirmed.** Not a resumption of
+    attempts 1-2 above (different panel, different code path), but directly relevant: both prior
+    attempts here used an ANCHOR-REFRESH design (`_hover_pickup_target` re-stamping
+    `_kbdnav_cursor_anchor` on every pickup) and both broke hover suppression in ways never fully
+    root-caused. Session 4's Stats fix used a POLL-based design instead — a dedicated `QTimer`
+    (`StatsRowListView._kbdnav_hover_poll`, `_STATS_KBDNAV_HOVER_POLL_MS`/
+    `_STATS_KBDNAV_HOVER_JITTER_PX`, matching `_KBDNAV_CURSOR_POLL_MS`/`_KBDNAV_CURSOR_JITTER_PX`
+    exactly) that independently samples `QCursor.pos()` on its own clock and hands hover back to
+    the mouse only once it's moved past jitter tolerance AND is resting over a genuinely
+    different, real target — never touching or re-stamping the anchor mid-flight, and never
+    reacting to any Qt hover SIGNAL while keyboard mode is active (both `entered` and the
+    blur-grab's `showEvent`/`leaveEvent` echoes are silenced outright, deferring entirely to the
+    poll). This is closer in spirit to `_on_kbdnav_cursor_poll` itself than either prior attempt
+    here was, despite this item's own goal being exactly "extend the marker's own mechanism to
+    more panels." **If this item is picked up again, start from Session 4's Stats mechanism
+    (`ui/stats_panel.py`, `StatsRowListView.__init__`'s design-note comment block has the full
+    writeup) as the reference design, not attempt 1 or attempt 2's anchor-refresh shape** — see
+    SESSION.md 2026-09-08 Session 4 for the full trace of why the anchor-refresh shape kept
+    failing and what specifically the poll design does differently.
+  - **2026-09-08 Session 4 (reported same conversation, not yet started): Library has the
+    identical root bug** — "Library doesn't get it correctly either. Pagination makes it jump to
+    the mouse." Named by Pryme as the next instance of this same principle, explicitly scoped as a
+    follow-on to this TODO item, not started. Library's `_on_keyboard_nav_moved`/
+    `_flash_keyboard_selection[_list]` (`ui/library.py`) currently has NO poll/anchor arbitration
+    at all — mouse `entered` (`_on_view_entered`) unconditionally wins the instant it fires,
+    including a synthetic re-evaluation from the keyboard's own `scrollTo()` call, the exact same
+    mechanism class Stats' Session 4 fix addressed. Likely the most direct next target for the
+    poll-based design above.
+  - **Pryme's own framing of the underlying principle, stated directly (2026-09-08 Session 4),
+    worth keeping verbatim for whichever session picks this back up**: "Make the keys pickup from
+    where the mouse is, and make the keys win unless the mouse hovered over something else. This
+    principle should be observed throughout the app with a holistic approach."
+
+### Confirmation-dialog Escape behavior is inconsistent app-wide (not yet started)
+- [2026-09-08] Pryme, immediately after the Stats hover/marker session above: "I will need you to
+  find all instances where a confirmation to delete something is armed. In some instances Esc
+  cancels them, and in some instances it closes the panel. The behavior will need to be uniform."
+  Scope: every "delete this / are you sure" 7-second-armed confirm in the app (Stats' Reset all
+  stats, Book Detail's Remove/Delete listening history/per-session delete, Tags' delete-tag
+  confirm, Sprint's Reset sprint stats, Sleep's equivalent if one exists, Library's Excluded Books
+  restore-confirm shape if it has one, and any other `_confirming_*`/armed-then-timeout pattern
+  found by grep) needs an audit of what Escape currently does at each site — some appear to
+  dismiss just the confirm (reverting to the normal delete-icon state), others apparently fall
+  through to the panel's own Escape handler and close the whole panel instead. Not yet started;
+  no sites have been enumerated yet.
 
 ### Settings keyboard-focus regressions found while testing Tags (check after Tags is done)
 - [2026-09-08] Excluded Books focus strand — FIXED. Un-excluding the LAST remaining book drops
