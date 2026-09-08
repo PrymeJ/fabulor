@@ -1,17 +1,18 @@
 """Pure color-math tests for themes.py — no Qt/QApplication needed.
 
 derive_lighter_accent_rgb is its own independent tuning (same hue, saturation
-cut to 55%, value +25/255 clamped) — deliberately NOT the same value boost as
+cut to 55%, value +12/255 clamped) — deliberately NOT the same value boost as
 StreakGrid._derive_longest_fill's +60/255, which read as too bright when
-tried live as a whole-button fill (2026-09-08 live report). See the
-function's own docstring in themes.py for the full rationale.
+tried live as a whole-button fill (2026-09-08 live report, tuned down twice:
++60 -> +25 -> +12). See the function's own docstring in themes.py for the
+full rationale.
 """
 from fabulor.themes import derive_lighter_accent_rgb
 
 
 def _reference_derive(accent_hex: str) -> tuple[int, int, int]:
     """Independent re-implementation of the intended formula, not a copy of
-    the function under test — same_sat*0.55/value+25/255 design, computed via
+    the function under test — same sat*0.55/value+12/255 design, computed via
     plain int/float math rather than colorsys, so a colorsys misuse in the
     real function wouldn't be masked by reusing colorsys here too."""
     h = accent_hex.lstrip('#')
@@ -20,7 +21,7 @@ def _reference_derive(accent_hex: str) -> tuple[int, int, int]:
     val = mx / 255
     sat = 0 if mx == 0 else (mx - mn) / mx
     new_sat = sat * 0.55
-    new_val = min(1.0, val + 25 / 255)
+    new_val = min(1.0, val + 12 / 255)
     # Reconstruct RGB preserving hue: scale toward new saturation/value using
     # the same chroma/hue-preserving approach colorsys.hsv_to_rgb uses
     # internally, verified against colorsys's own output for these samples.
@@ -52,7 +53,7 @@ def test_derive_lighter_accent_rgb_is_less_boosted_than_streak_grid():
         h = accent_hex.lstrip('#')
         r, g, b = (int(h[i:i + 2], 16) for i in (0, 2, 4))
         actual = tuple(int(c) for c in derive_lighter_accent_rgb(accent_hex).split(","))
-        # +25/255 boost should land strictly below a +60/255 boost would, on
+        # +12/255 boost should land strictly below a +60/255 boost would, on
         # any channel that wasn't already clamped at 255 originally.
         over_60 = min(255, max(r, g, b) + 60)
         assert max(actual) <= over_60

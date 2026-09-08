@@ -101,6 +101,18 @@ its `:focus:hover` pair in `get_panel_base_stylesheet`, `kbdnav_fill_active`), `
 `UICallbackInterface.clear_focus_marker`), `settings_controller.py` (toggle wiring + proactive
 marker clear on switching to fill_highlight), `main_window_builders.py` (Controls tab UI),
 `tests/test_themes_colors.py` (new, pins the color formula). All 507 tests pass throughout.
+Committed as `e84a090`.
+
+**Post-commit follow-ups, same session:** (1) the fill color was live-reported "still a bit too
+strong" even after the first tune-down — `derive_lighter_accent_rgb`'s value boost cut again,
++25/255 → +12/255 (now two tuning passes down from the original +60/255; saturation cut at 55%
+unchanged throughout, since only brightness was ever reported as the problem).
+(2) The Controls-tab placement was reconsidered and moved to Look: Pryme's own reasoning —
+behavior is unaffected by which tab it's on, Controls is sparse while it "fills" the panel, and
+Look is "almost full with room for one more setting if I one day add something else" — was taken
+as the deciding factor as stated, not re-litigated. Moved from the end of `build_controls_tab` to
+the end of `build_appearance_tab` (the "Look" tab), same block shape, no behavior change beyond
+which tab shows it. All tests re-verified green after both changes.
 
 ## Session Summary — 2026-09-08 Session 1 — Hover-pickup keyboard navigation for Settings/Speed/Sleep/Sprint: two attempts, both reverted after an intermittent live regression. No commit — `app.py` stayed at `1fa0746` throughout.
 

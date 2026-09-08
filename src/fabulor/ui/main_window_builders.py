@@ -1042,6 +1042,29 @@ def build_appearance_tab(mw):
 
     app_layout.addLayout(notches_row)
 
+    # Keyboard-nav highlight style (2026-09-08, moved here from Controls 2026-09-08 — Pryme's
+    # call: behavior is unaffected by which tab it lives on, Controls is sparse while Look is
+    # nearly full with room for exactly one more setting, and this is a visual/appearance choice
+    # like everything else on this tab). See config.get_keyboard_marker_style /
+    # MainWindow._update_focus_marker. "Traveling" is the existing animated border marker;
+    # "Fill highlight" tints the focused control's own background with a lighter/desaturated
+    # accent instead (added after the ramp buttons' focus color was found to be a flat
+    # theme-dict color by mistake — see SESSION.md 2026-09-08).
+    marker_style_header = QLabel("Keyboard highlight")
+    marker_style_header.setObjectName("settings_header")
+    app_layout.addWidget(marker_style_header)
+
+    marker_style_row = QHBoxLayout()
+    mw.keyboard_marker_style_buttons = {}
+    for value, label in [("traveling", "Traveling marker"), ("fill_highlight", "Fill highlight")]:
+        btn = QPushButton(label)
+        btn.setObjectName("pattern_button")
+        btn.clicked.connect(lambda _, v=value: mw.keyboard_marker_style_changed.emit(v))
+        marker_style_row.addWidget(btn)
+        mw.keyboard_marker_style_buttons[value] = btn
+    marker_style_row.addStretch()
+    app_layout.addLayout(marker_style_row)
+
     app_layout.addStretch()
     mw.tabs.addTab(appearance_tab, "Look")
     # Visual initialization moved to after SettingsController binding
@@ -1226,26 +1249,6 @@ def build_controls_tab(mw):
         mw.hotspot_enabled_buttons[mode] = btn
     hotspot_row.addStretch()
     short_layout.addLayout(hotspot_row)
-
-    # Keyboard-nav highlight style (2026-09-08) — see config.get_keyboard_marker_style /
-    # MainWindow._update_focus_marker. "Traveling" is the existing animated border marker;
-    # "Fill highlight" tints the focused control's own background with a lighter/desaturated
-    # accent instead (added after the ramp buttons' focus color was found to be a flat
-    # theme-dict color by mistake — see SESSION.md 2026-09-08).
-    marker_style_header = QLabel("Keyboard highlight")
-    marker_style_header.setObjectName("settings_header")
-    short_layout.addWidget(marker_style_header)
-
-    marker_style_row = QHBoxLayout()
-    mw.keyboard_marker_style_buttons = {}
-    for value, label in [("traveling", "Traveling marker"), ("fill_highlight", "Fill highlight")]:
-        btn = QPushButton(label)
-        btn.setObjectName("pattern_button")
-        btn.clicked.connect(lambda _, v=value: mw.keyboard_marker_style_changed.emit(v))
-        marker_style_row.addWidget(btn)
-        mw.keyboard_marker_style_buttons[value] = btn
-    marker_style_row.addStretch()
-    short_layout.addLayout(marker_style_row)
 
     short_layout.addStretch()
     mw.tabs.addTab(shortcuts_tab, "Controls")

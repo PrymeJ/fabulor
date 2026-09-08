@@ -3374,9 +3374,9 @@ def derive_lighter_accent_rgb(accent_hex: str) -> str:
     a flat, unrelated theme-dict color picked by mistake (the bug that
     prompted this alternate style — see SESSION.md 2026-09-08).
 
-    Value boost is +25/255 (not StreakGrid's +60/255) — roughly half —
-    live-tuned down after the first pass read as too bright. Saturation cut
-    (55%) is unchanged since that wasn't reported as the problem.
+    Value boost is +12/255 (not StreakGrid's +60/255) — two live-tuning passes down from the
+    original, each after being reported as still too bright/too strong: +60 -> +25 -> +12.
+    Saturation cut (55%) is unchanged since that wasn't reported as the problem.
 
     Returns a plain string rather than a QColor because this module is
     deliberately Qt-free — see preset_ramp_rgb's docstring just above. Uses
@@ -3389,7 +3389,7 @@ def derive_lighter_accent_rgb(accent_hex: str) -> str:
     r, g, b = (int(h[i:i + 2], 16) / 255 for i in (0, 2, 4))
     hue, sat, val = colorsys.rgb_to_hsv(r, g, b)
     new_sat = sat * 0.55
-    new_val = min(1.0, val + 25 / 255)
+    new_val = min(1.0, val + 12 / 255)
     nr, ng, nb = colorsys.hsv_to_rgb(hue, new_sat, new_val)
     return ",".join(str(round(c * 255)) for c in (nr, ng, nb))
 
