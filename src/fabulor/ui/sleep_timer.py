@@ -1,6 +1,6 @@
 import time
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QGridLayout, QLineEdit
-from PySide6.QtCore import Qt, QRegularExpression, Signal, QTimer
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QGridLayout, QLineEdit, QApplication
+from PySide6.QtCore import Qt, QRegularExpression, Signal, QTimer, QEvent
 from PySide6.QtGui import QRegularExpressionValidator, QColor
 from ..themes import preset_ramp_rgb
 from ..player import _CHAPTER_WALK_TOLERANCE
@@ -229,6 +229,46 @@ class SleepTimerPanel(QWidget):
     def _on_conflict_confirm_timeout(self):
         self._conflict_confirm_label.hide()
         self._conflict_on_confirm = None
+
+    def _cancel_conflict_confirm(self):
+        """Explicit cancel — as opposed to _on_conflict_confirm_timeout, which is the timer's
+        OWN fire and therefore has nothing left to stop. Used by Escape (keyPressEvent) so
+        dismissing the prompt early doesn't leave the 7s timer running to fire a redundant,
+        harmless-but-pointless _on_conflict_confirm_timeout after the label is already hidden."""
+        self._conflict_confirm_timer.stop()
+        self._conflict_confirm_label.hide()
+        self._conflict_on_confirm = None
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        QApplication.instance().installEventFilter(self)
+
+    def hideEvent(self, event):
+        QApplication.instance().removeEventFilter(self)
+        super().hideEvent(event)
+
+    def eventFilter(self, obj, event):
+        # Added 2026-09-08, app-wide confirm-Escape-consistency pass. MUST be a QApplication-wide
+        # eventFilter, NOT a keyPressEvent override on this panel widget — a keyPressEvent
+        # override here was tried first and shipped dead code: MainWindow installs its OWN
+        # QApplication-wide filter at __init__ time (app.py, _handle_tab_escape), and per
+        # QObject::installEventFilter's documented LIFO order (confirmed directly via a small
+        # synthetic test, not assumed), the MOST RECENTLY installed filter runs FIRST — so a
+        # filter installed here, in showEvent (i.e. AFTER MainWindow's __init__-time install),
+        # already runs before MainWindow's and is the only reliable interception point.
+        # keyPressEvent on the panel WIDGET only fires if real Qt focus happens to be on the
+        # panel itself, which _claim_panel_focus never grants here (it targets a child button
+        # via panel_tab_widgets) — so that override was silently unreachable. Live-reported
+        # 2026-09-08: "Esc on Sleep — conflict-confirm overlay closes the panel." Matches
+        # SprintPanel's identical fix and identical correction in the same pass — see that
+        # panel's own eventFilter for the fuller cross-panel writeup of why this shape is
+        # required, not just preferred.
+        if (event.type() == QEvent.Type.KeyPress
+                and event.key() == Qt.Key.Key_Escape
+                and self._conflict_confirm_label.isVisible()):
+            self._cancel_conflict_confirm()
+            return True
+        return super().eventFilter(obj, event)
 
     def set_sleep_timer(self, duration_minutes=None, mode=None):
         proceed = lambda: self._do_arm_sleep_timer(duration_minutes, mode)

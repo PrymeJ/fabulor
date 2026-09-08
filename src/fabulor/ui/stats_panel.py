@@ -4835,6 +4835,19 @@ class StatsPanel(QWidget):
         super().hideEvent(event)
 
     def eventFilter(self, obj, event):
+        # Escape while "Reset all stats" is armed must cancel JUST the confirmation, not fall
+        # through to MainWindow._handle_tab_escape -> PanelManager.escape_active_panel() ->
+        # _close_stats_flow(), which would close the whole panel. Every other armed-confirm site
+        # in the app already does this (Book Detail's four confirms, Tags' delete-tag, Sprint's
+        # reset-sprint-data) — this one was the one gap where Escape closed the panel instead of
+        # just disarming, live-reported 2026-09-08 as an app-wide consistency ask. Checked BEFORE
+        # the existing click-outside branch below (both cancel the same confirm; order between
+        # them doesn't matter, but Escape is cheap to check first and return early on).
+        if (event.type() == QEvent.Type.KeyPress
+                and event.key() == Qt.Key.Key_Escape
+                and self._reset_confirm_label.isVisible()):
+            self._cancel_reset_stats()
+            return True
         if (
             event.type() == QEvent.Type.MouseButtonPress
             and self._reset_confirm_label.isVisible()

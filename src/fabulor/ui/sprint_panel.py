@@ -497,6 +497,15 @@ class SprintPanel(QWidget):
         self._conflict_confirm_label.hide()
         self._conflict_on_confirm = None
 
+    def _cancel_conflict_confirm(self):
+        """Explicit cancel — as opposed to _on_conflict_confirm_timeout, which is the timer's
+        OWN fire and therefore has nothing left to stop. Used by Escape (keyPressEvent) so
+        dismissing the prompt early doesn't leave the 7s timer running to fire a redundant,
+        harmless-but-pointless _on_conflict_confirm_timeout after the label is already hidden."""
+        self._conflict_confirm_timer.stop()
+        self._conflict_confirm_label.hide()
+        self._conflict_on_confirm = None
+
     def _on_reset_sprint_data_clicked(self):
         # Button is NOT touched — matches StatsPanel._on_reset_stats exactly,
         # which only ever calls setVisible(True) on the confirm label.
@@ -511,18 +520,6 @@ class SprintPanel(QWidget):
         self._cancel_reset_sprint_data()
         self.reset_sprint_stats_requested.emit()
 
-    def keyPressEvent(self, event):
-        # Minimal, single-purpose override — NOT a full eventFilter priority
-        # chain like BookDetailPanel's (that exists to arbitrate FOUR
-        # concurrent confirm/edit states across a much larger panel; this
-        # panel has exactly one Escape-cancellable state today). Reuses the
-        # same _cancel_reset_sprint_data the 7s timer and the click-outside
-        # eventFilter below both already call.
-        if event.key() == Qt.Key.Key_Escape and self._reset_sprint_confirm_label.isVisible():
-            self._cancel_reset_sprint_data()
-            return
-        super().keyPressEvent(event)
-
     def showEvent(self, event):
         super().showEvent(event)
         QApplication.instance().installEventFilter(self)
@@ -536,6 +533,33 @@ class SprintPanel(QWidget):
         # (same shape, same install/remove lifecycle) — reported live,
         # 2026-08-12, that the confirm should behave identically to Stats'
         # "Reset all listening stats" for visual/behavioral consistency.
+        #
+        # CORRECTION (2026-09-08): Escape handling for both confirms used to live in a
+        # keyPressEvent override on this panel — REMOVED, because it never actually fired.
+        # MainWindow installs its OWN QApplication-wide filter at __init__ time (app.py,
+        # _handle_tab_escape), and per QObject::installEventFilter's documented LIFO order
+        # (confirmed directly, not assumed — a small synthetic test), the MOST RECENTLY
+        # installed filter runs FIRST. This panel's own filter (installed here, in showEvent,
+        # i.e. AFTER MainWindow's __init__-time install) therefore already runs before
+        # MainWindow's and is the only place Escape can be reliably intercepted before
+        # _handle_tab_escape closes the whole panel — keyPressEvent on the panel WIDGET only
+        # fires if real Qt focus happens to be on the panel itself, which _claim_panel_focus
+        # never grants here (it targets a child button via panel_tab_widgets), so the override
+        # was silently dead code. Live-reported 2026-09-08: "Esc on Reset all sprint data
+        # closes the panel" / "Esc on Sprint — conflict-confirm overlay closes the panel" —
+        # BOTH confirms, including the one that supposedly already worked before this
+        # session's changes, which means the pre-existing keyPressEvent-based check never
+        # actually worked either; nobody had tested Escape against it specifically until now.
+        # _conflict_confirm_label checked first, same ordering the old code used (the two
+        # states are mutually exclusive in practice — see show_conflict_confirm's own
+        # docstring — so order between them doesn't matter, but keeping it stable/predictable).
+        if event.type() == QEvent.Type.KeyPress and event.key() == Qt.Key.Key_Escape:
+            if self._conflict_confirm_label.isVisible():
+                self._cancel_conflict_confirm()
+                return True
+            if self._reset_sprint_confirm_label.isVisible():
+                self._cancel_reset_sprint_data()
+                return True
         if (
             event.type() == QEvent.Type.MouseButtonPress
             and self._reset_sprint_confirm_label.isVisible()
