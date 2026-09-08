@@ -144,6 +144,14 @@ The real library used for day-to-day testing has been ~400 books. That is not re
   enough. Found twice in one session, separately, on `QTabBar` (whose `::tab` sub-controls cache
   their own hover state) and then on the buttons underneath it (2026-09-04). If a property-gated
   rule "isn't applying" while the property and flag both verify correct, this is the cause.
+  **Recurred 2026-09-08** in a NEWER, more general repolish helper (`app.py`'s
+  `_set_kbdnav_property`, added after the above finding) that walked only `QPushButton` children
+  and never got the tab-bar-specific repolish call the original fix required — surfaced as an
+  intermittent bug (worked only when an unrelated theme switch happened to also repolish the tab
+  bar) rather than a consistent failure, which is a harder signature to recognize as this same
+  cause. Any new helper that repolishes a `#settings_panel`-rooted subtree needs the SAME explicit
+  `tabs.tabBar()` unpolish/polish call this rule already documents — do not assume a
+  `findChildren(QPushButton)`-style loop covers it.
 - **Constraining a lone stretch participant's height moves the whole block.** In a `QVBoxLayout`
   with one `stretch=1` member, that member absorbs all leftover height. `setFixedHeight` or
   `setMaximumHeight` on it withdraws it from the stretch and the layout redistributes the freed
@@ -1752,7 +1760,39 @@ Any `QWidget` subclass (not `QFrame`, not `QLabel`) that owns a background-color
 
 *Reorganization note (2026-07-13): the "Critical Architecture Rules" section was restructured to remove repetition — it previously existed as two passes (a full-prose section and a later condensed second pass covering many of the same rules). The two were merged: rules that appeared in both now appear once, under whichever fact they share, with no information dropped. Rules unique to either pass are unchanged. See the note directly under the "Critical Architecture Rules" heading for detail.*
 
-*Last updated: 2026-09-08 Session 2 — Added a second, alternate keyboard-nav marker style:
+*Last updated: 2026-09-08 Session 3 — Fill-highlight follow-up fixes, and a theme-key rename.
+Two real regressions found in Session 2 earlier the same day: `kbdnav_fill_active` could get stuck
+`"true"` on a panel after switching from "fill_highlight" back to "traveling" — nothing ever
+cleared it under traveling style, since it's written only from the fill_highlight branch — fixed
+via `MainWindow.clear_all_kbdnav_fill_active()`, the mirror-image of the existing switch-TO-
+fill_highlight clear that only handled one direction. Also: **`_set_kbdnav_property`'s repolish
+loop never walked the settings `QTabBar` itself, only `QPushButton` children** — `QTabBar`'s
+`::tab` sub-controls cache their own style state and don't re-resolve from an ancestor's
+unpolish/polish alone (the exact same fact `_set_keyboard_nav_active` already has its own
+tab-bar-specific repolish block for, 2026-09-04 — the newer, more general helper never got the
+same treatment). This made a new `kbdnav_tab_focused` property's own QSS rule (added this session
+so fill_highlight shows a highlight on the tab bar itself, not just inside a tab) appear to work
+only when an UNRELATED event — a theme switch, which does its own full repolish — happened to
+also repolish the tab bar; reported live as "worked for some themes, then didn't on the same
+themes again." **Any future property whose QSS rule targets a `QTabBar`/`::tab` must repolish the
+tab bar explicitly — repolishing an ancestor is not enough**, joining the existing "polishing a
+parent does not re-resolve a child's cached style" rule in this file's Debugging discipline
+section as a second, tab-bar-specific instance of it. Also fixed: `kbdnav_fill_highlight` was
+missing from `_NO_BASE_INHERIT_KEYS`, so every theme silently inherited The Color Purple's
+override; and — per live color-consistency feedback comparing a Look-tab pattern-button screenshot
+against a Library-tab tab-bar screenshot — keyboard focus on the tab bar was switched from the
+pattern-button fill color to the SAME color mouse hover already uses, surfacing that the relevant
+key was already shared across Settings/Stats/Book Detail despite its `settings_tab_hover_*`
+name — renamed to `tab_hover_bg`/`_opacity`/`_text` (all ~30 theme entries, both stylesheet
+functions, and a stray reference in `cover_theme.py`'s cover-art generator that the rename grep
+caught). Mouse hover on a different tab is now also suppressed once keyboard focus lands on the
+tab bar (narrow fix, not the full hover-pickup consolidation — that stays paused, see TODO.md).
+Theme-key doc groups renumbered (GROUP 8 had shrunk to one entry, folded into GROUP 9/MISC UI).
+Also this session: Look/Controls tab reordering, a Themes-tab label/spacing fix, and dimming the
+theme-pool bulk buttons when they'd be a no-op — all direct live-feedback fixes, no new mechanism.
+Full trace: SESSION.md, 2026-09-08 Session 3. Commits `ac0c9f1`, `8eedb00`.
+
+*Previously: 2026-09-08 Session 2 — Added a second, alternate keyboard-nav marker style:
 "fill highlight" (Settings > Look toggle, alongside the existing "Traveling marker", default
 unchanged) tints the focused control's own background toward a lighter/desaturated accent instead
 of drawing the separate `TravelingFocusMarker` overlay widget. `config.get_keyboard_marker_style()`
