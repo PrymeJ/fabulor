@@ -4402,7 +4402,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         which already answers "where is the cursor" without a second affordance."""
         key = event.key()
         if key not in (Qt.Key.Key_Up, Qt.Key.Key_Down, Qt.Key.Key_Left, Qt.Key.Key_Right,
-                       Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space):
+                       Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space,
+                       Qt.Key.Key_Delete):
             return False
         if self.panel_manager.active_full_panel() != "stats":
             return False
@@ -4411,6 +4412,23 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             return False
         tab_bar = stats_panel.tabs.tabBar()
         focus = QApplication.focusWidget()
+
+        # Delete on "Reset all stats" — added 2026-09-09, app-wide Delete-key-arms-a-
+        # destructive-confirmation pass (Book Detail's per-tab equivalents landed the same
+        # session; see that panel's _history_key_event for the sibling design). Live design
+        # correction, same day: an earlier version scoped this to focus being ON the button
+        # itself — "it beats the purpose. Delete should work without requiring me to go to
+        # the button itself, but anywhere on the panel." Rescoped to "anywhere the ⚙ tab is
+        # active", not literally the whole Stats panel — the button only exists on that one
+        # tab, so Delete pressed on Overall/Day/Week/Month/Timeline has nothing to arm.
+        # X was dropped as a synonym in the same correction ("hasn't been used anywhere else"
+        # in this app, and "easier to press by mistake than Del") — Delete only, here and at
+        # every other Delete-key site added this session.
+        if key == Qt.Key.Key_Delete and tab_bar.tabText(tab_bar.currentIndex()) == "⚙":
+            reset_btn = getattr(stats_panel, '_reset_stats_btn', None)
+            if reset_btn is not None:
+                reset_btn.click()
+            return True
 
         # Timeline's tassel: Space/Enter toggles the Streak<->Heatmap view directly while the
         # tab bar holds focus and Timeline is current — see StatsPanel._on_tassel_clicked, the
@@ -4747,12 +4765,42 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         the panel (not just when focus already sits in one of `rows`)."""
         key = event.key()
         if key not in (Qt.Key.Key_Up, Qt.Key.Key_Down, Qt.Key.Key_Left, Qt.Key.Key_Right,
-                       Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space):
+                       Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space,
+                       Qt.Key.Key_Delete):
             return False
         panel_key = self.panel_manager.active_full_panel()
         if panel_key not in self._FLAT_PANEL_KEYS:
             return False
         focus = QApplication.focusWidget()
+
+        # Delete on Sprint's "Reset all sprint data" — added 2026-09-09, the same app-wide
+        # Delete-key-arms-a-destructive-confirmation pass as Stats' _handle_stats_arrows
+        # equivalent and Book Detail's per-tab ones (see those for the sibling design). Live
+        # design correction, same day: an earlier version required focus to be ON the button
+        # itself — "it beats the purpose. Delete should work without requiring me to go to
+        # the button itself, but anywhere on the panel." Sprint has no tabs, so "anywhere on
+        # the panel" here just means "regardless of which row currently has focus" — fires as
+        # long as Sprint is the active panel and the button is genuinely showing.
+        # isVisible() is the SAME gate sync_disable_button_visibility() itself uses
+        # (`not self._sprint_active`) — Pryme's explicit call: Delete should only arm the
+        # confirmation when the button is genuinely the reset action, never while a sprint is
+        # active (Speed/Sleep have no equivalent control today, hence no matching branch here
+        # for them). X was dropped as a synonym in the same correction ("hasn't been used
+        # anywhere else" in this app, and "easier to press by mistake than Del") — Delete
+        # only, here and at every other Delete-key site added this session.
+        # Deliberately skipped while focus is a QLineEdit (the custom sprint/grace duration
+        # field): Delete there is the field's own native delete-character-forward, which must
+        # keep working — unlike Left/Right, which this method's docstring already explains
+        # are intentionally NOT deferred to the text field, Delete has no panel-navigation
+        # meaning worth stealing it for.
+        if (key == Qt.Key.Key_Delete and panel_key == "sprint"
+                and not isinstance(focus, QLineEdit)):
+            sprint_panel = getattr(self, 'sprint_panel', None)
+            reset_btn = getattr(sprint_panel, '_reset_sprint_btn', None) if sprint_panel else None
+            if reset_btn is not None and reset_btn.isVisible():
+                reset_btn.click()
+            return True
+
         rows = self.panel_manager.flat_panel_rows(panel_key)
         if not rows:
             return False
