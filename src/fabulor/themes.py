@@ -3117,7 +3117,7 @@ THEMES = {
         "undo_hover":                    "#777777",
         "text":                          "#A4AFC1",
         "accent":                        "#7E8DA8",
-        "accent_light":                  "#A2B2CC",
+        "accent_light":                  "#95A9C9",
         "accent_dark":                   "#818792",
         "button_text":                   "#C0C8D1",
         "slider_progress":               "#EEEEEE",

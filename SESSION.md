@@ -6,11 +6,12 @@ Design (confirmed live with Pryme before implementing): alternate option, not a 
 `StreakGrid._derive_longest_fill` (same hue, lighten/desaturate) but is its own tuning, NOT a call
 into that method — `themes.derive_lighter_accent_rgb(accent_hex)`, Qt-free (`colorsys`, matching
 `preset_ramp_rgb`'s existing "this module has no Qt import" constraint), saturation cut to 55%,
-value +25/255 (down from a first-pass +60/255 that was live-reported "too bright" — StreakGrid's own
-grid-cell tuning doesn't transfer to a full-button fill at the same brightness). Speed/Sleep/Sprint's
-ramp-preset buttons keep their existing per-instance `:focus` color entirely under fill_highlight —
-Pryme's call: "Keep it. Just dropping the travel marker would suffice there" — since their color
-already comes from a real per-preset derivation, not the flat-color bug this feature targets.
+value boost tuned down twice across the session (+60/255 → +25/255 → **+12/255**, each after a
+live "too bright"/"too strong" report — StreakGrid's own grid-cell tuning doesn't transfer to a
+full-button fill at the same brightness). Speed/Sleep/Sprint's ramp-preset buttons keep their
+existing per-instance `:focus` color entirely under fill_highlight — Pryme's call: "Keep it. Just
+dropping the travel marker would suffice there" — since their color already comes from a real
+per-preset derivation, not the flat-color bug this feature targets.
 
 **Two live-reported regressions, both from the same root mistake, both fixed same-session:**
 
@@ -112,7 +113,35 @@ behavior is unaffected by which tab it's on, Controls is sparse while it "fills"
 Look is "almost full with room for one more setting if I one day add something else" — was taken
 as the deciding factor as stated, not re-litigated. Moved from the end of `build_controls_tab` to
 the end of `build_appearance_tab` (the "Look" tab), same block shape, no behavior change beyond
-which tab shows it. All tests re-verified green after both changes.
+which tab shows it. All tests re-verified green after both changes. Committed as `1cf06c5`.
+
+**Third follow-up, same session**: even after two rounds of value-boost tuning, Pryme's
+conclusion was structural, not "needs a third number" — "there is no value that will fit all the
+themes." A single global derivation constant cannot work for every theme's `accent`: some accents
+are already near-white/high-value (a boost pushes them toward blown-out), others are deeply
+saturated darks (the same boost barely lightens them) — the fix space is inherently per-theme, not
+a better global tuning. Added `kbdnav_fill_highlight` (Group 10, optional hex string, documented
+in `themes.py`'s own key-doc block following the exact convention every other optional override
+key there already uses — e.g. `streak_grid_outline`, `focus_audio_tab_reset`) — a theme can set
+this to bypass `derive_lighter_accent_rgb` entirely; every theme that doesn't set it keeps falling
+back to the derivation, now at +12/255. `get_panel_base_stylesheet` reads it via
+`t.get('kbdnav_fill_highlight')`, converts through the existing `_hex_to_rgb()` so the QSS
+`rgb(...)` usage is identical regardless of which source won. Not added to
+`_NO_BASE_INHERIT_KEYS` — that list is only for a key "The Color Purple" itself sets a literal
+value for (which would otherwise leak into every theme that doesn't override it); this key follows
+the same shape as `focus_folder_list_dot`/`tags_kbdnav_ring`/`focus_audio_tab_reset`, none of
+which are in that list either, since their fallback is computed in Python at the call site, not
+inherited through the base-template copy. Waknuk was given a first tuned value (settled at
+`#4D8790` after direct live iteration in the file, while this was being implemented — the file was
+being actively hand-edited mid-session, confirmed and reconciled rather than assumed stale).
+Verified end-to-end: `get_panel_base_stylesheet('Waknuk')`'s generated sheet contains
+`rgb(85,149,158)` (the `_hex_to_rgb` conversion of Waknuk's override at the time it was checked),
+and a theme with no override key still resolves through the derivation as before. All 507 tests
+pass; app launches cleanly. Committed as `385b274`.
+
+Feature complete for this session across three commits: `e84a090` (initial implementation),
+`1cf06c5` (color re-tune + tab move), `385b274` (per-theme override key). Session ended here per
+Pryme's own close-out.
 
 ## Session Summary — 2026-09-08 Session 1 — Hover-pickup keyboard navigation for Settings/Speed/Sleep/Sprint: two attempts, both reverted after an intermittent live regression. No commit — `app.py` stayed at `1fa0746` throughout.
 

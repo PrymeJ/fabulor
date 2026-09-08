@@ -1752,7 +1752,43 @@ Any `QWidget` subclass (not `QFrame`, not `QLabel`) that owns a background-color
 
 *Reorganization note (2026-07-13): the "Critical Architecture Rules" section was restructured to remove repetition — it previously existed as two passes (a full-prose section and a later condensed second pass covering many of the same rules). The two were merged: rules that appeared in both now appear once, under whichever fact they share, with no information dropped. Rules unique to either pass are unchanged. See the note directly under the "Critical Architecture Rules" heading for detail.*
 
-*Last updated: 2026-09-07 Session 1 — Full keyboard navigation added to the Speed, Sleep and
+*Last updated: 2026-09-08 Session 2 — Added a second, alternate keyboard-nav marker style:
+"fill highlight" (Settings > Look toggle, alongside the existing "Traveling marker", default
+unchanged) tints the focused control's own background toward a lighter/desaturated accent instead
+of drawing the separate `TravelingFocusMarker` overlay widget. `config.get_keyboard_marker_style()`
+("traveling" | "fill_highlight"). New: `themes.derive_lighter_accent_rgb()` (Qt-free, `colorsys`,
+same hue/lighten-desaturate design as `StreakGrid._derive_longest_fill` but independently tuned —
++12/255 value boost after two live tune-downs from +60/255, since a single global boost read wrong
+on some themes' accents regardless of tuning); `kbdnav_fill_highlight` (Group 10 optional
+per-theme hex override, for exactly the themes where the derived color still doesn't fit — see the
+theme-key doc block); `kbdnav_fill_active` (a THIRD kbdnav QSS property, deliberately distinct
+from the pre-existing `kbdnav_marker_active` — the two must never be conflated, see below);
+`kbdnav_style` (a new, always-set property recording which style is active, needed because the
+two style-specific properties above are each written only by their own style's code path and are
+therefore unreliable to gate an "is NOT this style" check on).
+
+**Four live-reported bugs in one feature, escalating in subtlety, each requiring the fix to be
+re-opened rather than a fresh guess layered on top:** a genuinely novel QSS combinator
+(`QTabBar:focus::tab:selected`, a pseudo-state chained ahead of a sub-control — nothing else in
+this codebase's stylesheets does this) caused paint artifacts on Settings tab switch and was
+removed outright rather than debugged blind; the new fill rule was first gated on the PRE-EXISTING
+`kbdnav_marker_active` property, which is the traveling style's own "is the marker's patrol
+visible" flag — conflating the two made the fill paint on top of the real traveling marker
+whenever it was genuinely showing ("traveling marker still everywhere" after supposedly switching
+to fill_highlight — the two style names were briefly swapped in the live bug report itself, caught
+and corrected mid-diagnosis); a missing `QPushButton:focus:hover` compound (this codebase's
+established pattern for a control that's simultaneously hovered and keyboard-focused) was a real
+but INSUFFICIENT fix for "fill skips painting when the mouse rests on the target button" — the
+actual, deeper cause was a set of pre-existing, style-unaware `[kbdnav="true"] #pattern_button:hover
+{ background: transparent; }` suppression rules (2026-09-03/04 vintage, written when only the
+traveling style existed) whose ID-selector specificity beat even the `:focus:hover` fix; fixing
+that split the ramp-preset buttons' own separate highlight (`kbdnav_marker_active` no longer went
+true at all under fill_highlight, since it's normally set only by the marker's own dormant-state
+callbacks) — closed by also driving that property off the same active/inactive value
+`kbdnav_fill_active` gets. Full trace-by-trace narrative, including which fixes were later shown
+incomplete rather than wrong: SESSION.md, 2026-09-08 Session 2.
+
+*Previously: 2026-09-07 Session 1 — Full keyboard navigation added to the Speed, Sleep and
 Sprint panels (branch `feature/traveling-focus-marker`, still NOT merged) — the three panels
 that were never tab-based, so this also required GENERALIZING the traveling-marker modality
 machinery (`_set_keyboard_nav_active`, `_focus_marker_in_scope`, the `kbdnav` QSS property,
