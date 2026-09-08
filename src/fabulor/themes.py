@@ -1,3 +1,4 @@
+import colorsys
 import math
 from fabulor.assets import get_asset_path
 
@@ -3361,6 +3362,38 @@ def preset_ramp_rgb(theme, index, count):
     )
 
 
+def derive_lighter_accent_rgb(accent_hex: str) -> str:
+    """OPAQUE "r,g,b" string: `accent_hex` lightened/desaturated toward a
+    tinted highlight — inspired by StreakGrid._derive_longest_fill's same-hue
+    lighten/desaturate approach for the streak grid's longest-run fill, but
+    tuned separately (see below) rather than reused verbatim, since the same
+    +60/255 value boost read as too bright when tried live as a whole-button
+    fill (a small grid cell reads a bright tint very differently from a full
+    button background). Added 2026-09-08 as the "fill highlight" keyboard-nav
+    marker style's focus color: a real tint of the current accent rather than
+    a flat, unrelated theme-dict color picked by mistake (the bug that
+    prompted this alternate style — see SESSION.md 2026-09-08).
+
+    Value boost is +25/255 (not StreakGrid's +60/255) — roughly half —
+    live-tuned down after the first pass read as too bright. Saturation cut
+    (55%) is unchanged since that wasn't reported as the problem.
+
+    Returns a plain string rather than a QColor because this module is
+    deliberately Qt-free — see preset_ramp_rgb's docstring just above. Uses
+    `colorsys` (stdlib, 0..1 float HSV) rather than Qt's 0..255/0..359
+    integer HSV; the two conventions round slightly differently (Qt quantizes
+    hue to an integer 0-359 degree, colorsys keeps it a continuous float)."""
+    h = accent_hex.lstrip('#')
+    if len(h) != 6:
+        h = '888888'
+    r, g, b = (int(h[i:i + 2], 16) / 255 for i in (0, 2, 4))
+    hue, sat, val = colorsys.rgb_to_hsv(r, g, b)
+    new_sat = sat * 0.55
+    new_val = min(1.0, val + 25 / 255)
+    nr, ng, nb = colorsys.hsv_to_rgb(hue, new_sat, new_val)
+    return ",".join(str(round(c * 255)) for c in (nr, ng, nb))
+
+
 def _get_gradient_style(t, prefix, fallback_color, opacity=1.0):
     """Helper to construct qlineargradient or fallback to flat color/rgba."""
     start = t.get(f"gradient_{prefix}_start")
@@ -3943,6 +3976,7 @@ def get_panel_base_stylesheet(theme_name="default"):
     """
     t = _resolve_theme(theme_name)
     accent_style = _get_gradient_style(t, "accent", t['accent'])
+    kbdnav_fill_rgb = derive_lighter_accent_rgb(t['accent'])
 
     return f"""
         QWidget#settings_panel, QWidget#speed_panel, QWidget#sleep_panel, QWidget#sprint_panel {{
@@ -3991,6 +4025,49 @@ def get_panel_base_stylesheet(theme_name="default"):
         }}
         QPushButton#pattern_button[is_default="true"]:hover {{
             border: 2px solid {t['accent_light']};
+        }}
+        /* "Fill highlight" keyboard-nav marker style (2026-09-08, alternate to the traveling
+           border marker — see MainWindow._update_focus_marker/config.get_keyboard_marker_style).
+           Generic: paints WHATEVER control genuinely has Qt focus, so it needs no per-widget-type
+           selector to reach plain Settings pattern_buttons, the tab bar's own buttons-as-tabs
+           handoff, Library's folder list, checkboxes, etc. Deliberately placed in the base shared
+           by all four panels (settings/speed/sleep/sprint) rather than duplicated per panel.
+           Speed/Sleep/Sprint's own preset-ramp buttons are UNAFFECTED despite matching this
+           selector too: their :focus color is set via a per-instance setStyleSheet
+           (_apply_preset_ramp_colors), which always outranks this panel-level rule in Qt's
+           cascade regardless of selector specificity — see CLAUDE.md's ramp-panel design note.
+
+           `kbdnav_fill_active` is EXCLUSIVE to this style — do NOT gate this rule on
+           `kbdnav_marker_active` (a live bug shipped exactly that way 2026-09-08: that property
+           is the TRAVELING style's own "is the marker's patrol currently visible" flag, written
+           by MainWindow._on_focus_marker_dormant_changed independent of which style is active —
+           reusing it here made this fill paint on top of the real traveling marker every time it
+           was genuinely showing, reported live as "traveling marker still everywhere"). The sole
+           writer of `kbdnav_fill_active` is MainWindow._set_kbdnav_fill_active_property, called
+           only from _update_focus_marker's fill_highlight branch — there is no marker patrol/
+           idle-fade lifecycle to gate on for a static fill. */
+        QWidget#settings_panel[kbdnav="true"][kbdnav_fill_active="true"] QPushButton:focus,
+        QWidget#speed_panel[kbdnav="true"][kbdnav_fill_active="true"] QPushButton:focus,
+        QWidget#sleep_panel[kbdnav="true"][kbdnav_fill_active="true"] QPushButton:focus,
+        QWidget#sprint_panel[kbdnav="true"][kbdnav_fill_active="true"] QPushButton:focus {{
+            background-color: rgb({kbdnav_fill_rgb});
+        }}
+        /* A control that is BOTH mouse-hovered AND keyboard-focused is still focused, so the
+           fill has to win — same shape/reasoning as every other focus-fill rule in this file
+           (see e.g. #reset_audio_btn:focus:hover below). Live-reported 2026-09-08: without this,
+           arrowing onto a button the mouse happens to be resting on painted no fill at all,
+           because the generic QPushButton:hover rule above (same specificity, later in the
+           traveling-marker case would be irrelevant, but here both rules are plain QPushButton
+           pseudo-class selectors of equal specificity) wins ties by source order — QPushButton:hover
+           is declared earlier in this same function, so a plain :focus rule alone always lost the
+           tie whenever :hover also matched. QPushButton#pattern_button:hover only overrides
+           border, not background, so this compound only needs to out-rank the GENERIC
+           QPushButton:hover's background-color, not a widget-specific one. */
+        QWidget#settings_panel[kbdnav="true"][kbdnav_fill_active="true"] QPushButton:focus:hover,
+        QWidget#speed_panel[kbdnav="true"][kbdnav_fill_active="true"] QPushButton:focus:hover,
+        QWidget#sleep_panel[kbdnav="true"][kbdnav_fill_active="true"] QPushButton:focus:hover,
+        QWidget#sprint_panel[kbdnav="true"][kbdnav_fill_active="true"] QPushButton:focus:hover {{
+            background-color: rgb({kbdnav_fill_rgb});
         }}
         QScrollBar:vertical {{
             width: 8px;
@@ -4104,24 +4181,39 @@ def get_settings_stylesheet(theme_name="default"):
            different controls and nothing said which one Enter would act on.
 
            Scoped to #settings_panel deliberately: #pattern_button:hover lives in the SHARED
-           get_panel_base_stylesheet, used by Speed/Sleep/Sprint too, and none of those have a
-           keyboard marker to compete with. Overriding here (this sheet is appended to the base)
-           rather than editing the shared rule leaves those panels untouched by construction.
+           get_panel_base_stylesheet, used by Speed/Sleep/Sprint too. Overriding here (this
+           sheet is appended to the base) rather than editing the shared rule leaves Speed
+           untouched by construction (Sleep has its own equivalent override — see
+           get_sleep_stylesheet).
 
            Each override restates the widget's non-hover appearance rather than using an
            `inherit`-style reset, which QSS does not support — :hover simply loses. Keep these
-           in sync if the base rules' resting colors change. */
-        QWidget#settings_panel[kbdnav="true"] QPushButton#pattern_button:hover {{
+           in sync if the base rules' resting colors change.
+
+           ADDED [kbdnav_style="traveling"] (2026-09-08, live regression fix): this suppression
+           exists specifically so the TRAVELING marker is the sole "you are here" signal — it
+           must NOT apply under "fill_highlight" style, where the fill itself (via the
+           QPushButton:focus/:focus:hover rules in get_panel_base_stylesheet) needs mouse hover
+           to lose to keyboard focus, not to a blanket transparent override that wins regardless
+           of focus. Without this guard, arrowing onto a button the mouse was already resting on
+           painted no fill at all under fill_highlight — these unconditional rules silently
+           re-applied the "transparent" resting look on top of the (correctly won) :focus:hover
+           rule, because #pattern_button:hover's ID selector outranks a bare QPushButton
+           pseudo-class chain. See MainWindow._set_keyboard_nav_active's kbdnav_style comment for
+           where this property is written — it is ALWAYS set (both styles), unlike
+           kbdnav_fill_active/kbdnav_marker_active which are each written only by their own
+           style's code path. */
+        QWidget#settings_panel[kbdnav="true"][kbdnav_style="traveling"] QPushButton#pattern_button:hover {{
             background: transparent;
             border: 1px solid {t['accent_dark']};
         }}
-        QWidget#settings_panel[kbdnav="true"] QPushButton#pattern_button[selected="true"]:hover {{
+        QWidget#settings_panel[kbdnav="true"][kbdnav_style="traveling"] QPushButton#pattern_button[selected="true"]:hover {{
             background: {t['accent']};
         }}
-        QWidget#settings_panel[kbdnav="true"] QPushButton#pattern_button[is_default="true"]:hover {{
+        QWidget#settings_panel[kbdnav="true"][kbdnav_style="traveling"] QPushButton#pattern_button[is_default="true"]:hover {{
             border: 2px solid {t['accent_light']};
         }}
-        QWidget#settings_panel[kbdnav="true"] QTabBar::tab:hover:!selected {{
+        QWidget#settings_panel[kbdnav="true"][kbdnav_style="traveling"] QTabBar::tab:hover:!selected {{
             background: {t['bg_deep']};
             color: rgba({text_rgb}, 0.9);
         }}
@@ -4447,12 +4539,16 @@ def get_sleep_stylesheet(theme_name="default"):
            Fade-out row) — same contract and same reasoning as Settings' equivalent rules
            (get_settings_stylesheet), scoped to #sleep_panel instead of #settings_panel since
            get_panel_base_stylesheet's #pattern_button:hover is shared by all four panels and
-           none of the other three had a keyboard marker to compete with until now. */
-        QWidget#sleep_panel[kbdnav="true"] QPushButton#pattern_button:hover {{
+           none of the other three had a keyboard marker to compete with until now.
+
+           [kbdnav_style="traveling"] guard added 2026-09-08 — see the identical guard's
+           rationale on Settings' equivalent rules in get_settings_stylesheet (same live
+           regression, same fix, same reasoning). */
+        QWidget#sleep_panel[kbdnav="true"][kbdnav_style="traveling"] QPushButton#pattern_button:hover {{
             background: transparent;
             border: 1px solid {t['accent_dark']};
         }}
-        QWidget#sleep_panel[kbdnav="true"] QPushButton#pattern_button[selected="true"]:hover {{
+        QWidget#sleep_panel[kbdnav="true"][kbdnav_style="traveling"] QPushButton#pattern_button[selected="true"]:hover {{
             background: {t['accent']};
         }}
         /* Keyboard focus on `end_chap_btn` — the one grid cell that is NOT one of the 14

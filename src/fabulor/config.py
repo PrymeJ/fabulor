@@ -134,6 +134,15 @@ class Config:
     def set_default_timeline_view(self, value: str) -> None:
         self.settings.setValue("default_timeline_view", value)
 
+    def get_keyboard_marker_style(self) -> str:
+        """Returns 'traveling' (default, the animated border marker) or
+        'fill_highlight' (the focused control's own background tints toward a
+        lighter/desaturated accent instead)."""
+        return self.settings.value("keyboard_marker_style", "traveling")
+
+    def set_keyboard_marker_style(self, value: str) -> None:
+        self.settings.setValue("keyboard_marker_style", value)
+
     def get_last_shown_streak(self) -> int | None:
         """The streak value as of the last time the count-up animation
         actually ran (StreakGrid.animate_streak_count). None means it has

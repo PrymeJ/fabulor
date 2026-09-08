@@ -1,3 +1,107 @@
+## Session Summary — 2026-09-08 Session 2 — "Fill highlight" alternate keyboard-nav marker style added (Settings > Controls toggle: Traveling marker / Fill highlight). Motivated by the discovery that the Speed/Sleep/Sprint ramp buttons' focus color was a flat theme-dict color pulled by mistake, not derived from accent — this adds a second, coexisting style where the focused control's own background tints toward a lighter/desaturated version of the theme's accent, instead of the separate animated border widget.
+
+Design (confirmed live with Pryme before implementing): alternate option, not a replacement —
+`config.get_keyboard_marker_style()`/`set_keyboard_marker_style()`, default `"traveling"`, mirrors
+`get_default_timeline_view`'s getter/setter shape. Color reuses the *design intent* of
+`StreakGrid._derive_longest_fill` (same hue, lighten/desaturate) but is its own tuning, NOT a call
+into that method — `themes.derive_lighter_accent_rgb(accent_hex)`, Qt-free (`colorsys`, matching
+`preset_ramp_rgb`'s existing "this module has no Qt import" constraint), saturation cut to 55%,
+value +25/255 (down from a first-pass +60/255 that was live-reported "too bright" — StreakGrid's own
+grid-cell tuning doesn't transfer to a full-button fill at the same brightness). Speed/Sleep/Sprint's
+ramp-preset buttons keep their existing per-instance `:focus` color entirely under fill_highlight —
+Pryme's call: "Keep it. Just dropping the travel marker would suffice there" — since their color
+already comes from a real per-preset derivation, not the flat-color bug this feature targets.
+
+**Two live-reported regressions, both from the same root mistake, both fixed same-session:**
+
+1. **Paint artifacts between Settings tabs on theme switch.** A `QTabBar:focus::tab:selected`
+   selector (parent `:focus` chained before a `::sub-control:pseudo-state`) was the one genuinely
+   novel QSS combinator shape introduced — nothing else in this codebase's stylesheets chains a
+   pseudo-state ahead of a sub-control this way. Rather than debug Qt's QSS engine behavior for an
+   unverifiable live-paint defect, the rule was removed outright — the selected tab already carries
+   an unconditional accent fill regardless of focus, so losing this one refinement costs little.
+
+2. **"Traveling marker still everywhere" after switching TO fill_highlight — actually the opposite
+   bug, corrected by Pryme mid-diagnosis**: "I discovered the setting now. Traveling marker got
+   broken, not fill highlight. Traveling marker is not supposed to have fill, but a traveling
+   marker. Fill highlight is supposed to have fill, but not traveling marker." My own first
+   diagnostic pass chased the wrong style entirely (checked whether `_update_focus_marker`'s
+   fill_highlight branch correctly suppressed `show_for`/`clear` — it did) before this correction
+   landed. Root cause: the new fill-highlight QSS rule was gated on the PRE-EXISTING
+   `kbdnav_marker_active` property — which is the TRAVELING style's own "is the marker's patrol
+   currently visible" flag (written by `_on_focus_marker_dormant_changed` regardless of which style
+   is active) — so the new fill painted on top of the real traveling marker every time it was
+   genuinely showing. Fixed by splitting into two properties that are never both meaningful at
+   once: `kbdnav_marker_active` reverted to traveling-style-only (as it always was before this
+   session), and a new `kbdnav_fill_active` written exclusively by the fill_highlight branch via a
+   new `_set_kbdnav_fill_active_property`, with the QSS rule re-gated on the new property. A caught
+   mistake worth recording, not quietly dropped: conflating "a property that already exists and
+   sounds like what I need" with "a property scoped correctly for a NEW, independent style" is the
+   generalizable lesson — a property's existing name doesn't guarantee its existing write-conditions
+   still hold once a second consumer with different lifecycle needs is added.
+
+3. **Fill skipped painting when the mouse was already resting on the button being keyboard-
+   navigated to** (Settings/Sleep/Sprint only — Speed was unaffected, which was the key clue).
+   Live report: "If mouse is resting on a button, fill option skips painting it when navigated
+   there with keys. Traveling marker doesn't have that issue." First fix pass was INCOMPLETE, not
+   wrong — a bare `QPushButton:focus` genuinely does lose a same-specificity tie against
+   `QPushButton:hover` by source order, so the `QPushButton:focus:hover` compound added was a real
+   and necessary fix, matching this file's own established pattern (`#reset_audio_btn:focus:hover`
+   etc.) — but it was NOT sufficient, and reporting it as resolved was premature: a second, higher-
+   specificity rule was still winning underneath it.
+
+   **The actual full cause, found after Pryme reported the fix hadn't worked and additionally that
+   "rampup buttons lost their highlight along the way" (a second, related regression from the same
+   change) — real root cause, ID-selector suppression rules that predate this feature entirely:**
+   `get_settings_stylesheet`/`get_sleep_stylesheet` each carry a pre-existing
+   `[kbdnav="true"] QPushButton#pattern_button:hover { background: transparent; ... }` rule (added
+   2026-09-03/04, well before this session) whose whole purpose was "while the keyboard drives, the
+   TRAVELING MARKER must be the only thing claiming 'you are here' — mouse hover must not also
+   light up." That rule has no style gate at all (it only checks `kbdnav="true"`, true under both
+   styles) and its `#pattern_button` ID selector outranks even the new `:focus:hover` compound — so
+   under fill_highlight it kept forcing hovered buttons back to `transparent`, regardless of focus.
+   Speed alone was unaffected because `get_speed_stylesheet` has ZERO panel-specific QSS (confirmed
+   earlier this session) — no such suppression rule exists there, so nothing competed with the new
+   fill rule on Speed at all. This is also what explains why the diagnosis needed Pryme's cross-panel
+   comparison ("Speed doesn't have this issue... the other 3 panels can't") to actually locate — the
+   asymmetry across panels was the load-bearing clue, not something guessable from the QSS alone.
+
+   The ramp-button regression was a SEPARATE consequence of the SAME session's earlier fix (not
+   this suppression rule): the ramp buttons' own per-instance `:focus` rule
+   (`_apply_preset_ramp_colors`, unchanged this session) is gated on `kbdnav_marker_active` —
+   which, after fix #2's split, is now written ONLY by `_on_focus_marker_dormant_changed`, itself
+   only ever invoked by the marker's own `_enter_patrol`/`_on_fade_finished`/`clear()` — none of
+   which ever run under fill_highlight (show_for/clear are never called on the marker in that
+   style). So `kbdnav_marker_active` silently never went true under fill_highlight, and the ramp
+   buttons lost their highlight entirely — exactly the outcome fix #2's split was supposed to
+   avoid for them, since Pryme's explicit instruction was "keep [the ramp buttons' color], just
+   drop the travel marker." Fixed by also driving `kbdnav_marker_active` off the same `active`
+   value `kbdnav_fill_active` gets, in `_update_focus_marker`'s fill_highlight branch — the ramp
+   buttons don't know or care which style is active, they only need this property to keep meaning
+   "keyboard nav is genuinely driving this panel," true under either style.
+
+   **Real fix for the suppression-rule cause**: a new, ALWAYS-set property `kbdnav_style` (written
+   unconditionally by `_set_keyboard_nav_active` on every transition, plus proactively re-stamped
+   by a new `MainWindow.refresh_kbdnav_style_property()` when the style toggle itself is clicked —
+   needed because the toggle lives on the Controls tab, which can itself be the active kbdnav
+   target at the moment of the click, so waiting for the next unrelated transition would leave a
+   stale value) — unlike `kbdnav_fill_active`/`kbdnav_marker_active`, which are each written only
+   by their OWN style's code path (so a panel that's never been in the other style never gets a
+   value for it at all, making a `[prop="false"]` guard unreliable), `kbdnav_style` always holds
+   `"traveling"` or `"fill_highlight"`. Every pre-existing traveling-only suppression rule
+   (Settings' three `#pattern_button`/tab-bar rules, Sleep's two) now additionally requires
+   `[kbdnav_style="traveling"]`. Sprint has no such rule to begin with (its own docstring already
+   noted its grace-period `pattern_button` row needs none, fully covered by the shared base) and
+   was never part of this bug.
+
+Files: `config.py` (new setting), `themes.py` (`derive_lighter_accent_rgb`, the new QSS rule +
+its `:focus:hover` pair in `get_panel_base_stylesheet`, `kbdnav_fill_active`), `app.py`
+(`_update_focus_marker`'s style branch, `_set_kbdnav_property`/`_set_kbdnav_fill_active_property`,
+`_keep_marker_awake`'s style-awareness fix for a stale-marker-on-live-switch gap,
+`UICallbackInterface.clear_focus_marker`), `settings_controller.py` (toggle wiring + proactive
+marker clear on switching to fill_highlight), `main_window_builders.py` (Controls tab UI),
+`tests/test_themes_colors.py` (new, pins the color formula). All 507 tests pass throughout.
+
 ## Session Summary — 2026-09-08 Session 1 — Hover-pickup keyboard navigation for Settings/Speed/Sleep/Sprint: two attempts, both reverted after an intermittent live regression. No commit — `app.py` stayed at `1fa0746` throughout.
 
 Goal: extend Tags' own "pick up keyboard nav from wherever the mouse is hovering"

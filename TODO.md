@@ -9,6 +9,22 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
 
 ## Summary index
 
+### Fill-highlight marker style — verify selected+focused+hovered pattern_button
+- [2026-09-08] The new "fill highlight" keyboard-nav style (Settings > Controls toggle) needed
+  three rounds of fixes for the mouse-hover-vs-keyboard-focus case (see SESSION.md Session 2 fix
+  #3 for the full trail — a missing `:focus:hover` compound, then the real cause: pre-existing
+  traveling-only `[kbdnav="true"] #pattern_button:hover` suppression rules with no style gate,
+  fixed via a new always-set `kbdnav_style` property). Still not checked: a
+  `#pattern_button[selected="true"]` (Look tab's active theme swatch — ID + attribute selector,
+  higher specificity than a bare `:focus`/`:focus:hover`, and NOT one of the rules the
+  `kbdnav_style` fix touched) that is BOTH keyboard-focused AND mouse-hovered may have an
+  analogous specificity problem — `[selected="true"]`'s own background could still win over the
+  fill-highlight color. Check live: select a theme swatch, then Tab/arrow-key onto that same
+  now-selected swatch while the mouse still rests on it, and confirm the fill-highlight color
+  shows rather than the plain selected-accent fill. Not fixed preemptively — this session already
+  shipped two rounds of "looked complete, wasn't" on this exact QSS-specificity terrain, so a
+  guessed fix for an unconfirmed case isn't worth adding without a live report to test it against.
+
 ### Hover-pickup keyboard navigation for Settings/Speed/Sleep/Sprint — paused, intermittent regression
 - [2026-09-08] Goal: extend Tags' "pick up keyboard nav from wherever the mouse is hovering"
   principle to the traveling-focus-marker panels (Settings' arrow-nav tabs, Speed, Sleep,

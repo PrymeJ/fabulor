@@ -339,6 +339,14 @@ class VisualsInterface:
             btn.style().unpolish(btn)
             btn.style().polish(btn)
 
+    def set_keyboard_marker_style_selection(self, style):
+        m = self._main
+        if not hasattr(m, 'keyboard_marker_style_buttons'): return
+        for st, btn in m.keyboard_marker_style_buttons.items():
+            btn.setProperty("selected", "true" if st == style else "false")
+            btn.style().unpolish(btn)
+            btn.style().polish(btn)
+
     def set_digit_autoplay_selection(self, enabled):
         m = self._main
         if not hasattr(m, 'digit_autoplay_buttons'): return
@@ -399,6 +407,12 @@ class UICallbackInterface:
     def set_chapter_title(self, text): self._main._update_chapter_title_text(text)
     def refresh_notches(self, skip_animation=False): self._main._refresh_notches(skip_animation=skip_animation)
     def get_book_quote(self): return self._main.book_quotes if hasattr(self._main, 'book_quotes') else None
+    def clear_focus_marker(self):
+        marker = getattr(self._main, 'focus_marker', None)
+        if marker is not None:
+            marker.clear()
+    def refresh_kbdnav_style_property(self):
+        self._main.refresh_kbdnav_style_property()
 
 
 class LibraryInterface:
@@ -438,6 +452,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
     chapter_digit_autoplay_changed = Signal(bool)
     chapter_list_source_changed = Signal(str)
     sidebar_hotspot_enabled_changed = Signal(bool)
+    keyboard_marker_style_changed = Signal(str)  # "traveling" | "fill_highlight"
 
     def __init__(self, parent=None):
         super().__init__()
@@ -4888,7 +4903,18 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         the focused control instead of moving to another one, where the usual "focus arrived
         somewhere new" reset never happens and the marker would otherwise fade under an actively
         working user. Used by the balance slider's Left/Right and by selecting a row inside a
-        list box. Safe no-op before the marker exists."""
+        list box. Safe no-op before the marker exists.
+
+        Also a no-op under "fill_highlight" style — that style never shows the marker at all
+        (see _update_focus_marker), but this method's call sites are style-agnostic (written
+        before the style toggle existed) and _target can be stale from BEFORE a live style
+        switch (marker.keep_awake() itself only guards on _target being None, which it isn't
+        right after switching away from "traveling" mid-session) — without this check, one of
+        these call sites re-entering patrol on that stale target would resurrect the marker
+        under fill_highlight. See _update_keyboard_marker_style for the complementary fix
+        (clearing the marker immediately on switching TO fill_highlight)."""
+        if self.config.get_keyboard_marker_style() == "fill_highlight":
+            return
         marker = getattr(self, 'focus_marker', None)
         if marker is not None:
             marker.keep_awake()
@@ -4945,6 +4971,22 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         panel = self._kbdnav_panel_widget(panel_key) if panel_key is not None else None
         if panel is not None:
             panel.setProperty("kbdnav", "true" if active else "false")
+            # `kbdnav_style` (2026-09-08, added alongside the fill_highlight marker style):
+            # ALWAYS set here, on every transition, to whichever style is currently configured —
+            # unlike kbdnav_fill_active/kbdnav_marker_active (each written only by ITS OWN
+            # style's code path, so a panel that has never been under the other style never gets
+            # a value for the other's property at all), this one is unconditional so QSS can
+            # reliably select "is fill_highlight NOT active" via [kbdnav_style="traveling"] even
+            # on a panel that has never once been in fill_highlight mode. Exists specifically to
+            # fix a live regression: the pre-existing kbdnav-hover-suppression rules
+            # (#pattern_button:hover -> transparent, etc.) were written for the traveling style
+            # only ("the marker is the ONLY thing claiming 'you are here'") but had no style
+            # gate at all, so they also suppressed hover under fill_highlight — where the FILL
+            # itself needs :focus:hover to win instead, and got silently overridden right back to
+            # transparent by these unconditional rules. See get_settings_stylesheet/
+            # get_sleep_stylesheet/get_sprint_stylesheet for the added [kbdnav_style="traveling"]
+            # guard on each suppression rule.
+            panel.setProperty("kbdnav_style", self.config.get_keyboard_marker_style())
             panel.style().unpolish(panel)
             panel.style().polish(panel)
             # Polishing the panel re-resolves the PANEL's own style, but its descendants keep
@@ -4988,6 +5030,32 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self._kbdnav_cursor_anchor = None
             self._kbdnav_cursor_poll.stop()
 
+    def refresh_kbdnav_style_property(self) -> None:
+        """Re-stamp `kbdnav_style` on the currently active kbdnav panel (if any) to match
+        config.get_keyboard_marker_style() right now, without waiting for the next
+        _set_keyboard_nav_active transition.
+
+        Needed because _set_keyboard_nav_active only writes this property as a side effect of
+        _keyboard_nav_active actually flipping — so switching the style TOGGLE ITSELF while
+        keyboard nav is already active on the panel the toggle lives in (the Controls tab, the
+        exact case that surfaced this live) would leave the property stale until some unrelated
+        later transition happened to refresh it. Called from
+        SettingsController._update_keyboard_marker_style right after the config write."""
+        panel_key = self._kbdnav_active_panel_key()
+        panel = self._kbdnav_panel_widget(panel_key) if panel_key is not None else None
+        if panel is None:
+            return
+        value = self.config.get_keyboard_marker_style()
+        if panel.property("kbdnav_style") == value:
+            return
+        panel.setProperty("kbdnav_style", value)
+        panel.style().unpolish(panel)
+        panel.style().polish(panel)
+        for btn in panel.findChildren(QPushButton):
+            btn.style().unpolish(btn)
+            btn.style().polish(btn)
+            btn.update()
+
     def _on_focus_marker_dormant_changed(self, dormant: bool) -> None:
         """Called by TravelingFocusMarker itself (it holds `main_window` and calls back
         directly, no signal plumbing needed) whenever it transitions to/from being visibly
@@ -5010,15 +5078,47 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         Same shape as _set_keyboard_nav_active's own repolish (set property, unpolish,
         polish every button under the panel) — deliberately not reusing that method itself,
         since this property is orthogonal to `kbdnav` and must be settable independently of
-        it (dormant can flip true/false many times while `kbdnav` stays true throughout)."""
+        it (dormant can flip true/false many times while `kbdnav` stays true throughout).
+
+        Only meaningful under the "traveling" marker style — this method is the marker's own
+        callback (called only from focus_marker.py's _enter_patrol/_on_fade_finished/clear), so
+        it is simply never invoked at all under "fill_highlight" style, where show_for/clear are
+        never called on the marker in the first place (see _update_focus_marker).
+
+        CORRECTION (2026-09-08, live report: "traveling marker still everywhere" after switching
+        TO fill_highlight — actually the traveling style that broke, not fill_highlight; my own
+        first fix mis-targeted the wrong style entirely). This property, `kbdnav_marker_active`,
+        is SPECIFIC to the traveling style's own ramp-button rule (see the two paragraphs above)
+        and must never be read by anything that should apply only under fill_highlight — the
+        fill-highlight QSS rule (get_panel_base_stylesheet) is gated on a SEPARATE property,
+        `kbdnav_fill_active`, written only by _update_focus_marker's fill_highlight branch via
+        _set_kbdnav_fill_active_property. Reusing this property for both styles was the bug:
+        `kbdnav_marker_active` goes true here whenever the marker is genuinely patrolling under
+        "traveling", which made the (wrongly shared) fill-highlight rule paint a fill ON TOP OF
+        the real traveling marker every time it was actually visible."""
         panel_key = self._kbdnav_active_panel_key()
         panel = self._kbdnav_panel_widget(panel_key) if panel_key is not None else None
         if panel is None:
             return
-        value = "false" if dormant else "true"
-        if panel.property("kbdnav_marker_active") == value:
+        self._set_kbdnav_property(panel, "kbdnav_marker_active", not dormant)
+
+    def _set_kbdnav_fill_active_property(self, panel, active: bool) -> None:
+        """Fill-highlight-style-exclusive sibling of _on_focus_marker_dormant_changed's
+        `kbdnav_marker_active` write — see that method's CORRECTION note for why these must be
+        two distinct properties, not one shared between styles. Sole writer:
+        _update_focus_marker's fill_highlight branch."""
+        self._set_kbdnav_property(panel, "kbdnav_fill_active", active)
+
+    def _set_kbdnav_property(self, panel, prop_name: str, active: bool) -> None:
+        """Set `prop_name` on `panel` and repolish it + every child QPushButton, skipping the
+        work if the value is already correct. Shared plumbing for the two DISTINCT, never-
+        simultaneously-true properties `kbdnav_marker_active` (traveling style) and
+        `kbdnav_fill_active` (fill_highlight style) — see _on_focus_marker_dormant_changed's
+        CORRECTION note for why they must not be the same property."""
+        value = "true" if active else "false"
+        if panel.property(prop_name) == value:
             return
-        panel.setProperty("kbdnav_marker_active", value)
+        panel.setProperty(prop_name, value)
         panel.style().unpolish(panel)
         panel.style().polish(panel)
         for btn in panel.findChildren(QPushButton):
@@ -5256,6 +5356,41 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             # in eventFilter is what actually clears this in the common cases.
             self._set_keyboard_nav_active(False)
         # reason is None or OtherFocusReason → preserve flag unchanged (deliberately ambiguous)
+        if self.config.get_keyboard_marker_style() == "fill_highlight":
+            # Alternate style (2026-09-08 live design ask, after the ramp buttons' focus
+            # color was found to be a flat theme-dict color by mistake rather than derived
+            # from accent — see themes.derive_lighter_accent_rgb's docstring): no separate
+            # marker widget at all. The focused control's own QSS renders the highlight
+            # directly via [kbdnav="true"][kbdnav_fill_active="true"]:focus (see
+            # get_panel_base_stylesheet) — a property EXCLUSIVE to this style, deliberately NOT
+            # reused for the SAME purpose kbdnav_marker_active serves under "traveling" (that
+            # one is the marker's own patrol-visibility flag — see
+            # _on_focus_marker_dormant_changed's CORRECTION note for the live bug that came from
+            # conflating the two in the QSS gate). No patrol/idle-fade lifecycle to track here —
+            # a static fill has nothing to animate.
+            #
+            # CORRECTION (live report, same session: "rampup buttons lost their highlight along
+            # the way"): Speed/Sleep/Sprint's own preset-ramp buttons keep their EXISTING
+            # per-instance :focus rule under this style (Pryme's explicit call: "Keep it. Just
+            # dropping the travel marker would suffice there") — but that existing rule is gated
+            # on `kbdnav_marker_active`, which is normally written ONLY by
+            # _on_focus_marker_dormant_changed, itself only ever called from the marker's own
+            # _enter_patrol/_on_fade_finished/clear() — none of which ever run under
+            # fill_highlight, since show_for/clear are never invoked on the marker in this style.
+            # So kbdnav_marker_active silently never went true here, and the ramp buttons'
+            # existing rule never fired. Fix: also drive kbdnav_marker_active off the same
+            # `active` value the new property gets — the ramp buttons don't know or care which
+            # style is active, they just need this property to keep tracking "keyboard nav is
+            # genuinely driving this panel," which is exactly what it means under EITHER style.
+            panel_key = self._kbdnav_active_panel_key()
+            panel = self._kbdnav_panel_widget(panel_key) if panel_key is not None else None
+            if panel is None:
+                return
+            active = self._keyboard_nav_active and self._focus_marker_in_scope(
+                QApplication.focusWidget())
+            self._set_kbdnav_fill_active_property(panel, active)
+            self._set_kbdnav_property(panel, "kbdnav_marker_active", active)
+            return
         marker = getattr(self, 'focus_marker', None)
         if marker is None:
             return
