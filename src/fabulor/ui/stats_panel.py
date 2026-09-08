@@ -550,6 +550,17 @@ class FinishedScrollRow(QWidget):
         self._scroll.setWidgetResizable(True)
         self._scroll.setSizeAdjustPolicy(QAbstractScrollArea.SizeAdjustPolicy.AdjustIgnored)
         self._scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        # QScrollArea's Qt DEFAULT focus policy is StrongFocus, not NoFocus like a plain
+        # QWidget — found 2026-09-09 as the second half of a live-reported regression (Stats'
+        # OTHER QScrollArea, Overall's own stat-grid wrapper, had the identical gap — see that
+        # one's own comment in _build_overall_tab for the full mechanism). This row appears on
+        # Overall, Day, Week, and Month (the "Recently finished" carousel), so a click on it
+        # anywhere silently stole real Qt focus off the tab bar on every one of those tabs,
+        # breaking arrow-key tab cycling (_handle_stats_arrows only acts when the tab bar
+        # itself holds focus) with no visible sign anything had changed. This carousel already
+        # has its own dedicated navigation (the left/right arrow buttons); it was never meant
+        # to be a keyboard Tab stop.
+        self._scroll.setFocusPolicy(Qt.FocusPolicy.NoFocus)
 
         self._container = QWidget()
         self._layout = QHBoxLayout(self._container)
@@ -3346,6 +3357,23 @@ class StatsPanel(QWidget):
         # attribute wheelEvent-assignment convention (see _day_wheel/_week_wheel/
         # _month_wheel).
         scroll.wheelEvent = lambda event: event.ignore()
+        # QScrollArea's Qt DEFAULT focus policy is StrongFocus (unlike a plain QWidget's
+        # NoFocus) — a click anywhere in the body (Overall's stat grid/labels, none of which
+        # are themselves focusable) was granting real Qt focus to THIS container, silently,
+        # since nothing here overrode it. This was always true but never mattered before Stats
+        # joined the keyboard-focus-ownership system (2026-09-08/09) — nothing cared where
+        # focus landed in Stats until then. Now it has two real consequences, both live-
+        # reported 2026-09-09: (1) a click stealing focus off the tab bar broke arrow-key tab
+        # cycling entirely (_handle_stats_arrows only acts when `focus is tab_bar`), and (2)
+        # QAbstractScrollArea's native "keep the focused widget visible" auto-scroll could
+        # nudge the few px of forced-off overflow into view on click/drag with no scrollbar
+        # ever shown — read as "the panel can be nudged as if there was a scrollbar" even
+        # though the scrollbar itself was correctly hidden and wheel-inert. This container is
+        # a structural wrapper, never meant to be a real keyboard stop (see panels.py's
+        # panel_tab_widgets, which already excludes every QScrollArea in Stats from the Tab
+        # cycle for the identical reason) — NoFocus here closes the gap that exclusion alone
+        # didn't, since Tab-cycle membership and raw click-to-focus are two different things.
+        scroll.setFocusPolicy(Qt.FocusPolicy.NoFocus)
 
         scroll_content = QWidget()
         scroll_layout = QVBoxLayout(scroll_content)
