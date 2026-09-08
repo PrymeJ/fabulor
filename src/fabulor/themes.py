@@ -2794,6 +2794,7 @@ THEMES = {
         "bookmark_icon":                 "#5A158D",
         "tassel_cord":                   "#9843AA",
         "tassel_head":                   "#F2F0B4",
+        "kbdnav_fill_highlight":         "#53117B",
         "placeholder_cover":             "#DF5AB7"
     },
     "The Eyrie": {
