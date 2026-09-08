@@ -3359,21 +3359,6 @@ class StatsPanel(QWidget):
         layout.setContentsMargins(10, 0, 10, 10)
         layout.setSpacing(6)
 
-        pref_row = QHBoxLayout()
-        day_label = QLabel("Day starts at")
-        day_label.setObjectName("settings_header")
-        pref_row.addWidget(day_label)
-        self.day_start_spin = QSpinBox()
-        self.day_start_spin.setContextMenuPolicy(Qt.ContextMenuPolicy.NoContextMenu)
-        self.day_start_spin.setRange(0, 23)
-        self.day_start_spin.setValue(self.config.get_day_start_hour())
-        self.day_start_spin.valueChanged.connect(self.config.set_day_start_hour)
-        self.day_start_spin.valueChanged.connect(self._on_day_start_hour_changed)
-        self.day_start_spin.setFixedWidth(56)
-        pref_row.addWidget(self.day_start_spin)
-        pref_row.addStretch()
-        layout.addLayout(pref_row)
-
         accel_header = QLabel("Period scroll acceleration")
         accel_header.setObjectName("settings_header")
         layout.addWidget(accel_header)
@@ -3421,6 +3406,29 @@ class StatsPanel(QWidget):
         tassel_row.addStretch()
         layout.addLayout(tassel_row)
         self._update_show_tassel_buttons()
+
+        # Moved to LAST of the settings rows 2026-09-08 (was first) — Pryme's call: it's the
+        # hardest control on this tab to give a clear keyboard-cursor indicator to (a fill
+        # highlight wouldn't read as "here" the way it does on a button, since moving keyboard
+        # focus into a QSpinBox already highlights its own text natively — see
+        # PanelManager.stats_tab_button_rows's docstring for the arrow-nav row this becomes).
+        # Header on its own line, matching every other setting on this tab (was inline with the
+        # spinbox in one QHBoxLayout — the odd one out until this pass).
+        day_header = QLabel("Day starts at")
+        day_header.setObjectName("settings_header")
+        layout.addWidget(day_header)
+
+        pref_row = QHBoxLayout()
+        self.day_start_spin = QSpinBox()
+        self.day_start_spin.setContextMenuPolicy(Qt.ContextMenuPolicy.NoContextMenu)
+        self.day_start_spin.setRange(0, 23)
+        self.day_start_spin.setValue(self.config.get_day_start_hour())
+        self.day_start_spin.valueChanged.connect(self.config.set_day_start_hour)
+        self.day_start_spin.valueChanged.connect(self._on_day_start_hour_changed)
+        self.day_start_spin.setFixedWidth(56)
+        pref_row.addWidget(self.day_start_spin)
+        pref_row.addStretch()
+        layout.addLayout(pref_row)
 
         layout.addStretch()
 
@@ -4303,12 +4311,22 @@ class StatsPanel(QWidget):
                 self._tag_manager.refresh()
 
     # ── Day/Week/Month keyboard nav ───────────────────────────────────────────
-    # StatsPanel itself is granted real Qt focus on open (PanelManager._claim_panel_focus —
-    # it isn't in panel_tab_widgets, so the panel root is the claim target), so this is the
-    # widget that actually owns keyboard focus while Stats is open, per the focus-ownership
-    # invariant — the same shape as ChapterList's own keyPressEvent, not the app-level
-    # eventFilter (Tab/Escape lane), since this only needs to react while ITS tab is active
-    # and doesn't need to intercept anything before a more-specific widget sees it.
+    # CORRECTED 2026-09-08: this docstring previously said StatsPanel itself is granted real
+    # Qt focus on open because it "isn't in panel_tab_widgets" — that stopped being true the
+    # same day, once Stats joined the tab-bar-navigable panel set (see
+    # PanelManager._start_stats_entry's panel_key="stats" and panel_tab_widgets("stats")).
+    # Initial focus now lands on the Stats tab bar, not the panel root.
+    #
+    # This override still only fires as a QWidget.keyPressEvent bubble-up — i.e. only when a
+    # focused CHILD widget doesn't consume Left/Right itself and Qt's normal propagation walks
+    # it up to StatsPanel. Confirmed still safe for the new tab-bar-focused case: QTabBar's own
+    # native keyPressEvent consumes Left/Right to switch tabs (see panels.py's
+    # _ThemesTabBarInterceptor docstring — "keyboard — Left/Right, handled natively by
+    # QTabBar.keyPressEvent"), so it never propagates up to here while the tab bar holds focus.
+    # This method therefore still only ever fires for the case it was built for: focus resting
+    # somewhere INSIDE a Day/Week/Month tab (currently nothing does, since those tabs have no
+    # keyboard-focusable content yet — Day/Week/Month's own row-list keyboard nav is a later,
+    # separate pass) with no more specific widget claiming the key first.
     _NAV_METHODS = {
         "Day":   ("_day_prev", "_day_next"),
         "Week":  ("_week_prev", "_week_next"),

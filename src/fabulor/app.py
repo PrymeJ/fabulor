@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from PySide6.QtWidgets import (
     QFileDialog,
     QWidget, QPushButton, QVBoxLayout, QListWidget, QListWidgetItem,
-    QApplication, QGraphicsBlurEffect, QGraphicsOpacityEffect, QLineEdit, QLabel,
+    QApplication, QGraphicsBlurEffect, QGraphicsOpacityEffect, QLineEdit, QLabel, QSpinBox,
 )
 from PySide6.QtCore import (
     Qt, QTimer, QPoint, QRect, QEvent, QPropertyAnimation, QEasingCurve, QModelIndex,
@@ -4043,7 +4043,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # something this session's arrow-nav work introduced: panel_tab_widgets("sprint") and
         # _focus_settings_control both already worked generically for any panel, this dispatch
         # tuple was simply never updated when SprintPanel was added.
-        if panel in ("settings", "speed", "sleep", "sprint"):
+        if panel in ("settings", "speed", "sleep", "sprint", "stats"):
             widgets = self.panel_manager.panel_tab_widgets(panel)
             if not widgets:
                 return True  # nothing focusable — still swallow so Tab can't escape the panel
@@ -4351,6 +4351,124 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self._keep_marker_awake()
             return True
 
+        if key == Qt.Key.Key_Left and row_i == 0 and col_i == 0:
+            tab_bar.setFocus(Qt.FocusReason.TabFocusReason)
+            return True
+        # Left elsewhere, and Right anywhere: native within-row stepping is already correct.
+        return False
+
+    def _handle_stats_arrows(self, event) -> bool:
+        """Arrow-key/Enter/Space navigation for the Stats panel. Returns True iff consumed.
+        Called from the app-level eventFilter, same contract as _handle_settings_arrows.
+
+        First pass (2026-09-08): only the "⚙" tab has arrow-navigable button rows
+        (PanelManager.stats_tab_button_rows) — Overall/Day/Week/Month/Timeline have no
+        down-target yet (Day/Week/Month's own row-list keyboard nav is a later, separate pass;
+        Overall's carousel and Timeline's heatmap-hover popups are explicitly deferred per
+        Pryme's own call — see TODO.md). Down/Tab from the tab bar on any OTHER tab is
+        therefore a no-op this pass: there is nothing to enter, so the key is simply not
+        claimed here and the marker/highlight stays on the tab.
+
+        Left/Right tab-bar CYCLING needs no code here at all — QTabBar already handles
+        Left/Right natively once it holds real Qt focus (confirmed via panels.py's
+        _ThemesTabBarInterceptor docstring: "keyboard — Left/Right, handled natively by
+        QTabBar.keyPressEvent"). This method only adds what Qt does NOT do natively: Down from
+        the tab bar into the "⚙" tab's rows, and row-to-row Up/Down/Left/Right/Enter once
+        inside — same shape as _handle_settings_arrows, but deliberately NOT reusing that
+        method: Stats has none of Settings' special cases (no folder list, no theme swatch
+        grid, no interval-row QLabels), so a fresh, narrower method avoids importing
+        irrelevant complexity.
+
+        The day-start-hour QSpinBox (this tab's last row, see stats_panel.py's
+        _build_options_tab) is deliberately NOT treated like a generic row member for
+        Up/Down/Right: those stay NATIVE (Qt's own QSpinBox increments/decrements the value on
+        Up/Down and moves the text cursor on Right) — this method does not intercept them at
+        all while focus is on the spinbox, simply returning False so Qt's own handling runs.
+        Left is the one exception, repurposed (Pryme's explicit call) to leave the spinbox
+        for the row above, exactly like every other row's Left-at-column-0 behavior — a
+        QSpinBox's native Left already just moves the text cursor, which is a paper cut
+        the user wouldn't reasonably want on a 2-digit field anyway.
+        No visual "you are here" marker/highlight is applied to the spinbox itself this pass —
+        Pryme's own read: moving keyboard focus into it already highlights its text natively,
+        which already answers "where is the cursor" without a second affordance."""
+        key = event.key()
+        if key not in (Qt.Key.Key_Up, Qt.Key.Key_Down, Qt.Key.Key_Left, Qt.Key.Key_Right,
+                       Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space):
+            return False
+        if self.panel_manager.active_full_panel() != "stats":
+            return False
+        stats_panel = getattr(self, 'stats_panel', None)
+        if stats_panel is None:
+            return False
+        tab_bar = stats_panel.tabs.tabBar()
+        focus = QApplication.focusWidget()
+
+        # Timeline's tassel: Space/Enter toggles the Streak<->Heatmap view directly while the
+        # tab bar holds focus and Timeline is current — see StatsPanel._on_tassel_clicked, the
+        # exact method the tassel's own mousePressEvent already calls, so keyboard and mouse
+        # activation share one code path. Must be checked BEFORE Qt's native tab-bar handling
+        # ever sees the key: Qt's own QTabBar treats Space/Enter as "activate the focused tab",
+        # a no-op since it's already the active tab, silently swallowing the key otherwise.
+        # Pryme's explicit design intent: this works identically whether Timeline was reached
+        # by keyboard (Left/Right) or mouse click — real Qt focus stays on the tab itself in
+        # both cases (TasselOverlay is Qt.NoFocus, confirmed — a tassel click cannot steal
+        # focus away from the tab bar), so checking `focus is tab_bar` covers both paths with
+        # no separate mouse-vs-keyboard branch needed.
+        if (focus is tab_bar and key in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space)
+                and tab_bar.tabText(tab_bar.currentIndex()) == "Timeline"):
+            stats_panel._on_tassel_clicked()
+            return True
+
+        if focus is tab_bar:
+            if key == Qt.Key.Key_Down and tab_bar.tabText(tab_bar.currentIndex()) == "⚙":
+                rows = self.panel_manager.stats_tab_button_rows()
+                if rows:
+                    self._focus_settings_control(rows[0][0])
+                return True
+            return False  # every other tab-bar key (incl. native Left/Right) is Qt's to handle
+
+        rows = self.panel_manager.stats_tab_button_rows()
+        if not rows:
+            return False
+        pos = next(((r, c) for r, row in enumerate(rows)
+                    for c, w in enumerate(row) if w is focus), None)
+        if pos is None:
+            return False  # focus is on some other control — leave it to Qt
+        row_i, col_i = pos
+
+        if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            if hasattr(focus, "click"):
+                focus.click()
+                return True
+            return False
+
+        if isinstance(focus, QSpinBox):
+            if key == Qt.Key.Key_Left:
+                if row_i > 0:
+                    self._focus_settings_control(rows[row_i - 1][0])
+                else:
+                    tab_bar.setFocus(Qt.FocusReason.TabFocusReason)
+                return True
+            if key == Qt.Key.Key_Right:
+                # Same reasoning as Left (repurposed — native Right just moves the text cursor
+                # on a 2-digit field, a paper cut, and never leaves the widget). Live-reported
+                # gap 2026-09-08: Right (and Tab, see below) were no-ops here, but Reset all
+                # stats sits one row below and should be reachable with either.
+                if row_i + 1 < len(rows):
+                    self._focus_settings_control(rows[row_i + 1][0])
+                return True
+            return False  # Up/Down/Space stay native (value edit)
+
+        if key == Qt.Key.Key_Down:
+            if row_i + 1 < len(rows):
+                self._focus_settings_control(rows[row_i + 1][0])
+            return True  # last row: swallow, so Down can't fall out of the grid
+        if key == Qt.Key.Key_Up:
+            if row_i > 0:
+                self._focus_settings_control(rows[row_i - 1][0])
+            else:
+                tab_bar.setFocus(Qt.FocusReason.TabFocusReason)
+            return True
         if key == Qt.Key.Key_Left and row_i == 0 and col_i == 0:
             tab_bar.setFocus(Qt.FocusReason.TabFocusReason)
             return True
@@ -4822,9 +4940,17 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         isn't the one-and-only obvious target for a typed number. Speed has no text field at
         all and is correctly never reached by this method.
 
-        Never fires while focus is ALREADY in the target QLineEdit (its own keys must win, not
-        get reinterpreted as "start a new redirect"), and only for genuinely bare digit keys —
-        a modified digit (Ctrl/Alt+digit) is left alone in case it means something else in the
+        Stats added 2026-09-08 (live design call, same "reuse what's already there" reasoning):
+        day_start_spin is a QSpinBox, not a QLineEdit, but QAbstractSpinBox exposes the same
+        selectAll()/sendEvent-of-the-triggering-key shape via its own internal line edit, so it
+        redirects identically — a typed digit while Stats' "⚙" tab is open and focus is
+        elsewhere selects the spinbox's current value and starts a fresh number, same as
+        Sleep/Sprint's duration field. Scoped to the "⚙" tab specifically (not "any Stats tab")
+        since the spinbox doesn't exist/isn't reachable from the other five tabs.
+
+        Never fires while focus is ALREADY in the target (its own keys must win, not get
+        reinterpreted as "start a new redirect"), and only for genuinely bare digit keys — a
+        modified digit (Ctrl/Alt+digit) is left alone in case it means something else in the
         future."""
         if event.modifiers() & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.AltModifier):
             return False
@@ -4835,6 +4961,9 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             "sleep": getattr(self.sleep_panel, "custom_sleep_input", None),
             "sprint": getattr(self.sprint_panel, "custom_sprint_input", None),
         }.get(panel_key)
+        if (target is None and panel_key == "stats"
+                and self.stats_panel.tabs.tabText(self.stats_panel.tabs.currentIndex()) == "⚙"):
+            target = getattr(self.stats_panel, "day_start_spin", None)
         if target is None:
             return False
         focus = QApplication.focusWidget()
@@ -4922,18 +5051,22 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             marker.keep_awake()
 
     def _kbdnav_active_panel_key(self) -> str | None:
-        """Which of the four keyboard-navigable panels (settings/speed/sleep/sprint) is
+        """Which of the five keyboard-navigable panels (settings/speed/sleep/sprint/stats) is
         currently open, or None if none is. Single source of truth for "which panel does the
         modality flag/marker/kbdnav property apply to right now" — added 2026-09-07 when
-        keyboard navigation extended from Settings alone to Speed/Sleep/Sprint. Every method
-        that used to hardcode `self.settings_panel`/`"settings"` (the panel-property target in
-        _set_keyboard_nav_active, the surface check in _on_kbdnav_cursor_poll) now asks this
-        instead, so adding a panel to the modality system means teaching THIS method about it,
-        not re-finding every hardcoded site."""
+        keyboard navigation extended from Settings alone to Speed/Sleep/Sprint, extended again
+        2026-09-08 to Stats. Every method that used to hardcode `self.settings_panel`/`"settings"`
+        (the panel-property target in _set_keyboard_nav_active, the surface check in
+        _on_kbdnav_cursor_poll) now asks this instead, so adding a panel to the modality system
+        means teaching THIS method about it, not re-finding every hardcoded site.
+
+        "stats" resolves to `self.stats_panel` via _kbdnav_panel_widget's f"{panel_key}_panel"
+        convention — MainWindow already has a `stats_panel` attribute (main_window_builders.py),
+        so no change was needed there."""
         if not hasattr(self, 'panel_manager'):
             return None
         panel = self.panel_manager.active_full_panel()
-        return panel if panel in ("settings", "speed", "sleep", "sprint") else None
+        return panel if panel in ("settings", "speed", "sleep", "sprint", "stats") else None
 
     def _kbdnav_panel_widget(self, panel_key: str):
         """The QWidget the `kbdnav` QSS property is set on for `panel_key` — settings_panel/
@@ -5113,9 +5246,9 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
     def clear_all_kbdnav_fill_active(self) -> None:
         """Force `kbdnav_fill_active` false on ALL FOUR kbdnav panels (settings/speed/sleep/
-        sprint), not just whichever one is currently open.
+        sprint/stats), not just whichever one is currently open.
 
-        Live regression, 2026-09-09: switching the style toggle from fill_highlight BACK to
+        Live regression, 2026-09-08: switching the style toggle from fill_highlight BACK to
         traveling left the fill rendering ON TOP OF the traveling marker in Settings (Speed/
         Sleep/Sprint reported correct — consistent with fill_highlight simply never having been
         tested there yet, not evidence the cause is Settings-specific). Root cause:
@@ -5126,15 +5259,19 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         persist on the widget instance across style changes. `_update_keyboard_marker_style`
         already had the mirror-image fix for the opposite direction (clearing the traveling
         marker on switching TO fill_highlight) but nothing symmetric for switching TO traveling.
-        Iterates all four panel keys (not just `_kbdnav_active_panel_key()`) because the stale
+        Iterates every panel key (not just `_kbdnav_active_panel_key()`) because the stale
         property could be sitting on a DIFFERENT panel than whichever one happens to be open
-        when the switch is made.
+        when the switch is made. "stats" added when Stats joined the modality system (same day,
+        later pass) — it has no fill-highlight tab-bar rule of its own yet (that's a visual-
+        styling concern deferred past this pass — see TODO.md), but `kbdnav_fill_active` itself
+        is the generic per-panel property every kbdnav panel shares, so it needs the same clear.
 
-        Also clears `kbdnav_tab_focused` (Settings only — the other three panels have no tab
-        bar) for the identical reason: it is likewise written only by the fill_highlight branch
-        and would otherwise survive a switch back to "traveling" stuck at "true", making the
-        selected tab show a stray fill alongside the real traveling marker."""
-        for panel_key in ("settings", "speed", "sleep", "sprint"):
+        Also clears `kbdnav_tab_focused` (Settings only — the other panels have no tab bar with
+        a fill-highlight rule wired to it yet) for the identical reason: it is likewise written
+        only by the fill_highlight branch and would otherwise survive a switch back to
+        "traveling" stuck at "true", making the selected tab show a stray fill alongside the
+        real traveling marker."""
+        for panel_key in ("settings", "speed", "sleep", "sprint", "stats"):
             panel = self._kbdnav_panel_widget(panel_key)
             if panel is not None:
                 self._set_kbdnav_fill_active_property(panel, False)
@@ -5661,6 +5798,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             if self._redirect_digit_to_panel_input(event):
                 return True
             if self._handle_flat_panel_arrows(event):
+                return True
+            if self._handle_stats_arrows(event):
                 return True
             if (hasattr(self, 'library_panel')
                     and event.key() in self.library_panel._LIST_KEY_HANDLED_KEYS):

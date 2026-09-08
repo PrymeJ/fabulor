@@ -4801,6 +4801,7 @@ def get_stats_stylesheet(theme_name="default"):
     tab_hover_text = t.get('tab_hover_text', t['text'])
     panel_dimmed_color = t.get('settings_theme_names_dimmed', t['accent_dark'])
     finished_color = t.get('stats_finished_title', t.get('accent_light', t.get('accent_dark', '#BA7BBA')))
+    kbdnav_fill_rgb = _kbdnav_fill_rgb(t)
 
     return f"""
         QWidget#book_detail_panel {{
@@ -4949,6 +4950,35 @@ def get_stats_stylesheet(theme_name="default"):
         QPushButton#pattern_button:hover {{
             border: 1px solid {t['accent']};
         }}
+        /* Keyboard-nav QSS for Stats (2026-09-08, first pass) — this stylesheet is a fully
+           standalone copy (see this function's own docstring), NOT built on
+           get_panel_base_stylesheet, so none of that function's kbdnav rules reach here for
+           free the way they do for settings/speed/sleep/sprint. Reported live: "Fill highlight
+           doesn't have any affect. It just doesn't appear" — the panel WAS correctly wired into
+           the modality system (kbdnav/kbdnav_fill_active properties get set), there was just no
+           QSS rule here to actually paint anything. Mirrors get_panel_base_stylesheet's
+           QPushButton:focus/:focus:hover pair exactly (same property gate, same color source).
+           Speed/Sleep/Sprint's own ramp-preset buttons have no equivalent in Stats — nothing
+           here plays that role, so no analogous "keep the existing color" carve-out is needed. */
+        QWidget#stats_panel[kbdnav="true"][kbdnav_fill_active="true"] QPushButton:focus {{
+            background-color: rgb({kbdnav_fill_rgb});
+        }}
+        QWidget#stats_panel[kbdnav="true"][kbdnav_fill_active="true"] QPushButton:focus:hover {{
+            background-color: rgb({kbdnav_fill_rgb});
+        }}
+        /* Traveling-style hover suppression, added proactively alongside the fill-highlight fix
+           above rather than waiting for a second live report of the same gap already fixed for
+           Settings/Sleep this session (see get_settings_stylesheet's identical rule and its own
+           comment for the full "why" — the traveling marker must be the ONLY thing claiming
+           "you are here" while the keyboard drives, or the marker and a stale mouse :hover can
+           disagree about which control Enter would act on). */
+        QWidget#stats_panel[kbdnav="true"][kbdnav_style="traveling"] QPushButton#pattern_button:hover {{
+            background: transparent;
+            border: 1px solid {t['accent_dark']};
+        }}
+        QWidget#stats_panel[kbdnav="true"][kbdnav_style="traveling"] QPushButton#pattern_button[selected="true"]:hover {{
+            background: {t['accent']};
+        }}
         QSpinBox {{
             background-color: {t['bg_dropdown']};
             color: {t['text']};
@@ -4959,8 +4989,14 @@ def get_stats_stylesheet(theme_name="default"):
             padding: 1px 2px;
             max-height: 18px;
             font-size: 12px;
-            margin-top: 10px;
         }}
+        /* `margin-top: 10px` removed 2026-09-08 (day_start_spin is the only QSpinBox in the
+           app). Dated to this rule's original 2026-04-25 commit, from when the spinbox sat
+           inline with its "Day starts at" label in one row — no comment ever explained it as
+           deliberate vertical-centering, and it happened to match settings_header's own
+           margin-top coincidentally. Once the label moved to its own header line above the
+           spinbox (matching every other setting on this tab), the two margins stacked and
+           doubled the visual gap between the header and the control — reported live. */
         QSpinBox::up-button, QSpinBox::down-button {{
             width: 16px;
             border: none;

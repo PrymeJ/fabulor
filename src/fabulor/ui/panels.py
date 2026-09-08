@@ -5,7 +5,7 @@ import os
 import pstats
 import time
 from PySide6.QtWidgets import QWidget, QLabel, QPushButton, QHBoxLayout, QVBoxLayout, QGridLayout
-from PySide6.QtWidgets import QLineEdit, QApplication, QListWidget
+from PySide6.QtWidgets import QLineEdit, QApplication, QListWidget, QAbstractSpinBox
 from PySide6.QtCore import QPoint, QRect, QPropertyAnimation, QAbstractAnimation, QTimer, Qt, QObject, QEvent
 from PySide6.QtGui import QCursor
 from .title_bar import ThemeItem
@@ -1581,7 +1581,12 @@ class PanelManager:
         logger.warning("[STREAK-PANEL-OPEN] _start_stats_entry: about to call refresh_current_tab")
         self.stats_panel.refresh_current_tab()
         self.stats_panel.raise_()
-        self._claim_panel_focus(self.stats_panel)
+        # panel_key="stats" (2026-09-08, first keyboard-nav pass): lands initial focus on
+        # Stats' own tab bar (via panel_tab_widgets("stats")'s first entry) instead of the
+        # panel root — same shape as Settings. Without this, _claim_panel_focus's default
+        # fallback grants the panel ROOT StrongFocus, which is what StatsPanel.keyPressEvent's
+        # own docstring documents as today's (pre-this-pass) behavior.
+        self._claim_panel_focus(self.stats_panel, panel_key="stats")
 
         self.stats_panel_animation.setStartValue(QPoint(-panel_w, sidebar_y))
         self.stats_panel_animation.setEndValue(QPoint(0, sidebar_y))
@@ -1756,6 +1761,12 @@ class PanelManager:
     def _close_stats_flow(self):
         if self.stats_panel_animation.state() == QAbstractAnimation.State.Running:
             return
+        # Stats never had this call — same regression Sleep/Speed/Sprint already had fixed
+        # (2026-09-07, see _clear_focus_marker_for_close's own docstring): without it, the
+        # marker keeps patrolling the last-focused Stats control for the whole slide-out
+        # animation and visibly spills onto the main window with it. Reported live 2026-09-08
+        # against Stats specifically, the first panel to add keyboard nav after that fix landed.
+        self._clear_focus_marker_for_close()
         self.stats_panel._cancel_reset_stats()
         panel_w = self.stats_panel.width()
         sidebar_y = 56
@@ -2512,10 +2523,13 @@ class PanelManager:
         mode/bulk buttons are plain QPushButton) are excluded, since swatch-grid keyboard nav is
         deferred to a later arrows+space design.
 
-        For settings, the tab bar itself is prepended as the first Tab stop (it lives on the
-        QTabWidget, not inside currentWidget(), so findChildren under the active tab would miss
-        it): Tab then cycles tab-bar -> the active tab's controls -> back to the tab bar, and the
-        traveling focus marker (ui/focus_marker.py) can trace the tab-header shape too."""
+        For settings/stats, the tab bar itself is prepended as the first Tab stop (it lives on
+        the QTabWidget, not inside currentWidget(), so findChildren under the active tab would
+        miss it): Tab then cycles tab-bar -> the active tab's controls -> back to the tab bar,
+        and the traveling focus marker (ui/focus_marker.py) can trace the tab-header shape too.
+        Stats added 2026-09-08 (first pass): it has its OWN QTabWidget instance
+        (`self.stats_panel.tabs`, separate from `self.main_window.tabs`), so it gets the same
+        tab-bar-as-first-stop treatment as settings, scoped to Stats' own tab bar."""
         if panel == "settings":
             root = self.main_window.tabs.currentWidget()
         elif panel == "speed":
@@ -2524,6 +2538,9 @@ class PanelManager:
             root = self.sleep_panel
         elif panel == "sprint":
             root = self.sprint_panel
+        elif panel == "stats":
+            stats_panel = getattr(self.main_window, 'stats_panel', None)
+            root = stats_panel.tabs.currentWidget() if stats_panel is not None else None
         else:
             return []
         if root is None:
@@ -2533,9 +2550,24 @@ class PanelManager:
             tab_bar = self.main_window.tabs.tabBar()
             if tab_bar.isVisible() and (tab_bar.focusPolicy() & Qt.FocusPolicy.TabFocus):
                 result.append(tab_bar)
+        elif panel == "stats":
+            tab_bar = self.main_window.stats_panel.tabs.tabBar()
+            if tab_bar.isVisible() and (tab_bar.focusPolicy() & Qt.FocusPolicy.TabFocus):
+                result.append(tab_bar)
         for w in root.findChildren(QWidget):
             if isinstance(w, ThemeItem):
                 continue  # deferred: theme swatches get their own arrows+space nav later
+            if isinstance(w.parentWidget(), QAbstractSpinBox):
+                # A QSpinBox's internal QLineEdit (its text-entry sub-widget) is itself
+                # TabFocus-eligible (Qt.FocusPolicy.WheelFocus, which includes TabFocus),
+                # findChildren(QWidget) walks INTO the spin box and picks it up as a SEPARATE
+                # Tab stop from the spin box itself — duplicating one control into two entries.
+                # Reported live 2026-09-08 (Stats' day_start_spin, the app's only QSpinBox):
+                # Tab appeared to be a no-op, actually landing on this invisible-from-the-
+                # spinbox-itself internal child instead of advancing to the next real control.
+                # The QSpinBox itself is the real, single Tab stop; its internal line-edit is
+                # never a separate one.
+                continue
             if not w.isVisibleTo(root):
                 continue
             if not w.isEnabled():
@@ -2682,6 +2714,59 @@ class PanelManager:
                             if lbl.isVisibleTo(mw) and lbl.isEnabled()]
             if interval_row:
                 rows.append(interval_row)
+        return rows
+
+    def stats_tab_button_rows(self) -> list:
+        """Stats' own equivalent of settings_tab_button_rows, scoped ONLY to the Settings ("⚙")
+        tab — first pass (2026-09-08), Overall/Timeline/Day/Week/Month have no arrow-navigable
+        button rows yet (Day/Week/Month's row-list keyboard nav is deferred to its own pass; see
+        TODO.md). Not folded into settings_tab_button_rows itself because that method reads
+        `self.main_window.tabs` specifically (Settings' own QTabWidget) and has Themes-specific
+        branching that doesn't apply here — Stats has a SEPARATE QTabWidget instance
+        (`self.stats_panel.tabs`) with no swatch-grid-shaped tab to special-case.
+
+        Same generic walk shape as settings_tab_button_rows (a QHBoxLayout of controls is one
+        row; a bare widget added straight to the tab's QVBoxLayout is its own one-item row;
+        membership is by focus policy, not by class), derived live from the layout for the same
+        reason: Stats' Settings tab hides/shows nothing dynamically today, but deriving from the
+        live layout costs nothing and keeps this correct if that ever changes.
+
+        `self.day_start_spin` (the day-start-hour QSpinBox) is the tab's LAST row as of this
+        pass (moved from first — see build_options_tab in stats_panel.py) — Pryme's call: it's
+        the hardest control here to give a clear keyboard-cursor indicator to, so it goes last
+        rather than being the first thing arrow navigation encounters."""
+        stats_panel = getattr(self.main_window, 'stats_panel', None)
+        if stats_panel is None:
+            return []
+        tabs = getattr(stats_panel, 'tabs', None)
+        if tabs is None or tabs.tabText(tabs.currentIndex()) != "⚙":
+            return []
+        root = tabs.currentWidget()
+        if root is None:
+            return []
+        layout = root.layout()
+        if layout is None:
+            return []
+
+        def _navigable(w) -> bool:
+            return (w is not None
+                    and w.isVisibleTo(root)
+                    and w.isEnabled()
+                    and bool(w.focusPolicy() & Qt.FocusPolicy.TabFocus))
+
+        rows = []
+        for i in range(layout.count()):
+            item = layout.itemAt(i)
+            sub = item.layout()
+            if sub is not None:
+                row = [w for j in range(sub.count())
+                       if _navigable(w := sub.itemAt(j).widget())]
+                if row:
+                    rows.append(row)
+                continue
+            w = item.widget()
+            if _navigable(w):
+                rows.append([w])
         return rows
 
     def flat_panel_rows(self, panel_key: str) -> list:
