@@ -105,6 +105,7 @@ focus_folder_list_dot: (Optional) Color of the small keyboard-cursor dot _Folder
 tags_kbdnav_ring: (Optional) Color of the keyboard-cursor focus ring on the tag detail panel's thumbnail grid (_ThumbFocusRing) and the color picker's neutral dot (_DotFocusRing — a colored dot's own ring instead matches that dot's own color). Fallback: accent_light.
 excluded_scrollbar: (Optional) Background of the Excluded Books popup's scrollbar handle (ui/excluded_books.py). Plain accent blended visually into ExcludedBooksSection's expand arrow directly above it (also accent) — falls back to a derived darkened tint (see _derive_subdued in excluded_books.py; desaturating was tried first and rejected live as muddy) rather than accent itself. Fallback: a darkened accent (same hue/saturation), not accent.
 cover_preview_bg:     Background color for book cover previews in the library. Fallback: bg_deep → #000000.
+kbdnav_fill_highlight: (Optional) Override for the "fill highlight" keyboard-nav marker style's focused-control background (see config.get_keyboard_marker_style, get_panel_base_stylesheet). Fallback: derived from accent via themes.derive_lighter_accent_rgb (lighten/desaturate). Added 2026-09-08 because no single derivation constant reads well across every theme's accent — some themes' accents are already near-white/high-value, others deeply saturated, so the derived fallback alone can't fit all of them; set this per-theme when the derived color doesn't work.
 
 GROUP 11 — PLACEHOLDER COVERS
 placeholder_cover:    Color for the Fabulor logo shown in the player cover area when a book has no cover art. Fallback chain: library_narrator → text → #888888.
@@ -3140,6 +3141,7 @@ THEMES = {
         "bookmark_icon":                 "#A2B2CC",
         "tassel_head":                   "#144486",
         "focus_marker_palette":         ["#22BBBE", "#E55656"],
+        "kbdnav_fill_highlight":         "#4D8790",
         "placeholder_cover":             "#8BA3CC",
         "carousel_bg":                   "#1E2229",
         "carousel_stripe":               "#17C424",
@@ -3976,7 +3978,15 @@ def get_panel_base_stylesheet(theme_name="default"):
     """
     t = _resolve_theme(theme_name)
     accent_style = _get_gradient_style(t, "accent", t['accent'])
-    kbdnav_fill_rgb = derive_lighter_accent_rgb(t['accent'])
+    # kbdnav_fill_highlight override (2026-09-08, Group 10 — see themes.py's own key-doc
+    # comment): no single derive_lighter_accent_rgb tuning reads well across every theme's
+    # accent (some are already near-white, others deeply saturated), so a theme can set this
+    # key (a plain hex string, matching every other override key's convention) to bypass the
+    # derivation entirely. Converted through _hex_to_rgb so the QSS rule's rgb(...) usage is
+    # identical regardless of which source won.
+    kbdnav_fill_override = t.get('kbdnav_fill_highlight')
+    kbdnav_fill_rgb = (_hex_to_rgb(kbdnav_fill_override) if kbdnav_fill_override
+                       else derive_lighter_accent_rgb(t['accent']))
 
     return f"""
         QWidget#settings_panel, QWidget#speed_panel, QWidget#sleep_panel, QWidget#sprint_panel {{
