@@ -181,6 +181,22 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
   out of scope, those aren't diacritic variants of Latin letters. Explicitly deferred until after
   this branch (`feature/traveling-focus-marker`) merges to main — not started.
 
+### Sleep/Sprint Disable-Cancel button blinks 2-3 times before disappearing
+- [2026-09-09] Raised live: clicking Sleep's "Disable" or Sprint's "Cancel" button on its own
+  panel (canceling the active timer/sprint via that button specifically) makes the button visibly
+  blink 2-3 times before it disappears — not smooth. Confirmed NOT a blur artifact: reproduces
+  identically with the transport-bar blur setting on Transparent (no blur at all), so this isn't
+  another instance of the `_grab_and_blur` hide/show class of bug documented elsewhere in
+  CLAUDE.md. No investigation done yet — not started. Two existing CLAUDE.md rules are the most
+  likely starting points given the symptom shape (a visible flash right around a button
+  disappearing/panel-closing sequence): "DO NOT try to fix a visible flash by reordering an
+  `emit()`/`.show()` pair within the same call stack" (the `sync_disable_button_visibility()`
+  mechanism that rule's own fix introduced) and the per-tick shared-widget-emit rule
+  (`sleep_timer_label`'s trailing-emit gating) — but neither has been checked against this
+  specific "blinks 2-3 times" symptom yet; this is a starting hypothesis, not a diagnosis.
+  Explicitly deferred until after this branch (`feature/traveling-focus-marker`) merges to main —
+  Pryme's own call, to keep this branch focused on keyboard-nav/confirmation work.
+
 ### Keyboard navigation — remaining surfaces
 Branch `feature/traveling-focus-marker` (not merged). The whole Settings panel (Themes, Look,
 Controls, Audio, Library) plus Speed, Sleep, and Sprint are all arrow-navigable as of
