@@ -2280,7 +2280,29 @@ class TransportBarBlurOverlay:
                     if not _w.testAttribute(Qt.WA_TransparentForMouseEvents):
                         _w.setAttribute(Qt.WA_TransparentForMouseEvents, True)
                         _mouse_blocked.append(_w)
+                # FOCUS-STRAND FIX (2026-09-09). Same shape as the cursor/mouse-transparency
+                # fixes above it: `panel.hide()` has a THIRD side effect beyond paint and
+                # hit-testing — per CLAUDE.md's "Keyboard focus ownership" rule (the
+                # hide()-before-clearFocus() Qt gotcha), hide() on a widget that still holds
+                # real Qt focus makes Qt fall back and silently RE-GRANT focus to whatever
+                # other StrongFocus candidate is around. `frost_panel_backdrop`'s one-shot
+                # call passes Book Detail explicitly as `panel` — and Book Detail has JUST
+                # been given real focus by _claim_panel_focus moments earlier, at open-start.
+                # Hiding it here mid-open silently kicks focus back onto whatever was focused
+                # in the UNDERLYING panel (Stats/Library) before Book Detail opened, firing a
+                # genuine FocusIn there. Live-reported 2026-09-09: with the traveling focus
+                # marker on, arrowing into a Stats tab, pressing Enter to open Book Detail, the
+                # marker's patrol animation restarted and bled onto the now-open Book Detail
+                # panel — this focus fallback is what supplied the genuine (not synthetic)
+                # FocusIn that re-triggered it, and since `panel.show()` below never re-claims
+                # focus on its own, it could be left stranded on the underlay's widget
+                # afterward too, not just flicker momentarily. Saving and restoring focus
+                # around the hide, exactly like the cursor override above it, closes both.
+                _focus_to_restore = QApplication.focusWidget()
                 panel.hide()
+                if (_focus_to_restore is not None
+                        and QApplication.focusWidget() is not _focus_to_restore):
+                    _focus_to_restore.setFocus(Qt.FocusReason.OtherFocusReason)
             src = self.main_window.grab(padded_rect)
             if panel_was_visible:
                 panel.show()
