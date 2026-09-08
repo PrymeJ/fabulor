@@ -31,6 +31,14 @@ from . import scrollbar_jump
 # render the placeholder in a fixed monochrome colour so it reads as intentionally greyed.
 _ARCHIVED_PLACEHOLDER_COLOR = "#888888"
 
+# StatsRowListView's keyboard/mouse hover-coexistence poll — see the design note in
+# StatsRowListView.__init__. Same values as app.py's _KBDNAV_CURSOR_POLL_MS/
+# _KBDNAV_CURSOR_JITTER_PX (the traveling-focus-marker's own, proven modality mechanism)
+# deliberately, not independently tuned — no reason for this list to disagree with the rest
+# of the app about how much cursor drift counts as "the user moved the mouse."
+_STATS_KBDNAV_HOVER_POLL_MS = 60
+_STATS_KBDNAV_HOVER_JITTER_PX = 3
+
 
 def _make_stats_snap(view):
     """Row-snap function factory for a StatsRowListView's scrollbar.
@@ -1266,8 +1274,81 @@ class StatsRowListView(QListView):
         self.viewport().setCursor(Qt.CursorShape.PointingHandCursor)
         self.viewport().setMouseTracking(True)
         self.entered.connect(self._on_entered)
+        # ── Keyboard/mouse hover coexistence ────────────────────────────────────────────
+        # Two prior attempts on this exact list both failed live and are worth recording so
+        # a THIRD ad hoc attempt doesn't get tried here again:
+        #   1. Exact QCursor.pos() equality against a last-seen value, refreshed on every
+        #      mouseMoveEvent. Reported live as not holding at all ("goes back to mouse...
+        #      more aggressively") — this desktop's cursor-position reporting is not reliably
+        #      exact-equal across two reads even with the physical mouse untouched (see
+        #      CLAUDE.md's Wayland/KDE cursor-and-hover quirks), so exact equality was a
+        #      near-always-true "moved" reading, close to no gate at all.
+        #   2. A flat time-based suppression window after every keyboard move, ignoring ALL
+        #      hover signals for ~150ms regardless of cursor position. Never actually
+        #      verified live before this rewrite — abandoned because it was still built on
+        #      the wrong primitive: reacting to `entered`, whose firing order relative to
+        #      keyPressEvent's own scrollTo() is a Qt internal, not a contract this code can
+        #      rely on.
+        # This is a genuine third design, not a third patch on the same idea: it PORTS
+        # MainWindow._kbdnav_cursor_poll (app.py) — the traveling-focus-marker's own
+        # keyboard/mouse modality mechanism, proven across Settings/Speed/Sleep/Sprint — to
+        # this row list. Same two ingredients, both load-bearing in the original:
+        #   - A JITTER-TOLERANT anchor comparison (_KBDNAV_CURSOR_JITTER_PX equivalent
+        #     below), not exact equality — attempt 1's actual bug, not the anchor concept.
+        #   - A POLL, not an event-driven check. Qt's `entered` signal is what fires the
+        #     synthetic re-evaluation in the first place (via keyPressEvent's scrollTo), so
+        #     gating logic that itself runs FROM `entered` inherits the exact ambiguity it's
+        #     trying to resolve — was this `entered` call real or a scrollTo echo? A poll
+        #     never asks that question: it independently samples QCursor.pos() on its own
+        #     clock, entirely decoupled from whatever triggered any specific `entered` call.
+        # `_on_entered` (below) is now GATED, not authoritative, while keyboard mode is
+        # active — mouse hover can only reclaim `_hovered_row` via the poll finding a
+        # genuine, sustained mouse position over a REAL, DIFFERENT row (mirrors
+        # _kbdnav_cursor_poll's _cursor_over_navigable_control check, not just raw movement).
+        self._kbdnav_hover_active = False
+        self._kbdnav_hover_anchor: QPoint | None = None
+        self._kbdnav_hover_poll = QTimer(self)
+        self._kbdnav_hover_poll.setInterval(_STATS_KBDNAV_HOVER_POLL_MS)
+        self._kbdnav_hover_poll.timeout.connect(self._on_kbdnav_hover_poll)
 
-    def _on_entered(self, index: QModelIndex):
+    def _enter_kbdnav_hover_mode(self):
+        """Call at the START of every keyboard-driven `_hovered_row` change (Up/Down/PgUp/
+        PgDn/Home/End in keyPressEvent, and _enter_from_tab_bar). Arms the anchor at the
+        cursor's CURRENT position — not wherever it was on some earlier keypress — so a
+        cursor that has already drifted (but not far enough to reclaim) doesn't get a free
+        pass on the next comparison. Idempotent: repeated keyboard presses just keep
+        re-anchoring to "here, right now," which is exactly what should happen."""
+        self._kbdnav_hover_active = True
+        self._kbdnav_hover_anchor = QCursor.pos()
+        if not self._kbdnav_hover_poll.isActive():
+            self._kbdnav_hover_poll.start()
+
+    def _exit_kbdnav_hover_mode(self):
+        self._kbdnav_hover_active = False
+        self._kbdnav_hover_anchor = None
+        self._kbdnav_hover_poll.stop()
+
+    def _on_kbdnav_hover_poll(self):
+        """Hand hover back to the mouse only once it has both moved past jitter tolerance
+        AND is genuinely resting over a real, different row — mirrors
+        MainWindow._on_kbdnav_cursor_poll's own two-part test (jitter, then
+        _cursor_over_navigable_control) so "moved a couple px across dead space" can't
+        silently steal the highlight back mid-arrow-press."""
+        anchor = self._kbdnav_hover_anchor
+        if anchor is None:
+            self._kbdnav_hover_poll.stop()
+            return
+        pos = QCursor.pos()
+        if (abs(pos.x() - anchor.x()) < _STATS_KBDNAV_HOVER_JITTER_PX
+                and abs(pos.y() - anchor.y()) < _STATS_KBDNAV_HOVER_JITTER_PX):
+            return  # hasn't left its resting spot yet
+        viewport_pos = self.viewport().mapFromGlobal(pos)
+        if not self.viewport().rect().contains(viewport_pos):
+            return  # moved, but off this list entirely — keyboard keeps the highlight
+        index = self.indexAt(viewport_pos)
+        if not index.isValid():
+            return  # moved, but over dead space within the viewport — same reasoning
+        self._exit_kbdnav_hover_mode()
         delegate = self.itemDelegate()
         if delegate is not None:
             prev = delegate._hovered_row
@@ -1275,18 +1356,76 @@ class StatsRowListView(QListView):
             if prev != index.row():
                 self.viewport().update()
 
-    def leaveEvent(self, event):
+    def _on_entered(self, index: QModelIndex):
+        # Real Qt signal — fires on both genuine mouse movement AND a scrollTo-triggered
+        # synthetic re-evaluation, and there is no reliable way to tell those apart from
+        # inside this handler (see the design note in __init__). While keyboard mode is
+        # active, this is therefore SILENCED entirely; _on_kbdnav_hover_poll is the only
+        # path that can hand hover back to the mouse. Once keyboard mode is off, this is
+        # authoritative again, same as it always was.
+        if self._kbdnav_hover_active:
+            return
         delegate = self.itemDelegate()
-        if delegate is not None and delegate._hovered_row != -1:
-            delegate.set_hovered_row(-1)
-            self.viewport().update()
+        if delegate is not None:
+            prev = delegate._hovered_row
+            delegate.set_hovered_row(index.row())
+            if prev != index.row():
+                self.viewport().update()
+
+    def mouseMoveEvent(self, event):
+        # The viewport's PointingHandCursor (set in __init__, see that comment for why it's on
+        # the viewport rather than the row widgets themselves) was UNCONDITIONAL — live-reported
+        # 2026-09-08 as a regression, but confirmed on inspection to be pre-existing (916e125,
+        # predates this session): `entered` only fires while hovering a VALID row, so it was
+        # always correct as long as the viewport was never much taller than its real content.
+        # This pass's row-list keyboard-nav didn't create that mismatch, but it's what made the
+        # mismatch newly visible/reportable — a short list (few sessions that day) with the
+        # "Finished this X" carousel hidden lets the list's stretch=1 layout allocation run well
+        # past the last real row, and the hand cursor stayed pointing-hand over all of that dead
+        # space with clicks silently doing nothing there. Qt's own `entered` signal has no
+        # counterpart for "now hovering nothing" to hook the reverse transition onto, so this
+        # explicit mouseMoveEvent override checks indexAt() directly and swaps to the plain
+        # arrow cursor over empty space, restoring the hand only when back over a real row.
+        # NOTE: cursor-shape sync deliberately bypasses keyboard-hover-mode entirely — that
+        # mode only guards _hovered_row (the fill highlight) from a scrollTo's synthetic hover
+        # echo; the cursor glyph itself has no such conflict and should always track whatever
+        # is really under the pointer, keyboard mode or not.
+        self._sync_cursor_to_index(self.indexAt(event.pos()))
+        super().mouseMoveEvent(event)
+
+    def _sync_cursor_to_index(self, index: QModelIndex):
+        self.viewport().setCursor(
+            Qt.CursorShape.PointingHandCursor if index.isValid() else Qt.CursorShape.ArrowCursor)
+
+    def leaveEvent(self, event):
+        # Must respect keyboard-hover mode exactly like showEvent/_on_entered do, for the same
+        # reason: this fires on EVERY blur-grab hide tick (5-15x/sec while blur is enabled), not
+        # only on a genuine mouse-leaves-the-widget event. Blanking _hovered_row here
+        # unconditionally would erase the keyboard-selected row on every single tick while
+        # keyboard mode is active, with showEvent (now correctly gated, see its own comment)
+        # no longer there to restore it — the highlight would flicker to nothing or vanish
+        # outright for as long as blur keeps grabbing. A REAL leave (the user's cursor actually
+        # exiting the widget) is still handled correctly: it's exactly what
+        # _on_kbdnav_hover_poll's own viewport().rect().contains() check is for — the poll will
+        # notice the cursor left and clear keyboard mode on its own next tick.
+        if not self._kbdnav_hover_active:
+            delegate = self.itemDelegate()
+            if delegate is not None and delegate._hovered_row != -1:
+                delegate.set_hovered_row(-1)
+                self.viewport().update()
+        # NOT an unconditional PointingHandCursor reset (that was the original bug's twin: a
+        # widget-visibility hide/show cycle — see showEvent's HOVER-TRACE comment below — fires
+        # leaveEvent on every hide, and blindly restoring the hand here would repaint the wrong
+        # cursor over dead space on every blur-grab cycle even after the mouseMoveEvent fix above.
+        # Empty-space leaves should land on the arrow, same as everywhere else in dead space.
+        self._sync_cursor_to_index(QModelIndex())
         super().leaveEvent(event)
 
     def showEvent(self, event):
         super().showEvent(event)
         # Re-derive hover from the CURRENT cursor position instead of waiting for
         # entered — the transport-bar blur (TransportBarBlurOverlay._grab_and_blur)
-        # hides then shows this panel ~5x/sec while blur is enabled and any panel
+        # hides then shows this panel ~5-15x/sec while blur is enabled and any panel
         # is open (see transport_bar_blur.py). Hiding a widget correctly delivers a
         # real leaveEvent (Qt recomputes what's under the cursor), which clears the
         # hover fill; but re-showing only fires showEvent/enterEvent, NOT Qt's
@@ -1300,11 +1439,35 @@ class StatsRowListView(QListView):
         # in between. Fix: ask indexAt() directly what's under the cursor right
         # now, the same query a real mouse-move would trigger — restores the
         # correct hover immediately instead of leaving it stranded.
+        #
+        # MUST respect keyboard-hover mode exactly like _on_entered does (added
+        # 2026-09-08, corrected same day): this handler fires on EVERY blur-grab
+        # hide/show tick — 5-15x/sec, unconditionally, with zero relationship to real
+        # user input — not just on a genuine app-level show. An earlier version of this
+        # fix called _exit_kbdnav_hover_mode() here unconditionally, reasoning it was
+        # "unrelated to keyboard state" — live-reported as the opposite of that:
+        # "the problem is the blur. If I turn it off, I can navigate there with
+        # arrows. If it is on, mouse always wins." With blur on, every one of those
+        # 5-15 ticks/sec forcibly kicked keyboard nav back to wherever the mouse
+        # physically rested, regardless of how recently or deliberately an arrow key
+        # had just moved the highlight — the poll (_on_kbdnav_hover_poll) never got a
+        # chance to be the sole authority it's designed to be, because this handler
+        # was constantly overriding it via a completely unrelated trigger. Skipping
+        # entirely while keyboard mode is active leaves the poll as the ONLY path
+        # that can hand control back to real mouse movement, same as _on_entered.
+        if self._kbdnav_hover_active:
+            return
         pos = self.viewport().mapFromGlobal(QCursor.pos())
         if self.viewport().rect().contains(pos):
             index = self.indexAt(pos)
+            self._sync_cursor_to_index(index)
             if index.isValid():
-                self._on_entered(index)
+                delegate = self.itemDelegate()
+                if delegate is not None:
+                    prev = delegate._hovered_row
+                    delegate.set_hovered_row(index.row())
+                    if prev != index.row():
+                        self.viewport().update()
 
     def mousePressEvent(self, event):
         if event.button() in (Qt.MouseButton.LeftButton, Qt.MouseButton.RightButton):
@@ -1361,6 +1524,7 @@ class StatsRowListView(QListView):
             else:
                 new_row = current + (1 if key == Qt.Key.Key_Down else -1)
             new_row = max(0, min(row_count - 1, new_row))
+            self._enter_kbdnav_hover_mode()
             if delegate is not None and new_row != current:
                 delegate.set_hovered_row(new_row)
                 self.viewport().update()
@@ -1384,6 +1548,7 @@ class StatsRowListView(QListView):
                 page = max(1, self.viewport().height() // row_h)
                 new_row = current + (page if key == Qt.Key.Key_PageDown else -page)
             new_row = max(0, min(row_count - 1, new_row))
+            self._enter_kbdnav_hover_mode()
             if delegate is not None and new_row != current:
                 delegate.set_hovered_row(new_row)
                 self.viewport().update()
@@ -1436,6 +1601,15 @@ class StatsRowListView(QListView):
             return
         row = index.row() if index.isValid() else (0 if model.rowCount() else -1)
         if row >= 0:
+            # Entering keyboard-hover mode HERE, not just in keyPressEvent's Up/Down/etc.
+            # branches, matters: the very first subsequent Up/Down press reads
+            # delegate._hovered_row (set below) as `current` and calls _enter_kbdnav_hover_mode
+            # again anyway, but between THIS seed and that first press, mouse movement should
+            # already be treated as "the keyboard cursor was just placed here" rather than free
+            # to silently reclaim before the user has pressed anything — i.e. the SAME cursor
+            # position used to seed this row must be the anchor, not a stale one from whenever
+            # keyboard mode last exited.
+            self._enter_kbdnav_hover_mode()
             delegate.set_hovered_row(row)
             self.viewport().update()
             self.scrollTo(model.index(row, 0), QAbstractItemView.ScrollHint.EnsureVisible)
@@ -4523,6 +4697,23 @@ class StatsPanel(QWidget):
 
     def _on_tab_changed(self, index: int):
         self._invalidate_period_cache()
+        # Qt's own QStackedWidget hands real keyboard focus to the newly-current page widget
+        # on every tab switch — including a MOUSE click on the tab itself, not just a keyboard
+        # Left/Right (which never triggers this: QTabBar.keyPressEvent handles Left/Right
+        # natively and keeps focus on the tab bar the whole time — see the _NAV_METHODS comment
+        # block below). Every Stats tab page (stats_time_tab et al.) is a plain, NoFocus
+        # QWidget, so focus lands there anyway even though nothing can navigate TO or FROM it —
+        # QWidget.setFocus() succeeds unconditionally when called directly by Qt internals, it
+        # only refuses external focus-chain entry (Tab/click) into a NoFocus widget. Confirmed
+        # live 2026-09-08 via [STATS-FOCUS-TRACE]: clicking a tab (not typing) left
+        # QApplication.focusWidget() permanently on the page container, and every subsequent
+        # arrow press was silently dropped by _handle_stats_arrows (focus matched neither the
+        # tab bar nor any button row, so `pos is None` -> return False) with nothing left to
+        # recover it except Tab. Reclaiming the tab bar here — unconditionally, since a tab
+        # switch is the ONE moment we know for certain no row/spinbox/list-view content inside
+        # the new tab has been deliberately focused yet — closes the gap at its source instead
+        # of adding a global safety net.
+        self.tabs.tabBar().setFocus(Qt.FocusReason.OtherFocusReason)
         # Switching INTO the opaque Timeline tab makes the blurred transport
         # region invisible; switching OUT of it makes it visible again. Tell the
         # overlay so it can drop / rebuild its cached frame instead of either
