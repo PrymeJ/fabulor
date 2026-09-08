@@ -4429,11 +4429,30 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             return True
 
         if focus is tab_bar:
-            if key == Qt.Key.Key_Down and tab_bar.tabText(tab_bar.currentIndex()) == "⚙":
-                rows = self.panel_manager.stats_tab_button_rows()
-                if rows:
-                    self._focus_settings_control(rows[0][0])
-                return True
+            if key == Qt.Key.Key_Down:
+                current_tab = tab_bar.tabText(tab_bar.currentIndex())
+                if current_tab == "⚙":
+                    rows = self.panel_manager.stats_tab_button_rows()
+                    if rows:
+                        self._focus_settings_control(rows[0][0])
+                    return True
+                # Day/Week/Month's row list (2026-09-09 pass) — a single Tab-stop, same shape
+                # as every other "enter this widget, it owns its own internal navigation from
+                # here" case in this app (folder_list_widget, swatch_box). _enter_from_tab_bar
+                # seeds the keyboard cursor from the mouse's CURRENT hover position (or row 0
+                # if the mouse isn't over any row) before real focus lands, so the highlight is
+                # never missing on arrival — Pryme's own framing: "down arrow goes to the first
+                # row, highlights using the current mouse hover".
+                list_view = {
+                    "Day": getattr(stats_panel, '_day_list_view', None),
+                    "Week": getattr(stats_panel, '_week_list_view', None),
+                    "Month": getattr(stats_panel, '_month_list_view', None),
+                }.get(current_tab)
+                if list_view is not None:
+                    list_view._enter_from_tab_bar()
+                    list_view.setFocus(Qt.FocusReason.TabFocusReason)
+                    return True
+                return True  # Overall/Timeline: no down-target this pass — swallow, no-op
             return False  # every other tab-bar key (incl. native Left/Right) is Qt's to handle
 
         rows = self.panel_manager.stats_tab_button_rows()
@@ -5497,7 +5516,17 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         widget — except swatch_box gets no marker-family affordance at all, not even the
         fill-focus treatment folder_list_widget/excluded_popup get (_FILL_FOCUS_OBJECT_NAMES),
         since a real per-swatch hover state already exists and a second overlay on top of it
-        would be redundant."""
+        would be redundant.
+
+        Stats' Day/Week/Month row lists (StatsRowListView) get the identical exclusion,
+        2026-09-09, for the identical reason — live design call: "no traveling marker here...
+        only the same mouse highlight style." Once the row list gained real StrongFocus (for
+        Up/Down row-cursor movement — see StatsRowListView.keyPressEvent), it became a real Tab
+        stop that panel_tab_widgets("stats")'s generic findChildren walk picks up automatically,
+        which made the marker try to trace it — same shape as swatch_box's own gap before its
+        exclusion was added. The row's own hover-style highlight (delegate._hovered_row, shared
+        between mouse and keyboard — see StatsRowListView's own docstring) is the sole "where am
+        I" affordance here, same principle as swatch_box/folder_list_widget above."""
         if focus is None:
             return False
         panel_key = self._kbdnav_active_panel_key()
@@ -5507,6 +5536,13 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             if focus is self.tabs.tabBar():
                 return True
             if focus is self.theme_manager.swatch_box:
+                return False
+        if panel_key == "stats":
+            stats_panel = getattr(self, 'stats_panel', None)
+            if stats_panel is not None and focus in (
+                    getattr(stats_panel, '_day_list_view', None),
+                    getattr(stats_panel, '_week_list_view', None),
+                    getattr(stats_panel, '_month_list_view', None)):
                 return False
         return focus in self.panel_manager.panel_tab_widgets(panel_key)
 

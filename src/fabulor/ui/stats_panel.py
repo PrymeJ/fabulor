@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTabWidget, QLabel,
     QGridLayout, QSpinBox, QScrollArea, QPushButton, QApplication,
-    QListView, QStyledItemDelegate, QStyle, QStyleOptionSpinBox,
+    QListView, QStyledItemDelegate, QStyle, QStyleOptionSpinBox, QAbstractItemView,
 )
 from PySide6.QtCore import (
     Qt, QRect, QRectF, Signal, QSize, QPoint, QPointF, QEvent, QThreadPool, QTimer, Property,
@@ -1233,7 +1233,13 @@ class StatsRowListView(QListView):
         # behaves the same way Week/Month's scrollbar does.
         self.setVerticalScrollMode(QListView.ScrollMode.ScrollPerPixel)
         self.setSelectionMode(QListView.SelectionMode.NoSelection)
-        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)  # BookDayRow was never focusable either
+        # Keyboard-navigable as of 2026-09-09 (was NoFocus, "BookDayRow was never focusable
+        # either") — Day/Week/Month's row-list keyboard-nav pass. Up/Down move the SAME
+        # `_hovered_row` mouse hover already uses (see keyPressEvent below), so "keyboard
+        # cursor" and "mouse hover" are one shared concept, not two that could disagree —
+        # explicit live design call: most-recent-input-wins with zero reconciliation code,
+        # same principle as Tags' ScrollHoverTracker/Library's own hover mechanism.
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setFrameShape(QListView.Shape.NoFrame)
         self.setEditTriggers(QListView.EditTrigger.NoEditTriggers)
         # BookDayRow sets the hand cursor on each ROW widget (stats_panel.py,
@@ -1298,6 +1304,130 @@ class StatsRowListView(QListView):
                     self.row_clicked.emit(row_data)
                     return
         super().mousePressEvent(event)
+
+    def _owning_tab_bar(self):
+        """The QTabBar of the nearest ancestor QTabWidget (Stats' own `tabs`) — walks the
+        parent chain rather than hardcoding its depth, since this view sits several layout
+        containers below it (StatsRowListView -> QWidget -> QStackedWidget -> QTabWidget).
+        Used to exit the list back to the tab bar (Up at row 0, Home... no — see keyPressEvent
+        for which keys use this) without this view needing a stored panel/tabs reference."""
+        w = self.parentWidget()
+        while w is not None and not isinstance(w, QTabWidget):
+            w = w.parentWidget()
+        return w.tabBar() if w is not None else None
+
+    def keyPressEvent(self, event):
+        key = event.key()
+        model = self.model()
+        row_count = model.rowCount() if model is not None else 0
+        # Tab/Shift+Tab and Up-at-the-first-row all exit back to the tab bar — deliberately
+        # NOT routed through the generic Tab-cycle (panel_tab_widgets excludes this view, see
+        # that method's own comment) or Down's own boundary handling (which stays a no-op on
+        # the LAST row — explicit live design call, no wrap). Live design call: "Up arrow or
+        # Shift+Tab from the first row should go up to tab" — Tab (forward) goes there too,
+        # for the same reason Down has nowhere further to go past this view: there is no
+        # "next" widget after the row list in this tabbed layout worth landing on (a plain Tab
+        # press before this fix landed on the main window's cover-art carousel instead, live-
+        # reported as wrong).
+        at_first_row = row_count == 0 or (self.itemDelegate() is not None
+                                           and self.itemDelegate()._hovered_row <= 0)
+        if (key in (Qt.Key.Key_Tab, Qt.Key.Key_Backtab)
+                or (key == Qt.Key.Key_Up and at_first_row)):
+            tab_bar = self._owning_tab_bar()
+            if tab_bar is not None:
+                tab_bar.setFocus(Qt.FocusReason.TabFocusReason)
+            event.accept()
+            return
+        if key in (Qt.Key.Key_Up, Qt.Key.Key_Down) and row_count:
+            delegate = self.itemDelegate()
+            current = delegate._hovered_row if delegate is not None else -1
+            if current < 0:
+                # Entering with no row highlighted at all (shouldn't normally happen — see
+                # _enter_from_tab_bar, which always seeds row 0 before focus lands here — but
+                # guard it the same way anyway): land on the first/last row rather than
+                # stepping past the list's edge.
+                new_row = 0 if key == Qt.Key.Key_Down else row_count - 1
+            else:
+                new_row = current + (1 if key == Qt.Key.Key_Down else -1)
+            new_row = max(0, min(row_count - 1, new_row))
+            if delegate is not None and new_row != current:
+                delegate.set_hovered_row(new_row)
+                self.viewport().update()
+            self.scrollTo(model.index(new_row, 0), QAbstractItemView.ScrollHint.EnsureVisible)
+            event.accept()
+            return
+        if key in (Qt.Key.Key_PageUp, Qt.Key.Key_PageDown, Qt.Key.Key_Home,
+                   Qt.Key.Key_End) and row_count:
+            delegate = self.itemDelegate()
+            current = delegate._hovered_row if delegate is not None else 0
+            current = max(0, current)
+            if key == Qt.Key.Key_Home:
+                new_row = 0
+            elif key == Qt.Key.Key_End:
+                new_row = row_count - 1
+            else:
+                # A page is however many whole rows currently fit in the viewport — same
+                # "visible extent" a real scrollbar page-step already uses, so PgUp/PgDn move
+                # by the same amount a click in the scrollbar's track would scroll.
+                row_h = max(1, self.sizeHintForRow(0))
+                page = max(1, self.viewport().height() // row_h)
+                new_row = current + (page if key == Qt.Key.Key_PageDown else -page)
+            new_row = max(0, min(row_count - 1, new_row))
+            if delegate is not None and new_row != current:
+                delegate.set_hovered_row(new_row)
+                self.viewport().update()
+            self.scrollTo(model.index(new_row, 0), QAbstractItemView.ScrollHint.EnsureVisible)
+            event.accept()
+            return
+        # Enter/Space/Alt+Enter/Shift+Enter all open the highlighted row's book detail —
+        # explicit live design call (2026-09-09), same single action every combination maps
+        # to (mirrors mousePressEvent's own left-click-or-right-click-both-open-detail shape,
+        # just for the keyboard). Deliberately does NOT special-case Alt/Shift as "different"
+        # actions the way Library does (Alt+Enter there is specifically distinguished FROM a
+        # bare Enter, which does something else) — Stats has only one action per row, so all
+        # four keys converge on it.
+        if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space):
+            delegate = self.itemDelegate()
+            row = delegate._hovered_row if delegate is not None else -1
+            if 0 <= row < row_count:
+                row_data = model.index(row, 0).data(ROLE_ROW_DATA)
+                if row_data is not None:
+                    self.row_clicked.emit(row_data)
+            event.accept()
+            return
+        # Left/Right must propagate up to StatsPanel.keyPressEvent, which already owns
+        # period-cycling (_NAV_METHODS) for the current tab — NOT delegated to super(): a
+        # direct synthetic-event test confirmed QAbstractItemView's own default keyPressEvent
+        # silently CONSUMES Key_Left (presumably native horizontal-scroll/focus-chain handling,
+        # even under NoSelection mode) rather than ignoring it, so routing through super() here
+        # would swallow Left before it ever reached the parent. Explicitly ignore() instead —
+        # confirmed via the same test that this correctly lets Qt's own propagation carry the
+        # event up the parent chain unmodified, exactly like any other unhandled key on a plain
+        # QWidget. Every OTHER key this method doesn't recognize (there are none expected in
+        # practice, since the eventFilter this runs under only forwards keys _handle_stats_
+        # arrows and this method between them already claim) also falls through to ignore()
+        # rather than super(), for the same reason.
+        event.ignore()
+
+    def _enter_from_tab_bar(self) -> None:
+        """Called when Down/Tab moves real keyboard focus from the tab bar onto this list
+        (see MainWindow._handle_stats_arrows). Seeds `_hovered_row` to whatever the mouse is
+        CURRENTLY resting on (matching mouse hover exactly, per the live design call — "down
+        arrow goes to the first row, highlights using the current mouse hover"), or row 0 if
+        the mouse isn't over any row (e.g. it's outside the panel, or resting on the header/
+        scrollbar) — never leaves the list with nothing highlighted, since Up/Down would then
+        have no current position to step from."""
+        pos = self.viewport().mapFromGlobal(QCursor.pos())
+        index = self.indexAt(pos) if self.viewport().rect().contains(pos) else QModelIndex()
+        delegate = self.itemDelegate()
+        model = self.model()
+        if delegate is None or model is None:
+            return
+        row = index.row() if index.isValid() else (0 if model.rowCount() else -1)
+        if row >= 0:
+            delegate.set_hovered_row(row)
+            self.viewport().update()
+            self.scrollTo(model.index(row, 0), QAbstractItemView.ScrollHint.EnsureVisible)
 
     def wheelEvent(self, event):
         # Every row is a fixed, uniform _STATS_ROW_HEIGHT (StatsRowDelegate.sizeHint), so the

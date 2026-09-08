@@ -5,11 +5,12 @@ import os
 import pstats
 import time
 from PySide6.QtWidgets import QWidget, QLabel, QPushButton, QHBoxLayout, QVBoxLayout, QGridLayout
-from PySide6.QtWidgets import QLineEdit, QApplication, QListWidget, QAbstractSpinBox
+from PySide6.QtWidgets import QLineEdit, QApplication, QListWidget, QAbstractSpinBox, QScrollArea
 from PySide6.QtCore import QPoint, QRect, QPropertyAnimation, QAbstractAnimation, QTimer, Qt, QObject, QEvent
 from PySide6.QtGui import QCursor
 from .title_bar import ThemeItem
 from .transport_bar_blur import TransportBarBlurOverlay, panel_rect_in_common_space
+from .stats_panel import StatsRowListView
 
 logger = logging.getLogger(__name__)
 
@@ -270,6 +271,20 @@ class PanelManager:
         # no-underlay cases stay explicit rather than silently falling through
         # generic panel handling.
         self._book_detail_underlay: str | None = None
+        # The widget that held real Qt focus at the moment Book Detail opened, so closing it
+        # (Esc/close button) can hand focus back to the EXACT control the user was on — added
+        # 2026-09-09 for Stats' Day/Week/Month row lists (live report: Esc from Book Detail
+        # landed on the tab bar instead of the book's own row). Was previously a known,
+        # explicitly-flagged gap (see _on_book_detail_hidden's own old comment, now replaced):
+        # focus was released but never handed back to the underlay at all, leaving Qt's own
+        # focus-fallback behavior to land wherever it pleased — consistent with the tab-bar
+        # symptom, since the tab bar is the underlay's own first StrongFocus candidate. A widget
+        # reference (not a row index) so it works for ANY future underlay's focus target, not
+        # just Stats' row lists specifically. Consuming read, same shape as _book_detail_underlay
+        # — a stale reference (the widget's own panel closed/rebuilt meanwhile) must never
+        # survive into the next Book Detail open, and a deleted-widget guard is required at the
+        # consuming site since Qt C++ objects can be destroyed between the two events.
+        self._book_detail_return_focus_widget = None
         # Set by reclip_visual_area_for_layout_change when the layout reflows
         # underneath an open panel; consumed once by
         # _resume_blur_after_book_detail to decide whether the visual_area blur
@@ -1892,6 +1907,7 @@ class PanelManager:
         # clobber a live value. active_full_panel() already excludes mid-close panels
         # via _is_closing, which is exactly the state we must not "restore" blur to.
         self._book_detail_underlay = self.active_full_panel()
+        self._book_detail_return_focus_widget = QApplication.focusWidget()
         self._complete_main_fade()
         # Snapshot of the library's current search text, so tag chips (library context only)
         # can tell whether a given tag is already the active filter and render inert. A
@@ -1997,9 +2013,19 @@ class PanelManager:
             pass
         self.book_detail_panel.hide()
         self._release_panel_focus(self.book_detail_panel)
-        # NOTE: focus is released but never handed back to the still-open underlay,
-        # leaving that panel with no focus owner. Known, deliberately out of scope for
-        # this blur change — recorded in DEBT_INVENTORY.md for the Stats keyboard-nav pass.
+        # Hand focus back to whatever specifically held it when Book Detail opened —
+        # 2026-09-09, closing the gap this comment used to flag as known/deferred (see
+        # _book_detail_return_focus_widget's own docstring in __init__ for the full history).
+        # Consuming read; a deleted C++ widget (its panel closed or rebuilt while Book Detail
+        # was open) raises RuntimeError on ANY method call, not just a specific one, so the
+        # guard is a broad try/except rather than an isinstance/None check alone.
+        widget, self._book_detail_return_focus_widget = self._book_detail_return_focus_widget, None
+        if widget is not None:
+            try:
+                if widget.isVisible():
+                    widget.setFocus(Qt.FocusReason.OtherFocusReason)
+            except RuntimeError:
+                pass  # underlying C++ object was destroyed — nothing to restore focus to
         self._resume_blur_after_book_detail()
         self._notify_panel_closed()
 
@@ -2557,6 +2583,43 @@ class PanelManager:
         for w in root.findChildren(QWidget):
             if isinstance(w, ThemeItem):
                 continue  # deferred: theme swatches get their own arrows+space nav later
+            if panel == "stats" and isinstance(w, QScrollArea):
+                # Overall's stat-grid QScrollArea (and any other purely structural scroll
+                # container in Stats) is excluded 2026-09-09 — live-reported root cause of
+                # "tab twice from Overall reaches the cover-art carousel": these containers are
+                # real StrongFocus-eligible widgets with no visible focus indicator of their own
+                # (no highlight, nothing painted), so landing on one via Tab was invisible —
+                # and once real Qt focus was ON one, a SECOND Tab press did not reliably route
+                # back through this hand-rolled cycle the way a plain QWidget/QPushButton does,
+                # instead falling through to Qt's own native Tab-order chain, which reached a
+                # completely unrelated MainWindow-level widget (the carousel). No QScrollArea in
+                # Stats is ever meant to be a real keyboard stop — Day/Week/Month's actual
+                # content lives in StatsRowListView (excluded just below for its own, related
+                # reason), not the scroll container itself.
+                continue
+            if isinstance(w, StatsRowListView):
+                # Day/Week/Month's row list is deliberately OUT of the generic Tab-cycle,
+                # 2026-09-09 — same shape as LibraryPanel's own QListView, which was removed
+                # from ITS Tab cycle for the identical reason (2026-07-10, see that method's
+                # own comment): before this exclusion, Tab from the row list picked up
+                # whatever OTHER real widget findChildren happened to find next in the tab
+                # (a QScrollArea, or worse — live-reported 2026-09-09 landing on the main
+                # window's cover-art carousel entirely), none of which is a sensible "next
+                # stop" for a list that already owns Up/Down internally. The row list is
+                # reachable only via Down from the tab bar (MainWindow._handle_stats_arrows)
+                # and left only via Up/Shift+Tab back to the tab bar (StatsRowListView's own
+                # keyPressEvent) — never via this generic cycle in either direction.
+                continue
+            if w.objectName() == "stats_nav_btn":
+                # The Day/Week/Month period ‹/› buttons (_day_prev_btn/_day_next_btn etc.) —
+                # excluded from the Tab cycle 2026-09-09, live design call: Left/Right always
+                # cycle the period directly (StatsPanel.keyPressEvent's own _NAV_METHODS), so
+                # these buttons must never become a keyboard stop at all — no highlight, no
+                # Tab target, matching how the row list itself is excluded just above for the
+                # analogous "this has its own dedicated keyboard path, stay out of the generic
+                # cycle" reason. Matched by objectName rather than a class check since these
+                # are plain QPushButtons with no dedicated subclass.
+                continue
             if isinstance(w.parentWidget(), QAbstractSpinBox):
                 # A QSpinBox's internal QLineEdit (its text-entry sub-widget) is itself
                 # TabFocus-eligible (Qt.FocusPolicy.WheelFocus, which includes TabFocus),
