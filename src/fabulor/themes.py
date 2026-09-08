@@ -4347,6 +4347,20 @@ def get_settings_stylesheet(theme_name="default"):
             color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
             font-weight: bold;
         }}
+        /* Add all/Remove all/Change now dim when they'd be a no-op — see
+           MainWindow.theme_manager._update_theme_pool_buttons_enabled. Same treatment as
+           Library's Add/Remove/Rescan buttons below (transparent-background buttons dim their
+           text/border since there's no fill to dim), reported live 2026-09-09 after all three
+           stayed clickable while doing nothing (all themes already selected; only one theme
+           left in the pool; rotating with a single candidate). secondary_button intentionally
+           excluded — it has no enable/disable logic tied to it. */
+        QPushButton#theme_add_all:disabled, QPushButton#theme_remove_all:disabled,
+        QPushButton#theme_change_now:disabled {{
+            background: transparent;
+            color: rgba({_hex_to_rgb(t['text'])}, 0.35);
+            border: 1px solid rgba({_hex_to_rgb(t['accent_dark'])}, 0.35);
+            font-weight: bold;
+        }}
         QPushButton#library_add_folder_btn, QPushButton#library_remove_folder_btn,
         QPushButton#library_rescan_btn {{
             background: transparent;

@@ -2877,6 +2877,7 @@ class ThemeManager(QObject):
                 btn.style().unpolish(btn)
                 btn.style().polish(btn)
         self._update_cover_pool_btn()
+        self._update_theme_pool_buttons_enabled()
 
     # ── Cover-art theme ─────────────────────────────────────────────────────
 
@@ -2921,6 +2922,7 @@ class ThemeManager(QObject):
         self._on_theme_changed(theme_dict, save=False, user_initiated=user_initiated,
                                 bypass_panel_open_guard=user_initiated)
         self._update_cover_pool_btn()
+        self._update_theme_pool_buttons_enabled()
         logger.debug(f"[STUTTER-TRACE] t={time.perf_counter():.6f} apply_cover_theme: EXIT (applied)")
 
     def clear_cover_theme(self, bypass_panel_open_guard=False):
@@ -2938,6 +2940,7 @@ class ThemeManager(QObject):
         self._on_theme_changed(self._current_theme_name, save=False,
                                 bypass_panel_open_guard=bypass_panel_open_guard)
         self._update_cover_pool_btn()
+        self._update_theme_pool_buttons_enabled()
 
     def set_cover_art_mode(self, mode: str):
         """Switch cover art mode ('off', 'with_pool', 'exclusive') and reapply."""
@@ -2966,6 +2969,7 @@ class ThemeManager(QObject):
         if self.pool_container is not None:
             self.pool_container.setVisible(current != "exclusive")
         self._update_cover_pool_btn()
+        self._update_theme_pool_buttons_enabled()
 
     def _update_cover_pool_btn(self):
         # Same fix, same reasoning as update_theme_list_visuals() above (the
@@ -2992,6 +2996,38 @@ class ThemeManager(QObject):
         if changed:
             btn.style().unpolish(btn)
             btn.style().polish(btn)
+
+    def _update_theme_pool_buttons_enabled(self):
+        """Dim Add all/Remove all/Change now when they'd be a no-op — same idiom as
+        MainWindow._update_remove_folder_btn_enabled (Library tab's Remove button, only
+        clickable with a path selected). Reported live 2026-09-09: all three stayed clickable
+        even when clicking them would do nothing (all themes already in the pool; only one
+        theme left in the pool; rotating with only one candidate) — Pryme's call was to match
+        the Library precedent's dim-when-no-op treatment rather than leave them always-enabled.
+
+        Called from every site that already calls _update_cover_pool_btn() (pool mutation via
+        update_theme_list_visuals, and every cover-art-mode/cover-theme state change) — those
+        are exactly the state changes this method's own conditions depend on too, so no new
+        call sites are needed.
+
+        Change now's no-op condition mirrors _do_rotate's own `len(candidates) > 1` gate
+        EXACTLY (candidates = selected_themes, plus a virtual entry when "with_pool" mode has
+        an active cover theme) — see _do_rotate for why a single named theme is NOT a no-op
+        when with_pool + a cover theme are both active (that combination gives _do_rotate two
+        real candidates: the named theme and the cover-derived one)."""
+        add_btn = getattr(self.main_window, 'add_all_btn', None)
+        remove_btn = getattr(self.main_window, 'remove_all_btn', None)
+        change_btn = getattr(self.main_window, 'change_now_btn', None)
+        if add_btn is not None:
+            add_btn.setEnabled(len(self.selected_themes) < len(THEMES))
+        if remove_btn is not None:
+            remove_btn.setEnabled(len(self.selected_themes) > 1)
+        if change_btn is not None:
+            mode = self.config.get_cover_art_theme_mode()
+            candidates = len(self.selected_themes)
+            if mode == "with_pool" and self._cover_theme:
+                candidates += 1
+            change_btn.setEnabled(candidates > 1)
 
     def _on_cover_pool_btn_clicked(self):
         mode = self.config.get_cover_art_theme_mode()
@@ -3023,6 +3059,7 @@ class ThemeManager(QObject):
         self._cover_theme_active = True
         self._on_theme_changed(self._cover_theme, save=False, bypass_panel_open_guard=True)
         self._update_cover_pool_btn()
+        self._update_theme_pool_buttons_enabled()
 
     def _on_cover_pool_btn_hovered(self):
         # Moving from a theme name onto the cover-pool button: drop any queued

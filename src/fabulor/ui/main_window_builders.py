@@ -875,16 +875,30 @@ def build_themes_tab(mw):
 
     # Interval Selection
     interval_row = QHBoxLayout()
-    interval_row.setSpacing(10)
+    # Uniform layout spacing (was 10) made the VISIBLE glyph-to-glyph gap uneven, not just the
+    # box-to-box gap: each label's box is fixed to its own tight glyph width (see below), so a
+    # narrow label ("2", "5") has near-zero internal padding while a wide one ("120") does too —
+    # but font hinting/antialiasing at 12px bold paints slightly differently per glyph shape,
+    # so a uniform 10px box-gap did not read as a uniform visual gap (live-reported 2026-09-09:
+    # ~11px between "2"/"5", ~15px between "60"/"120"). Making every label a uniform max-width
+    # box was considered and rejected — it needs ~50px more total row width than this row has to
+    # spare (the panel is a fixed-height, no-scroll surface — see CLAUDE.md's settings-tab-width
+    # rule). Fixed instead via explicit per-gap addSpacing() below, hand-tuned live against the
+    # actual rendered gaps rather than derived from font-metric arithmetic (per CLAUDE.md's own
+    # rule that Pryme's eyes are ground truth on pixel spacing, not a script's measurement).
+    interval_row.setSpacing(0)
     interval_row.setContentsMargins(0, 10, 0, 0)
 
-    interval_label = QLabel("Interval (min)")
+    interval_label = QLabel("Rotate (min)")
     interval_label.setObjectName("theme_hint")
     interval_row.addWidget(interval_label)
-    interval_row.addSpacing(13)
+    interval_row.addSpacing(25)
 
     intervals = [(2, "2"), (5, "5"), (10, "10"), (20, "20"), (30, "30"), (60, "60"), (120, "120"), (0, "Off")]
-    for mins, text in intervals:
+    # Per-gap spacing between consecutive interval labels — index i is the gap AFTER
+    # intervals[i]. Starting point only; tune these live against the real rendered gaps.
+    gap_after = [11, 10, 10, 10, 10, 8, 9]
+    for i, (mins, text) in enumerate(intervals):
         lbl = QLabel(text)
         lbl.setObjectName("theme_interval_label")
         lbl.setCursor(Qt.PointingHandCursor)
@@ -912,6 +926,8 @@ def build_themes_tab(mw):
         lbl.mousePressEvent = lambda _, m=mins: mw.theme_manager.set_rotation_interval(m)
         mw.theme_manager.interval_widgets[mins] = lbl
         interval_row.addWidget(lbl)
+        if i < len(gap_after):
+            interval_row.addSpacing(gap_after[i])
     interval_row.addStretch()
     pool_layout.addLayout(interval_row)
 
@@ -964,20 +980,27 @@ def build_appearance_tab(mw):
     blur_row.addStretch()
     app_layout.addLayout(blur_row)
 
-    scroll_header = QLabel("Chapter scroll")
-    scroll_header.setObjectName("settings_header")
-    app_layout.addWidget(scroll_header)
+    # Keyboard-nav highlight style (2026-09-08, moved here from the end of this tab 2026-09-09 —
+    # Pryme's requested order: Theme hover, Panel background, Keyboard highlight, Library hover
+    # trail, Chapter hints, Chapter scroll, Chapter notches). See config.get_keyboard_marker_style
+    # / MainWindow._update_focus_marker. "Traveling" is the existing animated border marker;
+    # "Fill highlight" tints the focused control's own background with a lighter/desaturated
+    # accent instead (added after the ramp buttons' focus color was found to be a flat
+    # theme-dict color by mistake — see SESSION.md 2026-09-08).
+    marker_style_header = QLabel("Keyboard highlight")
+    marker_style_header.setObjectName("settings_header")
+    app_layout.addWidget(marker_style_header)
 
-    scroll_row = QHBoxLayout()
-    mw.scroll_buttons = {}
-    for mode in ["Slow", "Normal", "Off"]:
-        btn = QPushButton(mode)
-        btn.setObjectName("pattern_button") # Re-use styling for consistency
-        btn.clicked.connect(lambda _, m=mode: mw.scroll_mode_changed.emit(m))
-        scroll_row.addWidget(btn)
-        mw.scroll_buttons[mode] = btn
-    scroll_row.addStretch()
-    app_layout.addLayout(scroll_row)
+    marker_style_row = QHBoxLayout()
+    mw.keyboard_marker_style_buttons = {}
+    for value, label in [("traveling", "Traveling marker"), ("fill_highlight", "Fill highlight")]:
+        btn = QPushButton(label)
+        btn.setObjectName("pattern_button")
+        btn.clicked.connect(lambda _, v=value: mw.keyboard_marker_style_changed.emit(v))
+        marker_style_row.addWidget(btn)
+        mw.keyboard_marker_style_buttons[value] = btn
+    marker_style_row.addStretch()
+    app_layout.addLayout(marker_style_row)
 
     hover_fade_header = QLabel("Library hover trail")
     hover_fade_header.setObjectName("settings_header")
@@ -1008,6 +1031,21 @@ def build_appearance_tab(mw):
         mw.hints_buttons[mode] = btn
     hints_row.addStretch()
     app_layout.addLayout(hints_row)
+
+    scroll_header = QLabel("Chapter scroll")
+    scroll_header.setObjectName("settings_header")
+    app_layout.addWidget(scroll_header)
+
+    scroll_row = QHBoxLayout()
+    mw.scroll_buttons = {}
+    for mode in ["Slow", "Normal", "Off"]:
+        btn = QPushButton(mode)
+        btn.setObjectName("pattern_button") # Re-use styling for consistency
+        btn.clicked.connect(lambda _, m=mode: mw.scroll_mode_changed.emit(m))
+        scroll_row.addWidget(btn)
+        mw.scroll_buttons[mode] = btn
+    scroll_row.addStretch()
+    app_layout.addLayout(scroll_row)
 
     notches_header_row = QHBoxLayout()
     notches_label = QLabel("Chapter notches")
@@ -1041,29 +1079,6 @@ def build_appearance_tab(mw):
         mw.notch_animation_buttons[mode] = btn
 
     app_layout.addLayout(notches_row)
-
-    # Keyboard-nav highlight style (2026-09-08, moved here from Controls 2026-09-08 — Pryme's
-    # call: behavior is unaffected by which tab it lives on, Controls is sparse while Look is
-    # nearly full with room for exactly one more setting, and this is a visual/appearance choice
-    # like everything else on this tab). See config.get_keyboard_marker_style /
-    # MainWindow._update_focus_marker. "Traveling" is the existing animated border marker;
-    # "Fill highlight" tints the focused control's own background with a lighter/desaturated
-    # accent instead (added after the ramp buttons' focus color was found to be a flat
-    # theme-dict color by mistake — see SESSION.md 2026-09-08).
-    marker_style_header = QLabel("Keyboard highlight")
-    marker_style_header.setObjectName("settings_header")
-    app_layout.addWidget(marker_style_header)
-
-    marker_style_row = QHBoxLayout()
-    mw.keyboard_marker_style_buttons = {}
-    for value, label in [("traveling", "Traveling marker"), ("fill_highlight", "Fill highlight")]:
-        btn = QPushButton(label)
-        btn.setObjectName("pattern_button")
-        btn.clicked.connect(lambda _, v=value: mw.keyboard_marker_style_changed.emit(v))
-        marker_style_row.addWidget(btn)
-        mw.keyboard_marker_style_buttons[value] = btn
-    marker_style_row.addStretch()
-    app_layout.addLayout(marker_style_row)
 
     app_layout.addStretch()
     mw.tabs.addTab(appearance_tab, "Look")
@@ -1208,6 +1223,26 @@ def build_controls_tab(mw):
     short_layout.setContentsMargins(10, 0, 10, 10)
     short_layout.setSpacing(6)
 
+    # Corner-hotspot sidebar trigger (review/Plan_260809_corner_hotspot_sidebar_trigger.md).
+    # Moved to the top of this tab 2026-09-09 (was below Chapter number keys) — Pryme's
+    # requested order. The indicator tier (None/Square visual marker) was tried and
+    # removed 2026-08-09 — the hotspot is permanently invisible now, so only its own
+    # enable/disable toggle remains; see SESSION.md for why.
+    hotspot_header = QLabel("Sidebar hotspot")
+    hotspot_header.setObjectName("settings_header")
+    short_layout.addWidget(hotspot_header)
+
+    hotspot_row = QHBoxLayout()
+    mw.hotspot_enabled_buttons = {}
+    for mode in ["On", "Off"]:
+        btn = QPushButton(mode)
+        btn.setObjectName("pattern_button")
+        btn.clicked.connect(lambda _, m=mode: mw.sidebar_hotspot_enabled_changed.emit(m == "On"))
+        hotspot_row.addWidget(btn)
+        mw.hotspot_enabled_buttons[mode] = btn
+    hotspot_row.addStretch()
+    short_layout.addLayout(hotspot_row)
+
     digit_header = QLabel("Chapter number keys")
     digit_header.setObjectName("settings_header")
     short_layout.addWidget(digit_header)
@@ -1229,26 +1264,6 @@ def build_controls_tab(mw):
         digit_row.addWidget(btn)
         mw.digit_autoplay_buttons[val] = btn
     short_layout.addLayout(digit_row)
-
-    # Corner-hotspot sidebar trigger (review/Plan_260809_corner_hotspot_sidebar_trigger.md).
-    # Placement here is explicitly temporary — likely to move once more of the settings
-    # surface is finalized. The indicator tier (None/Square visual marker) was tried and
-    # removed 2026-08-09 — the hotspot is permanently invisible now, so only its own
-    # enable/disable toggle remains; see SESSION.md for why.
-    hotspot_header = QLabel("Sidebar hotspot")
-    hotspot_header.setObjectName("settings_header")
-    short_layout.addWidget(hotspot_header)
-
-    hotspot_row = QHBoxLayout()
-    mw.hotspot_enabled_buttons = {}
-    for mode in ["On", "Off"]:
-        btn = QPushButton(mode)
-        btn.setObjectName("pattern_button")
-        btn.clicked.connect(lambda _, m=mode: mw.sidebar_hotspot_enabled_changed.emit(m == "On"))
-        hotspot_row.addWidget(btn)
-        mw.hotspot_enabled_buttons[mode] = btn
-    hotspot_row.addStretch()
-    short_layout.addLayout(hotspot_row)
 
     short_layout.addStretch()
     mw.tabs.addTab(shortcuts_tab, "Controls")
