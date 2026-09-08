@@ -263,8 +263,14 @@ class SleepTimerPanel(QWidget):
         # SprintPanel's identical fix and identical correction in the same pass — see that
         # panel's own eventFilter for the fuller cross-panel writeup of why this shape is
         # required, not just preferred.
+        # Generalized 2026-09-09 from Key_Escape specifically to ANY key other than
+        # Space/Enter/Return — live design ask, app-wide: any key that isn't the confirm
+        # action should dismiss an armed confirmation, swallowing that press (pure dismiss,
+        # not also whatever the key would otherwise do) — matches Tags' delete-tag confirm
+        # and Sprint's identical generalization in the same pass; see SprintPanel.eventFilter
+        # for the fuller writeup.
         if (event.type() == QEvent.Type.KeyPress
-                and event.key() == Qt.Key.Key_Escape
+                and event.key() not in (Qt.Key.Key_Space, Qt.Key.Key_Return, Qt.Key.Key_Enter)
                 and self._conflict_confirm_label.isVisible()):
             self._cancel_conflict_confirm()
             return True

@@ -1108,6 +1108,25 @@ class TagManagerWidget(QWidget):
         """
         key = event.key()
 
+        # ANY key other than Space/Enter/Return, while the delete confirmation is armed, must
+        # dismiss it and swallow the press — checked FIRST, ahead of even Tab. Closes a real
+        # gap found 2026-09-09 (app-wide confirm-dismiss consistency pass): Tab was checked
+        # unconditionally above the `_confirming_delete` block below, so Tab while armed moved
+        # real Qt focus into `_tag_name_edit` (made read-only while confirming, so nothing
+        # could actually be typed) WITHOUT dismissing the confirmation — the "Confirm to
+        # delete" label stayed visibly armed underneath. Escape and Delete keep their own
+        # dedicated branches immediately below (Escape's cancel-if-armed / defer-otherwise
+        # shape, and Delete's arm-if-not-already-armed shape, are both already correct and
+        # would be redundant to duplicate here) — this check only needs to catch every OTHER
+        # key, which is exactly what the existing arrow-key branch inside the
+        # `_confirming_delete` block further down already did; Tab was the one key that
+        # bypassed it entirely by being dispatched even earlier in this same method.
+        if (self._confirming_delete
+                and key not in (Qt.Key.Key_Space, Qt.Key.Key_Return, Qt.Key.Key_Enter,
+                                Qt.Key.Key_Escape, Qt.Key.Key_Delete)):
+            self._cancel_delete_confirm()
+            return True
+
         if key == Qt.Key.Key_Tab or (key == Qt.Key.Key_Backtab):
             if self._tag_name_edit.hasFocus():
                 self._tag_name_edit.clearFocus()
@@ -1145,26 +1164,21 @@ class TagManagerWidget(QWidget):
             return True
 
         if self._confirming_delete:
-            # A dedicated branch, ahead of the color-row/thumbnail-grid
-            # dispatch below — live design call, 2026-09-08, fixing a real
-            # bug: with no branch here, Enter/Space fell through to whichever
-            # region's own handler (color row or thumbnail grid) and did
-            # THAT region's normal thing instead of confirming — reported
-            # live as "Enter doesn't confirm, Space just dismisses" (Space
-            # was actually triggering the thumbnail grid's own remove action,
-            # which itself checks _confirming_delete and cancels — a
-            # dismiss, not a confirm, and only by accident of that check
-            # existing elsewhere). Enter/Space now confirm; any arrow key
-            # dismisses (cancels) the confirmation rather than moving a
-            # cursor that, while armed, isn't meant to be visibly navigable
-            # anyway (the grid is locked — see _book_grid.set_locked).
+            # A dedicated branch, ahead of the color-row/thumbnail-grid dispatch below — live
+            # design call, 2026-09-08, fixing a real bug: with no branch here, Enter/Space fell
+            # through to whichever region's own handler (color row or thumbnail grid) and did
+            # THAT region's normal thing instead of confirming — reported live as "Enter
+            # doesn't confirm, Space just dismisses" (Space was actually triggering the
+            # thumbnail grid's own remove action, which itself checks _confirming_delete and
+            # cancels — a dismiss, not a confirm, and only by accident of that check existing
+            # elsewhere). Only Space/Enter/Return can still reach this point as of 2026-09-09
+            # (the app-wide swallow-and-dismiss check near the top of this method now catches
+            # every OTHER key while armed, including arrows and Tab, before dispatch ever gets
+            # this far) — so this is now purely the confirm action, not a dismiss branch too.
             if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space):
                 self._on_confirm_delete()
                 return True
-            if key in (Qt.Key.Key_Left, Qt.Key.Key_Right, Qt.Key.Key_Up, Qt.Key.Key_Down):
-                self._cancel_delete_confirm()
-                return True
-            return True  # swallow everything else too — nothing should reach the locked grid/colors
+            return True  # defensive: nothing should reach the locked grid/colors while armed
 
         if self._color_kbdnav_index is not None:
             return self._handle_color_row_keys(event)

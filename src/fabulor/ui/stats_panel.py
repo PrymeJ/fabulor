@@ -4835,16 +4835,23 @@ class StatsPanel(QWidget):
         super().hideEvent(event)
 
     def eventFilter(self, obj, event):
-        # Escape while "Reset all stats" is armed must cancel JUST the confirmation, not fall
-        # through to MainWindow._handle_tab_escape -> PanelManager.escape_active_panel() ->
-        # _close_stats_flow(), which would close the whole panel. Every other armed-confirm site
-        # in the app already does this (Book Detail's four confirms, Tags' delete-tag, Sprint's
-        # reset-sprint-data) — this one was the one gap where Escape closed the panel instead of
-        # just disarming, live-reported 2026-09-08 as an app-wide consistency ask. Checked BEFORE
+        # ANY key other than Space/Enter/Return while "Reset all stats" is armed must cancel
+        # JUST the confirmation (and swallow that press — pure dismiss, not also whatever the
+        # key would otherwise do), not fall through to MainWindow._handle_tab_escape ->
+        # PanelManager.escape_active_panel() -> _close_stats_flow() (would close the whole
+        # panel), and not fall through to _handle_stats_arrows' Delete branch either (which,
+        # before this fix, unconditionally called reset_btn.click() again — RE-ARMING/
+        # restarting the 7s timer instead of dismissing, live-reported 2026-09-09 as part of
+        # the same "confirmations need to behave consistently" ask that produced this rule).
+        # Originally only checked Key_Escape; generalized 2026-09-09 to match Tags'
+        # delete-tag confirm (tag_manager.py's _handle_tag_detail_keys), the one pre-existing
+        # site in this app that already swallows-and-dismisses on any non-confirm key — see
+        # that method's own comment for why swallowing (not also performing the key's normal
+        # action) was the live design call, app-wide, for this exact situation. Checked BEFORE
         # the existing click-outside branch below (both cancel the same confirm; order between
-        # them doesn't matter, but Escape is cheap to check first and return early on).
+        # them doesn't matter).
         if (event.type() == QEvent.Type.KeyPress
-                and event.key() == Qt.Key.Key_Escape
+                and event.key() not in (Qt.Key.Key_Space, Qt.Key.Key_Return, Qt.Key.Key_Enter)
                 and self._reset_confirm_label.isVisible()):
             self._cancel_reset_stats()
             return True

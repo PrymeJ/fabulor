@@ -553,7 +553,18 @@ class SprintPanel(QWidget):
         # _conflict_confirm_label checked first, same ordering the old code used (the two
         # states are mutually exclusive in practice — see show_conflict_confirm's own
         # docstring — so order between them doesn't matter, but keeping it stable/predictable).
-        if event.type() == QEvent.Type.KeyPress and event.key() == Qt.Key.Key_Escape:
+        #
+        # Generalized 2026-09-09 from Key_Escape specifically to ANY key other than
+        # Space/Enter/Return — live design ask, app-wide: any key that isn't the confirm
+        # action should dismiss an armed confirmation, swallowing that press (pure dismiss,
+        # not also whatever the key would otherwise do), matching Tags' delete-tag confirm
+        # (tag_manager.py's _handle_tag_detail_keys), the one pre-existing site that already
+        # did this. Concretely closes a real bug this same day's Delete-key work introduced:
+        # Delete on "Reset all sprint data" while ALREADY armed used to fall through to
+        # _handle_flat_panel_arrows (app.py), which unconditionally called reset_btn.click()
+        # again — RE-ARMING/restarting the 7s timer instead of dismissing.
+        if (event.type() == QEvent.Type.KeyPress
+                and event.key() not in (Qt.Key.Key_Space, Qt.Key.Key_Return, Qt.Key.Key_Enter)):
             if self._conflict_confirm_label.isVisible():
                 self._cancel_conflict_confirm()
                 return True

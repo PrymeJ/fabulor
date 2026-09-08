@@ -176,15 +176,25 @@ class _FakeMetaBtn:
 
 
 class _FakeVisibilityWidget:
-    """Stands in for _delete_history_btn / _delete_history_confirm_label — the History-tab
-    Delete-key test below only needs isVisible(), same shape as _FakeMetaBtn but named for
-    its own two call sites so a reader doesn't have to guess which widget it's faking."""
+    """Stands in for _delete_history_btn / _delete_history_confirm_label. Needs hide/
+    setEnabled/setCursor too (not just isVisible) since the real _cancel_delete_history()
+    calls all three on the real widgets — added 2026-09-09 when the swallow-and-dismiss
+    tests started exercising that real method instead of just checking state."""
 
     def __init__(self, visible):
         self._visible = visible
 
     def isVisible(self):
         return self._visible
+
+    def hide(self):
+        self._visible = False
+
+    def setEnabled(self, enabled):
+        pass
+
+    def setCursor(self, cursor):
+        pass
 
 
 def _press(obj, key, mods=Qt.KeyboardModifier.NoModifier):
@@ -215,6 +225,10 @@ class _EditingHarness(BookDetailPanel):
         self.tabs = _FakeTabs("History")   # would claim Up/Down for row-nav if editing didn't win
         self._history_rows = [_FakeHistoryRow("row0")]
         self._history_selected_index = -1
+        # Added 2026-09-09: keyPressEvent's new top-level swallow-and-dismiss check (checked
+        # BEFORE the _editing branch) reads these two unconditionally on every press.
+        self._confirming_finished = False
+        self._confirming_remove = False
         self.cycle_calls = []
 
     # Spy on the real dispatch target rather than asserting QApplication.focusWidget()
