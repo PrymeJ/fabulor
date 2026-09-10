@@ -176,39 +176,6 @@ ID selector outranks the generic `QPushButton:hover`, same root cause as `reset_
 original gap) were both closed this pass, since keyboard navigation made them directly
 relevant — no longer an open item.
 
-**[2026-09-09] Confirmed live — the Left/Right native-sibling-stepping risk flagged below has
-surfaced, as an INCONSISTENCY rather than the escape-to-an-unrelated-row shape it took on
-Speed/Sleep/Sprint**: "there is inconsistency about the last row's last button. Right arrow is
-mostly no-op, from Look and Controls it goes to the tab." `_handle_settings_arrows`
-(`app.py:_handle_settings_arrows`) never explicitly sends focus to the tab bar on Right, for any
-tab — every ordinary Right at a row's last button falls through to `return False`, deferring
-entirely to Qt's own native sibling-focus-chain stepping (construction order, not the visual row
-model — the same mechanism the comment below already names as "never actually safe, just
-lucky"). Investigated once (background research agent, static code + widget-tree reading only):
-Look's default state (Chapter notches = Off) has a structurally distinct terminal row — its last
-visible button is directly followed, in the same layout, by two real-but-`setVisible(False)`
-QPushButtons (`notch_animation_buttons`) — which COULD explain Look behaving differently from a
-tab with nothing at all after its last button. But Controls, Audio (non-default state), and
-Library all have the IDENTICAL terminal shape (last button → nothing focusable in the same page)
-and were reported to behave differently from each other (Controls goes to the tab bar; Audio/
-Library apparently don't) — so the hidden-widget theory cannot be the whole explanation, and the
-static reading could not settle why. Needs a LIVE trace: log `QApplication.focusWidget()`
-immediately before/after a Right press on each tab's actual real last button (in each visibility
-sub-state — Look's notches On/Off, Audio's default/non-default, Library's persist-filter On/Off)
-to determine what Qt's native chain is actually resolving to in each case, since this depends on
-Qt-internal `QStackedWidget`/`QTabWidget` focus-chain wiring and possibly incidental
-tab-construction-order effects (`build_settings_panel` builds Themes, Look, Library, Audio,
-Controls in that sequence) that cannot be read off the Python source. Not yet started.
-
-Remaining known gap, not yet reproduced independently of the above: `_handle_settings_arrows`'s
-own Left/Right (Settings' Look/Controls/Audio/Library rows) still defers to Qt's native
-sibling-focus stepping at row boundaries — the exact mechanism that turned out to be a real bug
-for Speed/Sleep/Sprint (Qt's native chain follows construction order, not the visual row model,
-so it can escape into an unrelated row). Settings' own rows have never shown THAT specific
-failure mode live (jumping into an unrelated row's control, as opposed to the tab-bar
-inconsistency above), but the 2026-09-07 investigation concluded it was "never actually safe
-there either, just lucky" — flagged here so it isn't forgotten if it ever surfaces on its own.
-
 ### Stats' tab bar is missing the mouse/keyboard hover mutual-exclusion Settings' tab bar has
 - [2026-09-09] Live-reported: "The tab row of Settings have the mouse and the keyboard cancel
   the highlight of each other. Stats doesn't have that, and two highlights coexist at the same

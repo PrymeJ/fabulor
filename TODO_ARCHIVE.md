@@ -5,6 +5,22 @@ list scannable. Kept, not deleted, per the project's normal practice of not thro
 that isn't fully duplicated in NOTES.md/SESSION.md/a commit message. Order is the same relative
 order these entries had in TODO.md before the split (2026-07-30).
 
+- **[2026-09-10] CLOSED: Settings/Stats "⚙" tab Right-arrow inconsistency at a row's last
+  button.** Reported live 2026-09-09 as "Right arrow is mostly no-op, from Look and Controls it
+  goes to the tab" and initially scoped as needing a live `QApplication.focusWidget()` trace to
+  diagnose why Qt's native sibling-focus-chain stepping resolved differently per tab. Root cause
+  turned out not to need that trace at all, once reframed as a design question rather than a
+  diagnosis: `_handle_settings_arrows`/`_handle_stats_arrows` never had a DELIBERATE Right/Left
+  model at a row's edge — both deferred to Qt's own native chain (construction order, not the
+  visual row model), which is exactly the mechanism `_handle_flat_panel_arrows`'s own comment
+  already named as "never actually safe, just lucky" after it caused a REAL escape-to-an-
+  unrelated-row bug on Speed/Sleep/Sprint (fixed 2026-09-07). Both methods now use the same
+  full reading-order wrap Speed/Sleep/Sprint already had: Right past a row's last item continues
+  to the next row's first item, past the LAST row's last item wraps to the tab bar; Left mirrors
+  this backward; Down at the last row now wraps to the tab bar (was a swallow); Up from the tab
+  bar now lands on the last row (only Down-from-tab-bar existed before). No native-chain
+  dependency remains in either method. `7fdd882`.
+
 - **[2026-09-10] INVESTIGATED, NOT RESOLVED: Sleep/Sprint Disable-Cancel button blinks
   highlight→dark→highlight before disappearing.** Root cause fully traced (a live paint-event
   logger, not guesswork): Qt's own `QAbstractButton::mouseReleaseEvent` repaints the button back
