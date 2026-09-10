@@ -176,7 +176,7 @@ ID selector outranks the generic `QPushButton:hover`, same root cause as `reset_
 original gap) were both closed this pass, since keyboard navigation made them directly
 relevant — no longer an open item.
 
-### Stats' tab bar is missing the mouse/keyboard hover mutual-exclusion Settings' tab bar has
+### Tab-bar mouse/keyboard hover mutual-exclusion — Stats missing it, Settings incomplete (folded into the app-wide hover-pickup consolidation)
 - [2026-09-09] Live-reported: "The tab row of Settings have the mouse and the keyboard cancel
   the highlight of each other. Stats doesn't have that, and two highlights coexist at the same
   time." Confirmed as a genuine QSS gap: Settings' `get_settings_stylesheet` has TWO
@@ -215,6 +215,22 @@ relevant — no longer an open item.
   grid's `WA_UnderMouse` unreliability) or a live Qt-internals trace beyond what a property/repaint
   logger can show (e.g. instrumenting `QTabBar`'s own `mouseMoveEvent`/hit-test to see whether it's
   even being CALLED after the repolish, not just whether the repolish itself ran).
+
+  **[2026-09-10] Rescoped — folded into the app-wide hover-pickup/most-recent-input-wins
+  consolidation, not a standalone fix.** Pryme's own call after the reverted attempt above: "it
+  makes more sense it is fixed with the one consolidated hover principle which we should have
+  throughout the app. Even when there is one highlight in the Settings tab, it doesn't continue
+  from where the mouse is if the mouse was the most recent input." This names a SECOND,
+  reverse-direction gap in the same paused plan already tracked for this branch (the
+  "keys pick up from where the mouse is" work, deferred since the session that closed out the
+  confirmation-dialog keyboard-consistency pass) — that plan only covers keys picking up from a
+  stationary mouse; it does not yet cover the mouse fully reclaiming hover ownership once it's
+  genuinely the most recent input again, which is the actual shape of both this tab-bar bug and
+  the gap Pryme just pointed out on Settings' own tab bar. See the plan file itself
+  (`snuggly-growing-stardust.md`, "Scope note added 2026-09-10") for the fuller framing. Do NOT
+  attempt another standalone QSS patch for Stats' tab bar specifically — build the one shared
+  mechanism first, covering both directions, then this closes as a side effect rather than its
+  own fix.
 
 ### Three more keyboard-nav consistency gaps, found by Pryme's own live testing (not yet investigated)
 - [2026-09-09] All three reported together, none investigated yet — grouped here rather than as
