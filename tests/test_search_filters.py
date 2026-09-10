@@ -44,6 +44,7 @@ _LIBRARY = [
     _mk(5, "Brave New World", "Aldous Huxley", "Simon Vance", 1984),
     _mk(6, "The Odyssey", "Homer", "Dan Stevens", -750),
     _mk(7, "Meditations", "Marcus Aurelius", "Robin Field", 180),
+    _mk(8, "The Dervish and Death", "Meša Selimović", "Miran Kranjc", 1966),
 ]
 
 
@@ -218,7 +219,8 @@ def test_range_branch_precedes_bare_operator_branch(model):
     """Order regression: '>1950<1990' must parse as a RANGE. If the bare '>' branch were tested
     first it would fail _is_year_number('1950<1990') and fall through to a text search."""
     titles, _ = _titles(model, ">1950<1990")
-    assert set(titles) == {"Giovanni's Room", "A History of 1984", "Brave New World"}
+    assert set(titles) == {"Giovanni's Room", "A History of 1984", "Brave New World",
+                            "The Dervish and Death"}
     # And the falling-through-to-text outcome it must NOT produce (no title contains the
     # literal string, so a text search would redden and show everything).
     assert len(titles) < len(_LIBRARY)
@@ -253,6 +255,75 @@ def test_title_prefix_operator(model):
 def test_title_prefix_reddens_on_no_match(model):
     _, red = _titles(model, "_zzz")
     assert red is True
+
+
+# ── Diacritic folding (2026-09-08 report: "mesa" must find "Meša" with no š on the keyboard) ──
+
+def test_bare_text_diacritic_folding_matches_author(model):
+    titles, red = _titles(model, "mesa selimovic")
+    assert titles == ["The Dervish and Death"]
+    assert red is False
+
+
+def test_author_operator_diacritic_folding(model):
+    titles, red = _titles(model, "@mesa")
+    assert titles == ["The Dervish and Death"]
+    assert red is False
+
+
+def test_title_prefix_diacritic_folding(model):
+    # Folding also applies to the FIELD side, not just the query — narrator "Kranjc" has no
+    # diacritic, but the title-prefix path is exercised on a field that does via author search
+    # above; this pins the prefix branch specifically with a folded title-side character.
+    titles, red = _titles(model, "_the dervish")
+    assert titles == ["The Dervish and Death"]
+    assert red is False
+
+
+def test_diacritic_query_still_matches_the_literal_accented_form(model):
+    """Typing the accented character itself must still work — folding must not be one-way."""
+    titles, _ = _titles(model, "meša")
+    assert titles == ["The Dervish and Death"]
+
+
+def test_year_syntax_is_not_affected_by_diacritic_folding(model):
+    """Diacritic folding must never leak into the '#'/'@'/'_'/year syntax dispatch itself —
+    only into the substring comparison inside the matched branch."""
+    titles, _ = _titles(model, "=1966")
+    assert titles == ["The Dervish and Death"]
+
+
+def test_diacritic_query_does_not_match_plain_occurrences(model):
+    """The asymmetric rule, live-corrected 2026-09-10: 'plain query matches accented field
+    too' must NOT run in reverse. An accented query character ('š') must match ONLY that
+    exact accent, never fall back to matching every plain 's' elsewhere in the library —
+    "Simon Prebble"/"Simon Vance" (narrators, book 3/5) must NOT show up for a query
+    containing š, even though š folds to s."""
+    titles, red = _titles(model, "meš")
+    assert titles == ["The Dervish and Death"]
+    assert red is False
+
+
+def test_mixed_plain_and_accented_query_keeps_each_characters_own_rule(model):
+    """'me' (plain) should still loosely match 's'-family folds where relevant, but the 'š'
+    in the same query must stay strict — pins the per-character design (not a whole-query
+    gate) chosen explicitly over the simpler 'any accent disables folding' alternative."""
+    titles, _ = _titles(model, "š")
+    assert titles == ["The Dervish and Death"]
+
+
+# ── Diacritic-aware sort order (2026-09-10 live ask: "Ágota Kristóf and Álvaro Enrigue go
+# after Z. I'd prefer these to be treated as A when sorted alphabetically.") ──────────────
+
+def test_author_sort_folds_diacritics_ahead_of_z(model):
+    """Raw codepoint order would put 'Meša Selimović' (book 8) after every plain-ASCII
+    author, since 'š' > 'z'. Folded, it sorts as 'Mesa...', between 'Marcus Aurelius' and
+    'Some Historian'."""
+    model.sort_books("author", "ascending")
+    model.filter_books("")
+    authors = [model._filtered[i].author for i in range(len(model._filtered))]
+    assert authors.index("Meša Selimović") < authors.index("Some Historian")
+    assert authors.index("Marcus Aurelius") < authors.index("Meša Selimović")
 
 
 def test_empty_filter_shows_everything(model):

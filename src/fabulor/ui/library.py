@@ -3,6 +3,7 @@ import logging
 import random
 import re
 import time
+import unicodedata
 from collections import namedtuple
 from PySide6.QtWidgets import (
     QWidget, QLabel, QVBoxLayout, QGridLayout, QFrame, QPushButton, QHBoxLayout, QComboBox, QLineEdit, QProgressBar, QStyledItemDelegate, QListView, QStyleOptionViewItem, QStyle, QStyleOptionComboBox,
@@ -227,6 +228,64 @@ def _is_incomplete_year_filter(text: str) -> bool:
         # Only incomplete if the second number isn't yet a full 4 digits (still being typed)
         return len(m.group(4).lstrip('-')) < 4
     return False
+
+
+def _fold_char(c: str) -> str:
+    """Fold a single character to its base Latin letter (š->s, ö->o, etc.) via NFKD
+    decomposition + combining-mark removal. Returns `c` unchanged if it has no such
+    decomposition (already-plain letters, digits, punctuation, non-Latin scripts)."""
+    return "".join(ch for ch in unicodedata.normalize('NFKD', c) if not unicodedata.combining(ch)) or c
+
+
+def _fold_diacritics(s: str) -> str:
+    """Strip Latin-script diacritics from every character in `s` — no library, no
+    hand-maintained substitution list. Used for SORTING only (see _sort_fold_key below);
+    searching uses the asymmetric per-character matcher further down, not this bulk fold,
+    because folding both sides of a search made an accented query match every plain
+    occurrence of the base letter too (over-broad — live-reported 2026-09-10: typing Š or
+    kė matched every plain s/ke in the library, not just the accented spelling). Does not
+    help non-Latin scripts (Cyrillic, Greek, CJK) — out of scope, those aren't diacritic
+    variants of Latin letters."""
+    return "".join(c for c in unicodedata.normalize('NFKD', s) if not unicodedata.combining(c))
+
+
+def _diacritic_char_matches(query_char: str, field_char: str) -> bool:
+    """One character of the asymmetric diacritic-search rule: a PLAIN query character
+    matches either that same plain field character OR its accented counterpart (typing
+    's' finds both 's' and 'š'); an ACCENTED query character matches ONLY that exact
+    accented field character, never the plain base letter (typing 'š' finds 'š' but not
+    every plain 's' in the library) — common-typed-for-rare is intentional, rare-typed-
+    for-common is not. Both sides are assumed already lowercased by the caller."""
+    if query_char == field_char:
+        return True
+    folded_query = _fold_char(query_char)
+    if folded_query != query_char:
+        # query_char is itself accented (folding changed it) — no loosening, exact only.
+        return False
+    return folded_query == _fold_char(field_char)
+
+
+def _diacritic_aware_find(query: str, field: str) -> bool:
+    """True if `query` occurs as a substring of `field` under the asymmetric per-character
+    rule in _diacritic_char_matches — checked at every possible alignment, same shape as a
+    plain `in` substring test but character-rule-aware instead of exact-equality-only.
+    Empty query matches anything (mirrors `"" in s == True`)."""
+    if not query:
+        return True
+    qlen, flen = len(query), len(field)
+    if qlen > flen:
+        return False
+    for start in range(flen - qlen + 1):
+        if all(_diacritic_char_matches(query[i], field[start + i]) for i in range(qlen)):
+            return True
+    return False
+
+
+def _diacritic_aware_startswith(query: str, field: str) -> bool:
+    """Prefix-only variant of _diacritic_aware_find, for the '_title-prefix' operator."""
+    if len(query) > len(field):
+        return False
+    return all(_diacritic_char_matches(query[i], field[i]) for i in range(len(query)))
 
 
 class _YearFilterValidator(QValidator):
@@ -2171,10 +2230,17 @@ class BookModel(QAbstractListModel):
                 self._filter_no_match = False
                 books = matched if matched else list(source)
             # ── Field-scoped text ─────────────────────────────────────────────────────────
+            # Diacritic-aware matching here (and in the two branches below) via
+            # _diacritic_aware_find/_startswith — asymmetric per character: a plain query
+            # letter matches its accented field counterpart too, but an accented query
+            # letter matches only that exact accent, never the plain base letter. Never
+            # applied to `text` before this point, since the '#'/year syntax above must
+            # stay diacritic-literal. See _diacritic_char_matches for the per-char rule.
             elif text.startswith('_'):
                 # Title-starts-with match (title only). text is already lowercased upstream.
                 prefix = text[1:]
-                matched = [b for b in source if (b.title or "").lower().startswith(prefix)]
+                matched = [b for b in source
+                           if _diacritic_aware_startswith(prefix, (b.title or "").lower())]
                 self._filter_no_match = not matched
                 books = matched if matched else list(source)
             elif text.startswith('@'):
@@ -2183,15 +2249,16 @@ class BookModel(QAbstractListModel):
                 # biography (title) and the novel (author). Click-to-filter on an author emits
                 # this form for the same reason — see _on_item_clicked.
                 name = text[1:]
-                matched = [b for b in source if name in (b.author or "").lower()]
+                matched = [b for b in source
+                           if _diacritic_aware_find(name, (b.author or "").lower())]
                 self._filter_no_match = not matched
                 books = matched if matched else list(source)
             else:
                 matched = [
                     b for b in source
-                    if text in (b.title or "").lower()
-                    or text in (b.author or "").lower()
-                    or text in (b.narrator or "").lower()
+                    if _diacritic_aware_find(text, (b.title or "").lower())
+                    or _diacritic_aware_find(text, (b.author or "").lower())
+                    or _diacritic_aware_find(text, (b.narrator or "").lower())
                     or (b.year is not None and len(text) == 4 and text.isdigit() and text == str(b.year))
                 ]
                 self._filter_no_match = not matched
@@ -2227,13 +2294,19 @@ class BookModel(QAbstractListModel):
                 return self._finished_dates.get(b.id, dt.min)
             val = getattr(b, field, None)
             if isinstance(val, str):
-                return val.lower()
+                # Diacritics folded for sort order only (2026-09-10 live ask: "Ágota Kristóf
+                # and Álvaro Enrigue go after Z. I'd prefer these to be treated as A") — raw
+                # codepoint order places every accented letter after plain z. Folding is safe
+                # here even for ties (two authors differing only by an accent sort adjacent,
+                # in whichever order Python's stable sort already had them) — unlike search,
+                # sorting has no "must stay strict for an accented query" requirement.
+                return _fold_diacritics(val.lower())
             return val
 
         have    = [b for b in books if effective_val(b) is not None]
         missing = [b for b in books if effective_val(b) is None]
         have.sort(key=sort_key, reverse=reverse)
-        missing.sort(key=lambda b: (b.title or "").lower())
+        missing.sort(key=lambda b: _fold_diacritics((b.title or "").lower()))
         books = have + missing
         self._filtered = books
         self.filter_empty = self._filter_no_match
