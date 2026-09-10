@@ -1,3 +1,120 @@
+## Session Summary — 2026-09-10 Session 1 — Merged `feature/traveling-focus-marker` into `main` (109 commits — the whole keyboard-navigation/traveling-marker/confirmation-consistency arc), then continued directly on `main`: diacritic-aware library/tag search and sort, a reverted tab-bar hover-suppression attempt (documented, not shipped), and Sprint's "Reset all sprint data" now hides instead of always showing. Merge commit `c2023e1`; on-`main` work committed `612a946`, `07f4bdc`, `47df940`, `c27ae29`.
+
+**1. The merge.** `feature/traveling-focus-marker` had drifted 109 commits ahead of the point it
+branched from `main` (confirmed via `git merge-base`, not assumed — Pryme's own recollection of
+"a bit more than 100 commits" was exactly right) and 1 commit behind `main`'s own tip (`53530d5`,
+an unrelated debug-log-strip cleanup with zero file overlap). A pre-existing uncommitted
+`themes.py` diff (four color tweaks on a theme sharing "Emiko"'s palette block, present since
+before this session started) was committed to the feature branch first (`1e64f96`, amended once to
+fix the commit-message verb) so nothing was left dangling by the merge. `git merge
+feature/traveling-focus-marker --no-edit` on `main` produced a clean merge with zero conflicts,
+confirmed via `--stat` matching what the branch actually contained; all 511 tests passed and the
+app was launched and verified running on the merged tree before pushing. Pushed to
+`origin/main` on request. The feature branch itself was left in place, not deleted — "not a big
+deal," Pryme's own call.
+
+**2. Diacritic-aware search and sort for the library, then tags' sort too — two live corrections
+mid-implementation, both changing the actual algorithm, not just tuning.** Raised as the deferred
+`TODO.md` item from 2026-09-08 ("Meša Selimović... can't be searched by typing 'mesa'"). First
+version folded diacritics on BOTH the query and the field unconditionally (NFKD decompose + strip
+combining marks) — this closed the reported gap but was immediately flagged as "too broad": typing
+the accented character itself (`š`, `kė`) matched every PLAIN occurrence of the base letter too,
+which was never the ask. **Corrected to an asymmetric, per-character rule**
+(`_diacritic_char_matches`/`_diacritic_aware_find`/`_diacritic_aware_startswith`, `library.py`): a
+plain query character matches its own letter OR its accented counterpart in the field, but an
+accented query character matches ONLY that exact accent — "common should match rare, not rare match
+common." Two design alternatives were discussed before implementing (per-character vs. a simpler
+"any accent in the query disables folding for the whole query" gate) — Pryme asked what the
+difference actually was rather than picking blind, and the per-character version was chosen once a
+concrete counter-example (`"kė"` against a field spelled with `ķ` instead of `k`) showed the
+simpler gate silently drops the plain-matches-accented guarantee for a query's OTHER characters the
+moment any ONE character in it happens to carry an accent. Verified against 8 hand-checked cases
+(plain-finds-accented, accented-finds-itself, accented-does-NOT-find-plain, mixed-character
+queries) before wiring into the three real search branches (`_prefix`, `@author`, bare text).
+
+Sort needed a SEPARATE, deliberately unconditional fold (`_fold_diacritics`, reused for both this
+and the search helpers' per-character logic): "Ágota Kristóf and Álvaro Enrigue go after Z... I'd
+prefer these to be treated as A." `library.py`'s `sort_key`/`missing.sort` and — once the same
+question was raised for tags — `tag_manager.py`'s tag-list refresh (`db.get_all_tags`'s SQL
+`ORDER BY` uses raw codepoint collation, same defect) both now sort on the folded string. A follow-
+up question ("does Álvaro come before Amerigo, or between the last A and first B?") led to an
+explicit, recorded design tradeoff rather than a silent one: fold-then-sort is a correct
+APPROXIMATION (a diacritic sorts adjacent to its base letter) but not real per-language collation —
+Turkish treats ö as a distinct letter sorting after o, not identical to it; Swedish/Finnish put
+å/ä/ö at the END of the alphabet. Real correctness needs locale-aware collation (ICU/Python
+`locale`, pinned to a specific language), which has no single right answer across languages to pin
+to — accepted as a permanent, non-TODO simplification (CLAUDE.md's Pending/Known Debt,
+`DEBT_INVENTORY.md`), not scheduled work. Tags' own completer/`QCompleter` matching was explicitly
+scoped OUT after weighing the tradeoff live: it's SQL `LIKE` + a native Qt popup, not the library's
+own Python filter loop, so diacritic-awareness there would mean a real new post-filter layer, not a
+small addition — judged not worth it for short, user-typed tag labels. `tests/test_search_filters.py`
+gained a new library entry (Meša Selimović) and 10 new tests (asymmetric matching in both
+directions, the mixed-character case, and the sort-order regression); 520 tests passed after this
+pass.
+
+**3. Stats' tab-bar hover-suppression gap: closed the reported symptom, opened a worse one, reverted
+in full — genuinely unexplained, not a quick mechanical port after all.** TODO.md had scoped this as
+"likely mechanical: port the same two `QTabBar::tab:hover:!selected` suppression rules Settings
+already has, scoped to `#stats_panel`." Doing exactly that DID close the original gap (mouse and
+keyboard highlights no longer coexisted on Stats' tab bar) but introduced a new, worse bug: mouse
+hover on the tab bar stopped repainting AT ALL after any keyboard navigation touched it, stuck until
+an actual click — while Day/Week/Month row hover kept working fine throughout, ruling out a
+panel-wide regression. A live `[STATS-HOVER-TRACE]` logger (temporary, removed after) confirmed the
+`kbdnav`/`kbdnav_tab_focused` properties DO flip back correctly and the tab bar DOES get
+`unpolish`/`polish`/`update()`'d at the right moment — ruling out the already-documented "tab bar
+needs its own repolish" gotcha this file has hit twice before (2026-09-04, 2026-09-08). Isolated the
+two new rules one at a time (a poison-attribute trick on the selector, not delete-and-retype) —
+**both independently reproduced the stuck-hover bug**, including a real methodological correction
+mid-investigation: an initial claim that "the mechanism is likely shared by both rules" was
+challenged directly ("How did you arrive at this conclusion?") for being stated before the second
+rule was actually tested; the fill_highlight rule genuinely needed the keyboard marker style
+switched live first to be exercised at all (it never matches under traveling style), which the
+challenge surfaced. Every plausible code-level explanation — event filter differences (only
+Settings' tab bar has one, and it doesn't touch `MouseMove`), tab-bar construction, QSS cascade/
+source order — came back identical between Settings and Stats, which IS the puzzle: byte-identical
+code paths, different live behavior, no mechanism found. Reverted in full (both rules deleted, the
+diagnostic logger removed); `git diff --stat` confirmed clean. Also caught and corrected mid-session:
+asked the user to re-describe something they'd already stated plainly ("jiggling doesn't bring it
+back") — called out directly ("You are asking me what you already know"), a real instance of the
+exact failure CLAUDE.md's own sidebar-toggle precedent already documents.
+
+**Reframed, not just left broken.** Pryme's own call after the reverted attempt: this isn't a
+Stats-specific bug at all — it's the reverse-direction half of the already-paused "keys pick up from
+the mouse" plan (`snuggly-growing-stardust.md`), which only covers keys picking up from a stationary
+mouse, never the mouse fully reclaiming hover ownership once it's genuinely the most recent input
+again — a gap Settings' OWN tab bar shares too ("even when there is one highlight in the Settings
+tab, it doesn't continue from where the mouse is if the mouse was the most recent input"). The plan
+file was updated to name this second direction explicitly rather than leaving it implicit; the
+TODO.md entry was rescoped to point at the consolidation instead of standing as its own fix, with an
+explicit note NOT to attempt another standalone QSS patch. Full trace, including the exact isolation
+sequence and every live report, in NOTES.md, 2026-09-10 ("Stats tab-bar hover-suppression port: fix
+attempt reverted, mechanism NOT understood").
+
+**4. Sprint's "Reset all sprint data" — visible-even-when-empty, fixed twice in the same session
+after live testing corrected the first design.** Raised directly: the button was always clickable
+even with nothing to reset. First attempt dimmed it (`setEnabled`/`:disabled` QSS, matching the
+Library-tab Remove/Rescan and Themes-pool-button precedent) — reasoning that hiding outright would
+pop the button in/out unpredictably while data changes with the panel open (a sprint finishing, or
+the reset itself firing). Live-tested and correct, but Pryme then re-examined his own original
+worry and found it didn't hold: the reset only ever fires from the panel's OWN confirm flow (already
+tied to this same button's visibility, so both disappear together, not one abruptly), and a sprint
+finishing live is already covered by Cancel-the-sprint occupying the same slot instead (mutually
+exclusive via `_sprint_active` — Reset only reappears on the NEXT panel open, never mid-session). With
+that concern resolved, the CORRECT precedent was Book Detail's "Delete listening history" button
+(`setVisible(has_history)`), not the dim-based ones — switched to match exactly. `db.has_sprint_data()`
+(a cheap `EXISTS` query) drives `SprintPanel.set_has_sprint_data()`, called from `PanelManager.
+_start_sprint_entry` (panel-open, via `self.main_window.db` — SprintPanel has no `db` reference by
+design) and from `app.py`'s `_on_reset_sprint_stats_requested` (live update after a reset actually
+lands, since the panel stays open through that flow). A third call site (re-enabling live on natural
+sprint completion) was written, then removed once the corrected mental model showed it was dead code
+— `_sprint_active` already hides Reset unconditionally during that window, so nothing was ever
+reachable there. `tests/test_sprint_stats.py` (new, 4 tests) pins `has_sprint_data()`'s empty/
+attempt/session/reset-clears-it behavior directly against a throwaway DB. 524 tests passed.
+
+**Also raised, not acted on:** CLAUDE.md has grown to ~2300 lines — flagged directly as inviting
+degradation ("this is not a scratch pad... every model reads it at the start of the conversation"),
+explicitly deferred to a future trim pass rather than touched this session.
+
 ## Session Summary — 2026-09-09 Session 1 — App-wide confirmation-dialog keyboard consistency pass: audited all nine "arm a destructive confirmation, auto-revert after 7s" sites, fixed Escape closing the whole panel instead of just canceling at three of them, added Delete-key support for two reset actions and one Book Detail history action, then generalized to a single rule — any key other than Space/Enter dismisses an armed confirmation and swallows that press — closing gaps at all nine sites plus a second-order Tab-specific gap live-testing surfaced at three of them. Committed `dd3b0e6`, `fc29062`, `9eeddbc`, `ca9036f` (plus `6814731`, a TODO-only entry for an unrelated bug found along the way).
 
 **Context: user-initiated, not a continuation of the traveling-focus-marker keyboard-nav feature this branch has otherwise been about — Pryme asked for it directly: "in some instances Esc cancels them, and in some instances it closes the panel. The behavior will need to be uniform."**
