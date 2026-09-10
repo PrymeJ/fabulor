@@ -2571,6 +2571,25 @@ class PanelManager:
             return []
         if root is None:
             return []
+        if panel in ("speed", "sleep", "sprint"):
+            # Delegate to flat_panel_rows' own layout-order walk instead of findChildren
+            # below — found live 2026-09-10 (Speed's Tab order: grid -> Step -> Undo ->
+            # Skip -> Smart rewind -> Default speed -> wraps to grid, skipping Default
+            # speed's real visual position right after the grid). Root cause: Speed's
+            # Default speed row is DELETED AND RECREATED on every panel open
+            # (_rebuild_def_speed_row, called from _start_speed_entry) so its buttons
+            # become the NEWEST entries in Qt's internal child-object list — findChildren
+            # order reflects recreation order, not visual/layout order, the moment any
+            # widget in the panel gets rebuilt after construction. flat_panel_rows'
+            # _walk reads the actual QVBoxLayout/QHBoxLayout/QGridLayout structure
+            # directly (lay.itemAt(i) in real layout order), so it's immune to this by
+            # construction — it already gets Speed's arrow-key navigation right; Tab was
+            # the only consumer still using the fragile findChildren walk. Flattening its
+            # row-of-rows shape (one row per grid row's grouping doesn't apply here — a
+            # grid row IS one opaque list of every navigable cell already, so flattening
+            # is just concatenation, no cell reordering) gives Tab the same order arrows
+            # already use.
+            return [w for row in self.flat_panel_rows(panel) for w in row]
         result = []
         if panel == "settings":
             tab_bar = self.main_window.tabs.tabBar()
