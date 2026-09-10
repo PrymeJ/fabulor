@@ -179,21 +179,42 @@ relevant — no longer an open item.
 ### Stats' tab bar is missing the mouse/keyboard hover mutual-exclusion Settings' tab bar has
 - [2026-09-09] Live-reported: "The tab row of Settings have the mouse and the keyboard cancel
   the highlight of each other. Stats doesn't have that, and two highlights coexist at the same
-  time." Confirmed as a genuine QSS gap, not a differently-shaped equivalent (background research
-  agent, verified via direct `themes.py` reading and `git log -S`): Settings' `get_settings_
-  stylesheet` has TWO hover-suppression rules — `[kbdnav="true"][kbdnav_style="traveling"]
-  QTabBar::tab:hover:!selected {...}` and `[kbdnav="true"][kbdnav_tab_focused="true"]
-  QTabBar::tab:hover:!selected {...}` — both repainting a hovered-but-not-selected tab back to
-  its resting look the instant the tab bar genuinely holds keyboard focus, added in `8eedb00`.
-  `get_stats_stylesheet` only ever received that rule's SIBLING — the `::tab:selected` fill paint
-  — when `71b389f` ("generalize tab-bar kbdnav to Stats") ported the fill-highlight mechanism;
-  the accompanying `::tab:hover:!selected` suppression rule was never copied over, under either
-  marker style. Not a deliberate scope decision on record anywhere (SESSION.md's own entry for
-  `8eedb00` never mentions Stats; `71b389f`'s commit message says "generalize," not "generalize
-  the fill only") — reads as an incomplete port. Not yet started. Fix shape is likely
-  mechanical: add the same two `QTabBar::tab:hover:!selected` rules to `get_stats_stylesheet`,
-  scoped to `#stats_panel` instead of `#settings_panel`, mirroring the existing `kbdnav_tab_
-  focused`/`kbdnav_style` conditions already ported for the fill rule.
+  time." Confirmed as a genuine QSS gap: Settings' `get_settings_stylesheet` has TWO
+  hover-suppression rules — `[kbdnav="true"][kbdnav_style="traveling"] QTabBar::tab:hover:
+  !selected {...}` and `[kbdnav="true"][kbdnav_tab_focused="true"] QTabBar::tab:hover:!selected
+  {...}` — both repainting a hovered-but-not-selected tab back to its resting look the instant
+  the tab bar genuinely holds keyboard focus, added in `8eedb00`. `get_stats_stylesheet` only
+  ever received that rule's SIBLING — the `::tab:selected` fill paint — when `71b389f`
+  ("generalize tab-bar kbdnav to Stats") ported the fill-highlight mechanism; the accompanying
+  `::tab:hover:!selected` suppression rule was never copied over, under either marker style.
+  Not a deliberate scope decision on record anywhere — reads as an incomplete port.
+
+  **[2026-09-10] Attempted, reverted — this is NOT the "likely mechanical" fix it looked like.**
+  Porting the two missing rules verbatim (byte-identical shape to Settings', just `#stats_panel`
+  instead of `#settings_panel`) DID close the original coexistence gap — but introduced a worse,
+  different bug: mouse hover on Stats' tab bar stopped repainting entirely after any keyboard
+  navigation touched the tab bar, staying stuck (no highlight on hovering a different tab) until
+  an actual click. Isolated properly, not guessed: a live `[STATS-HOVER-TRACE]` logger confirmed
+  the `kbdnav`/`kbdnav_tab_focused` properties DO correctly flip back and the tab bar DOES get
+  `unpolish`/`polish`/`update()`'d at the right moment (ruling out the already-known "tab bar
+  needs its own repolish" gotcha this file documents — that mechanism was checked and is
+  correctly firing). Tested each of the two new rules ALONE (traveling-style rule alone under
+  traveling marker style; fill_highlight rule alone under fill_highlight style, switched live to
+  actually exercise it) — BOTH independently reproduce the stuck-hover bug, so it isn't the
+  rule *count* or a conflict between the two; it's something about adding this selector SHAPE
+  (`[kbdnav="true"][...] QTabBar::tab:hover:!selected`) to Stats' stylesheet at all. No mechanism
+  confirmed — every plausible explanation checked (event filter differences, tab-bar construction
+  differences, QSS cascade/specificity, source order) came back identical between Settings and
+  Stats, which is itself the puzzle: the two panels run byte-identical code paths and still
+  behave differently. Both rules fully reverted; `app.py` and `themes.py` confirmed back to their
+  pre-attempt committed state (`git diff --stat` clean on `app.py`, only the pre-existing
+  unrelated theme-tuning diff on `themes.py`). Left as an open, harder-than-expected bug — next
+  attempt should NOT copy Settings' rule shape verbatim; needs either a different suppression
+  mechanism (e.g. a plain dynamic property written by app code instead of relying on native
+  `:hover` re-evaluation, the same class of fix this file already used once for the Themes swatch
+  grid's `WA_UnderMouse` unreliability) or a live Qt-internals trace beyond what a property/repaint
+  logger can show (e.g. instrumenting `QTabBar`'s own `mouseMoveEvent`/hit-test to see whether it's
+  even being CALLED after the repolish, not just whether the repolish itself ran).
 
 ### Three more keyboard-nav consistency gaps, found by Pryme's own live testing (not yet investigated)
 - [2026-09-09] All three reported together, none investigated yet — grouped here rather than as

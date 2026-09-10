@@ -1,3 +1,90 @@
+## 2026-09-10 — Stats tab-bar hover-suppression port: fix attempt reverted, mechanism NOT understood
+
+**Starting point:** Settings' tab bar suppresses mouse `:hover` on a non-selected tab the instant
+the tab bar genuinely holds keyboard focus (two QSS rules, one per keyboard marker style, both
+gated on `[kbdnav="true"][kbdnav_style="traveling"]` / `[kbdnav="true"][kbdnav_tab_focused="true"]`
+ancestor attributes on `#settings_panel`). Stats' tab bar never got the equivalent rules — only the
+sibling `::tab:selected` fill rule was ported when Stats joined the kbdnav system (`71b389f`). This
+was logged in TODO.md as "fix shape is likely mechanical" — add the same two rules, scoped to
+`#stats_panel` instead of `#settings_panel`.
+
+**The mechanical port worked for its stated purpose and broke something else.** Both rules were
+added, byte-identical in shape to Settings' — reading `t['bg_deep']`/`text_rgb` exactly as Settings'
+does, same `#stats_panel` scoping, same source order relative to the existing (unchanged)
+`::tab:selected` fill rule. Live-tested: the original coexistence bug (mouse hover and keyboard
+highlight both visible at once) was genuinely gone. But a NEW, worse symptom appeared: "Keyboard
+cancels the mouse, but when the mouse takes over, it doesn't highlight anymore until I click on a
+tab." Live-confirmed detail: Day/Week/Month row hover worked fine throughout (ruling out a
+panel-wide hover regression); leaving the tab bar entirely and re-entering did NOT restore hover
+(ruling out a simple stale-hit-test-on-enter theory); only an actual click restored normal hover
+behavior afterward.
+
+**Two wrong turns during diagnosis, both caught and corrected rather than shipped:**
+1. Read the existing "tab bar needs its OWN repolish, not just the panel's" CLAUDE.md rule (found
+   and fixed twice before, 2026-09-04 and 2026-09-09) and assumed it was the same bug recurring a
+   third time. Added a temporary `[STATS-HOVER-TRACE]` logger on `_set_keyboard_nav_active` and
+   `_set_kbdnav_property` (both the `kbdnav`/`kbdnav_style` writer and the `kbdnav_marker_active`/
+   `kbdnav_tab_focused` writer) and had the user reproduce the sequence live. The trace showed the
+   mechanism firing CORRECTLY: `kbdnav` genuinely flips back to `"false"`, `kbdnav_marker_active`
+   flips back to `"false"`, and the tab bar genuinely gets `unpolish()`/`polish()`/`update()`'d at
+   the right moment, every time. This ruled out the already-documented repolish gap — it is not a
+   fourth instance of that bug.
+2. Asked the user to re-test something they had already told me directly ("jiggling the mouse
+   doesn't bring it back") — a version of the exact "don't ask the user to re-describe what they
+   already stated plainly" mistake CLAUDE.md's own sidebar-toggle incident documents. Caught when
+   the user pointed it out directly ("You are asking me what you already know"); apologized and
+   moved to checking code instead of re-querying the user.
+
+**Isolation, done properly this time (per direct user instruction: "How did you arrive at this
+conclusion?" after I stated a conclusion about the fill_highlight rule without having tested it) —
+a real methodological correction mid-investigation:** the two new rules were disabled/re-enabled
+one at a time via a poison attribute (`[ISOLATION_TEST_DISABLED="true"]` appended to the selector,
+easy to add/remove exactly), rather than deleting and retyping QSS each round.
+- With ONLY the traveling-style rule active (user's live keyboard marker style at the time):
+  bug reproduced. Confirmed by direct live test, not inferred.
+- I initially stated "the mechanism is likely shared by both" rules based on this ONE result,
+  without testing the fill_highlight rule — the user directly challenged this ("How did you arrive
+  at this conclusion?"), which was fair: that claim was an unverified extrapolation presented as
+  fact. Retracted explicitly and re-tested properly.
+- The fill_highlight rule requires `kbdnav_tab_focused="true"`, which only ever gets written under
+  fill_highlight keyboard marker style (confirmed via the same trace: only `kbdnav_marker_active`
+  had ever been logged, never `kbdnav_tab_focused` — meaning every prior test ran under traveling
+  style, and testing the fill_highlight rule "alone" without switching styles first would have
+  tested a rule that structurally could never match anything, producing a meaningless result). User
+  switched to fill_highlight style live, specifically so the second rule's gate could actually be
+  exercised.
+- With ONLY the fill_highlight rule active (fill_highlight style now genuinely active): bug
+  reproduced again, independently. "Same bug. No highlight."
+
+**Conclusion, now actually verified rather than guessed:** both rules independently reproduce the
+stuck-hover bug — not a conflict between them, not a rule-count effect, but something about adding
+EITHER selector shape (`[kbdnav="true"][...] QTabBar::tab:hover:!selected`, an attribute-gated
+ancestor selector targeting the SAME pseudo-state `::tab:hover:!selected` a plain, ungated rule
+already targets earlier in the same stylesheet) to Stats' generated stylesheet at all. Every
+plausible code-level explanation checked and ruled out by direct comparison against Settings, which
+runs the exact same code paths (`_kbdnav_tab_bar_for`, `_set_keyboard_nav_active`,
+`_set_kbdnav_property`) and does NOT have this problem:
+- Event filters: only Settings' tab bar has one installed (`_ThemesTabBarInterceptor`), but it only
+  intercepts `MouseButtonPress`/`KeyPress`, explicitly passing through every other event type
+  (including `MouseMove`) unfiltered — ruled out as the differentiator.
+- Tab bar construction: both are plain `QTabWidget()` with only `setObjectName` called — no
+  `setMouseTracking`, `usesScrollButtons`, `documentMode`, or other property differs.
+- QSS cascade/source order: both files have identical relative ordering (base ungated rule, then
+  traveling-gated, then tab_focused-gated) — not a specificity or ordering artifact.
+- The repolish mechanism itself: byte-identical generalized helper (`_kbdnav_tab_bar_for`), traced
+  live and confirmed firing correctly for Stats specifically.
+
+**No mechanism was found.** The two rules were fully reverted (deleted, not just disabled) rather
+than shipped as a known-broken "fix," and the temporary trace logging was removed from both
+`_set_keyboard_nav_active` and `_set_kbdnav_property`. `git diff --stat` confirmed `app.py` clean
+(byte-identical to the last commit) and `themes.py` showing only the pre-existing, unrelated
+theme-tuning diff from before this investigation started. The original coexistence bug is back,
+unfixed — see TODO.md for the corrected entry (the "likely mechanical" framing was wrong; this
+needs either a non-native-hover suppression mechanism, matching the precedent already used for the
+Themes swatch grid's `WA_UnderMouse` unreliability, or a deeper live trace of `QTabBar`'s own
+internal mouse-move/hit-test handling — not just its dynamic-property/repolish state, which this
+investigation already confirmed is NOT the cause).
+
 ## 2026-09-10 — Sleep/Sprint Disable-Cancel button blink: root cause fully traced, three fix attempts, all reverted — mechanism understood, no fix shipped
 
 **Symptom, reported live and slowed down for review:** clicking Sleep's "Disable the sleep timer"
