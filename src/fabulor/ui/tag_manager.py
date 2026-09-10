@@ -1271,9 +1271,12 @@ class TagManagerWidget(QWidget):
         book detail) — Shift mirrors the Speed/Sleep/Sprint Shift-modifier
         convention for "the other click" established earlier this branch;
         Alt is ADDITIONALLY supported because Library already uses Alt+Enter
-        for its own "open detail" action (live design call, 2026-09-08 —
-        Library gaining a matching Shift+Enter, and Speed/Sleep/Sprint
-        possibly gaining Alt+Enter, are both deferred to TODO.md)."""
+        for its own "open detail" action (live design call, 2026-09-08).
+        As of 2026-09-10 this is no longer Tags-only: Library gained a
+        matching Shift+Enter and Speed/Sleep/Sprint gained Alt+Enter, so
+        both modifiers are now accepted as synonyms everywhere either one
+        previously existed alone — see _handle_flat_panel_arrows in
+        app.py and library.py's _list_key."""
         key = event.key()
         modifiers = event.modifiers()
         other_click = bool(

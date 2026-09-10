@@ -651,7 +651,9 @@ class LibraryPanel(QFrame):
         # override, so native selection-move works); Left/Right are hand-coded as ±1-column
         # moves in grid modes (native IconMode traversal was unreliable against our custom
         # sizeHint/uniform sizing) and are a no-op in single-column modes (1-per-row/List).
-        # Enter/Space reuse the click path; Alt+Enter reuses the detail path.
+        # Enter/Space reuse the click path; Alt+Enter/Shift+Enter reuse the detail path
+        # (Shift added 2026-09-10 as a synonym for Alt — Tags already accepts both for the
+        # identical action; see _handle_thumb_grid_keys in tag_manager.py).
         def _list_key(e):
             key = e.key()
             mods = e.modifiers()
@@ -688,7 +690,7 @@ class LibraryPanel(QFrame):
                 idx = self._list_view.currentIndex()
                 if not idx.isValid():
                     return
-                if mods & Qt.KeyboardModifier.AltModifier:
+                if mods & (Qt.KeyboardModifier.AltModifier | Qt.KeyboardModifier.ShiftModifier):
                     book = idx.data(ROLE_BOOK)
                     if book:
                         self.detail_requested.emit(book.path)

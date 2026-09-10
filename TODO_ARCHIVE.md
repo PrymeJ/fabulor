@@ -5,6 +5,20 @@ list scannable. Kept, not deleted, per the project's normal practice of not thro
 that isn't fully duplicated in NOTES.md/SESSION.md/a commit message. Order is the same relative
 order these entries had in TODO.md before the split (2026-07-30).
 
+- **[2026-09-10] CLOSED: Book-detail keyboard shortcut (Alt+Enter/Shift+Enter) consistency across
+  panels.** Originally opened 2026-09-08 with two explicit follow-ups after Tags' thumbnail grid
+  gained both modifiers as synonyms: (1) give Library's own keyboard nav a matching Shift+Enter
+  (it only accepted Alt+Enter); (2) give Speed/Sleep/Sprint's Shift-modifier "other click"
+  convention a matching Alt+Enter (it only accepted Shift). Both were deferred to the next session
+  pending a decision on whether Alt even made sense outside Tags/Library, discussed and settled:
+  Alt+Enter is a real external convention ("get info about the selected thing," e.g. Windows
+  Explorer/classic media players' Properties binding) that already matches what Library/Tags use
+  it for; Shift+Enter has no comparable external convention, but since it already shipped on
+  Speed/Sleep/Sprint and costs nothing to also honor elsewhere, both modifiers are now accepted
+  as full synonyms everywhere either existed alone — Library's `_list_key` (`ui/library.py`) and
+  `_handle_flat_panel_arrows`/`_handle_panel_grid_arrows` (`app.py`) each OR both modifier checks
+  together now, matching Tags' `_handle_thumb_grid_keys` shape exactly.
+
 - **[2026-09-09] CLOSED: confirmation-dialog Escape behavior is inconsistent app-wide.** Originally
   scoped as "not yet started, no sites enumerated" — a full audit (background research agent) found
   nine armed-confirmation sites total: Book Detail's four (remove/exclude book, mark

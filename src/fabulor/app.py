@@ -4748,10 +4748,13 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
         Space/Enter both activate a plain click (Qt gives Space for a QPushButton for free —
         this method deliberately never touches plain Space, same as _handle_settings_arrows;
-        Enter needs adding, same reasoning there too). Shift+Enter/Shift+Space are the
+        Enter needs adding, same reasoning there too). Shift+Enter/Shift+Space (or, as of
+        2026-09-10, Alt+Enter/Alt+Space — the two modifiers are accepted as full synonyms, a
+        zero-cost superset now applied everywhere either existed alone: Library already used
+        Alt+Enter for its own "open detail" action, Tags already accepted both) are the
         keyboard equivalent of a RIGHT click, on whichever focused control actually has a
         `rightClicked` signal (Sleep's Fade-out row today; consumed as a no-op on anything
-        else, so a Shift-held press never falls through and fires a plain click instead) —
+        else, so a Shift/Alt-held press never falls through and fires a plain click instead) —
         2026-09-07 live design call, mirroring how Themes split plain Enter (right-click
         equivalent) from Space (left-click equivalent) for its swatch grid, generalized here to
         a MODIFIER on the shared activation keys instead of two different bare keys, since
@@ -4804,7 +4807,12 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         rows = self.panel_manager.flat_panel_rows(panel_key)
         if not rows:
             return False
-        shift = bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier)
+        # Alt added 2026-09-10 as a synonym for Shift here — Library already used Alt+Enter
+        # for its own "open detail" action and Tags already accepted both (see
+        # _handle_thumb_grid_keys in tag_manager.py); this closes the gap so Speed/Sleep/Sprint
+        # accept either modifier too, a zero-cost superset since nothing else uses Alt here.
+        shift = bool(event.modifiers() & (Qt.KeyboardModifier.ShiftModifier
+                                           | Qt.KeyboardModifier.AltModifier))
 
         grid = self.panel_manager.grid_layout_for(panel_key, focus)
         if grid is not None:

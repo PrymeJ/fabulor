@@ -156,7 +156,7 @@ Handled directly by `LibraryPanel`/`BookDelegate` (`ui/library.py`) — not part
 | `Home` / `End` | Jump the selection to the first / last row, scrolled into view. Same 2026-07-10 fix and same root cause as `PageUp`/`PageDown` above. |
 | `.` (period) | Jump the selection straight to the exact middle row (`row_count // 2`), scrolled into view. Added 2026-07-10 (`6acb512`). Confirmed unbound everywhere else (list keys, sort/view-mode shortcuts, `ShortcutDispatcher`, search field) before choosing it. |
 | `Enter` / `Return` | Play the selected book (same as left-click). |
-| `Alt`+`Enter` / `Alt`+`Return` | Open Book Detail for the selected book, on the Stats tab (same as right-click). No-op if a Book Detail panel is already open — see below. |
+| `Alt`+`Enter` / `Alt`+`Return` or `Shift`+`Enter` / `Shift`+`Return` | Open Book Detail for the selected book, on the Stats tab (same as right-click). No-op if a Book Detail panel is already open — see below. Shift added 2026-09-10 as a synonym for Alt — Speed/Sleep/Sprint already used Shift for their own "other click" convention, so both modifiers are now accepted everywhere either existed alone. |
 | `Space` | Play the selected book (same as `Enter`). |
 | `Tab` (list or "nothing focused") | Moves focus to the search field. |
 | `Tab` (search field focused) | Moves focus to a "nothing focused" state — NOT back to the list. See "nothing focused" row below. This is a two-state `search field ↔ nothing` cycle (changed 2026-07-10 from an earlier `search field ↔ list` toggle — tabbing directly onto the list used to call `scrollTo(currentIndex())`, and since mouse hover also sets `currentIndex()`, that silently scrolled the list if the mouse happened to be hovering a partially-visible book when Tab was pressed). Tab never reaches the sort combo, view-mode combo, sort-direction button, or Back button. |
@@ -191,7 +191,7 @@ highlight fades out after ~2.5s of no further keyboard movement, or is dropped/f
 immediately if the mouse takes over (hovering the same row clears it instantly; hovering
 a different row fades it out quickly rather than waiting out its timer) — only one
 highlight (mouse or keyboard) is ever visible at a time. Mouse hover also sets the real
-selection, so `Enter`/`Alt+Enter` always act on whichever book is currently highlighted,
+selection, so `Enter`/`Alt+Enter`/`Shift+Enter` always act on whichever book is currently highlighted,
 by mouse or keyboard, whichever moved last. Pressing `Tab` to leave the list drops the
 highlight **instantly**, with no fade wait, in every mode except List (whose highlight is
 the mouse-hover-fade mechanism itself, unaffected by this).
@@ -247,7 +247,7 @@ to make a selection (or dismissing it without choosing) still returns keyboard f
 list afterward, so arrows keep driving book navigation rather than getting stranded on the
 dropdown.
 
-**Book Detail Panel re-open guard:** requesting detail (via `Alt+Enter`, right-click, or
+**Book Detail Panel re-open guard:** requesting detail (via `Alt+Enter`/`Shift+Enter`, right-click, or
 any other entry point) while the panel is already visible is dropped entirely — it does
 not re-animate, and it does not retarget onto a different book. The panel must be closed
 first via its own close button or an existing close flow.
