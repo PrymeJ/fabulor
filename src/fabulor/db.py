@@ -983,6 +983,19 @@ class LibraryDB:
             conn.execute("DELETE FROM sprint_attempts")
             conn.execute("DELETE FROM sprint_sessions")
 
+    def has_sprint_data(self) -> bool:
+        """True if there is anything for "Reset all sprint data" to actually reset —
+        used to dim the button when it would be a no-op (2026-09-10 live ask), same
+        idiom as the Library tab's Remove/Rescan buttons and the Themes-tab pool
+        buttons. EXISTS is cheap regardless of table size (stops at the first row),
+        unlike the COUNT(*) get_overall_stats already runs for the same two tables."""
+        with self._get_conn() as conn:
+            row = conn.execute(
+                "SELECT EXISTS(SELECT 1 FROM sprint_attempts) "
+                "OR EXISTS(SELECT 1 FROM sprint_sessions) AS has_data"
+            ).fetchone()
+        return bool(row['has_data'])
+
     def get_last_n_days(self, n: int = 7, day_start_hour: int = 0) -> list[dict]:
         """Returns total listening seconds per day for the last N days.
         Days with no activity are included as zero so the chart has a consistent shape."""

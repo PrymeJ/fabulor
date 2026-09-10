@@ -1317,6 +1317,12 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
     def _on_reset_sprint_stats_requested(self):
         self.db.reset_sprint_stats()
+        # Hide the button live — the reset-confirm flow is entirely self-contained
+        # inside the panel (no auto-close on confirm, unlike arming a sprint), so it's
+        # always visible right when this runs. has_sprint_data() is always False here
+        # in practice (reset just wiped both tables) — still queried rather than
+        # hardcoded, so this stays correct if reset_sprint_stats ever becomes partial.
+        self.sprint_panel.set_has_sprint_data(self.db.has_sprint_data())
         if hasattr(self, 'stats_panel') and self.stats_panel.isVisible():
             self.stats_panel.refresh_overall()
 
@@ -1336,6 +1342,11 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # refresh, so this is a no-op when Stats isn't open.
         if hasattr(self, 'stats_panel') and self.stats_panel.isVisible():
             self.stats_panel.refresh_current_tab()
+        # No live Reset-button update needed here: while a sprint is active/completing,
+        # _sprint_active gates it hidden regardless of data (Cancel-the-sprint owns that
+        # slot instead — the two are mutually exclusive). Reset only ever becomes visible
+        # again on the NEXT panel open, which already re-queries has_sprint_data() fresh
+        # in _start_sprint_entry.
 
     def _on_sprint_display_text_updated(self, text):
         old_text = self.sleep_timer_label.text()

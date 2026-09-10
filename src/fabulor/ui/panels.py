@@ -1719,6 +1719,13 @@ class PanelManager:
     def _start_sprint_entry(self):
         """Starts the sprint panel slide-in animation. Mirrors _start_sleep_entry exactly."""
         self._flush_pending_restyle()  # before show() — see _flush_pending_restyle
+        # Refresh has-data BEFORE sync_disable_button_visibility, so that call's own
+        # visibility recompute (Reset = not sprint_active AND has_sprint_data) uses fresh
+        # data rather than whatever was last known — see SprintPanel.set_has_sprint_data's
+        # docstring for why this specific read lives here (SprintPanel has no db by
+        # design). Reaches self.main_window.db the same way _start_speed_entry already
+        # reaches self.main_window.config for a panel-open-time read.
+        self.sprint_panel.set_has_sprint_data(self.main_window.db.has_sprint_data())
         self.sprint_panel.sync_disable_button_visibility()
         panel_w = int(self.main_window.width() * 0.9)
         sidebar_y = 56

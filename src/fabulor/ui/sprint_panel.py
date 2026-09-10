@@ -63,6 +63,14 @@ class SprintPanel(QWidget):
         self._grace_pool_s = None        # total grace seconds for the active sprint (int)
         self._grace_used_s = 0.0         # cumulative pause seconds consumed
         self._sprint_active = False
+        # Whether Reset all sprint data has anything to act on — set by
+        # PanelManager._start_sprint_entry (panel-open time, via self.main_window.db)
+        # and app.py (after a reset/completion actually changes it). True by default so
+        # a fresh-construction visibility check before the first real query ever runs
+        # doesn't hide the button; sync_disable_button_visibility's own call from
+        # _start_sprint_entry always resolves it correctly before the panel is shown
+        # for real, same as _sprint_active's own default. See set_has_sprint_data.
+        self._has_sprint_data = True
         # End-of-chapter mode: None = duration-based sprint (the only mode before
         # this pass), 'end_of_chapter' = anchor-pinned. _sprint_eoc_anchor is the
         # chapter index sprint was armed on, mirroring SleepTimerPanel's own
@@ -700,14 +708,32 @@ class SprintPanel(QWidget):
         why the button's visibility is deferred to panel-open time instead of
         being set synchronously during arming.
 
-        Also owns Reset all sprint data's visibility (inverse of the disable
-        button's — only meaningful when no sprint is active) for the same
-        deferred-to-panel-open reason, and unconditionally cancels any armed
-        reset confirmation on panel (re)open rather than leaving a stale 7s
+        Also owns Reset all sprint data's visibility (inverse of the disable button's,
+        combined with _has_sprint_data via AND — see set_has_sprint_data's docstring)
+        for the same deferred-to-panel-open reason, and unconditionally cancels any
+        armed reset confirmation on panel (re)open rather than leaving a stale 7s
         timer running against a panel the user just reopened."""
         self.disable_sprint_btn.setVisible(self._sprint_active)
-        self._reset_sprint_btn.setVisible(not self._sprint_active)
+        self._reset_sprint_btn.setVisible(not self._sprint_active and self._has_sprint_data)
         self._cancel_reset_sprint_data()
+
+    def set_has_sprint_data(self, has_data: bool):
+        """Hides Reset all sprint data entirely when there's nothing to reset (2026-09-10
+        live ask) — same idiom as Book Detail's "Delete listening history" button
+        (_delete_history_btn.setVisible(has_history), book_detail_panel.py). Dimming
+        (setEnabled) was tried first and reverted the same day: live-checked, the "data
+        changes while the panel is open" case this was meant to guard against doesn't
+        actually happen — a reset only fires from inside this panel's own confirm flow
+        (itself already tied to this same button's visibility), and a sprint completing
+        live is covered by Cancel-the-sprint's own visibility instead (Reset/Cancel are
+        mutually exclusive via _sprint_active, so Reset only reappears on a LATER panel
+        reopen, never mid-session). SprintPanel has no `db` reference by design, so the
+        actual has_sprint_data() query is PanelManager's job (_start_sprint_entry, via
+        self.main_window.db) and app.py's job (after a reset lands) — this method just
+        stores the flag and re-derives visibility the same way sync_disable_button_
+        visibility does, so the two rules can never disagree."""
+        self._has_sprint_data = has_data
+        self._reset_sprint_btn.setVisible(not self._sprint_active and self._has_sprint_data)
 
     def disable_sprint(self, was_cancelled=False):
         was_active = self._sprint_active
