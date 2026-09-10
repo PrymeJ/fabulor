@@ -1339,6 +1339,31 @@ class BookDetailPanel(QWidget):
         """
         key = event.key()
 
+        # ANY key other than Space/Enter/Return, while a top-level confirm is armed, must
+        # dismiss JUST that confirm and swallow the press — pure dismiss, not also whatever
+        # the key would otherwise do (e.g. Left/Right must not ALSO cycle tabs on the same
+        # press). Live design ask, app-wide, 2026-09-09: matches Tags' delete-tag confirm
+        # (tag_manager.py's _handle_tag_detail_keys), the one pre-existing site in this app
+        # that already did this — every other site (including these two, before this change)
+        # let a nav key act normally while the confirm stayed visibly armed underneath,
+        # unrelated and untouched. Checked FIRST, ahead of the _editing/tab-cycle/History/
+        # Cover dispatch below: an armed top-level confirm is panel-wide state that should
+        # win regardless of what else might technically also be true (editing a field while
+        # Remove/Finished happens to be armed is not a state this panel's own code produces
+        # today — see _on_finished_clicked's mutual-exclusion with _confirming_remove — but
+        # this ordering is correct defensively either way, not just for the reachable case).
+        # History/Cover-tab-local confirms (_delete_history_confirm_label,
+        # _confirming_history_row) are handled separately, inside _history_key_event/
+        # _cover_key_event themselves, since they only apply on their own tab and already run
+        # ahead of top-level key meanings in the dispatch below.
+        if key not in (Qt.Key.Key_Space, Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            if self._confirming_finished:
+                self._cancel_finished_confirm()
+                return
+            if self._confirming_remove:
+                self._cancel_remove()
+                return
+
         if self._editing:
             if key in (Qt.Key.Key_Up, Qt.Key.Key_Down):
                 self._cycle_metadata_field(backward=(key == Qt.Key.Key_Up))
@@ -1394,12 +1419,52 @@ class BookDetailPanel(QWidget):
     def _history_key_event(self, key) -> bool:
         """History-tab-local key handling. Returns True if the key was claimed here (caller
         must not also apply a top-level meaning to the same press)."""
+        # ANY key other than Space/Enter/Return, while either History-tab-local confirm is
+        # armed, must dismiss it and swallow the press — same app-wide rule as the top-level
+        # confirms in keyPressEvent (see that method's own comment for the full rationale).
+        # Checked FIRST, ahead of both Up/Down row-nav and Delete below: before this, Up/Down
+        # freely moved the keyboard-hover cursor among the OTHER rows while an armed
+        # "Delete this session?" (or the bulk "delete all history") stayed visibly armed and
+        # completely untouched underneath — confirmed live-audit 2026-09-09, not assumed.
+        # Both states are checked (not just one) since they CAN be armed simultaneously in
+        # this codebase today (a pre-existing gap, not introduced here): arming the bulk
+        # delete-all-history confirm does not itself prevent also arming a per-row delete via
+        # Delete/X — see that branch below, which has no mutual-exclusion guard against this
+        # one either. Dismissing both here means a stray nav key always fully clears the tab
+        # back to a clean state, regardless of which combination got armed.
+        if key not in (Qt.Key.Key_Space, Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            claimed = False
+            if self._delete_history_confirm_label.isVisible():
+                self._cancel_delete_history()
+                claimed = True
+            if self._confirming_history_row is not None:
+                self._dismiss_history_confirm()
+                claimed = True
+            if claimed:
+                return True
         if key in (Qt.Key.Key_Up, Qt.Key.Key_Down):
             self._move_history_selection(-1 if key == Qt.Key.Key_Up else 1)
             return True
         if key == Qt.Key.Key_Delete or key == Qt.Key.Key_X:
             if 0 <= self._history_selected_index < len(self._history_rows):
                 self._history_rows[self._history_selected_index]._on_trash_clicked()
+                return True
+            # No row highlighted (added 2026-09-09, live design ask): "Delete listening
+            # history" was previously unreachable by keyboard at all — Up at row 0 used to
+            # just clamp/no-op (see _move_history_selection), so there was no state where a
+            # row WASN'T selected once you'd entered the list, and Delete with nothing
+            # selected did nothing. Now that Up-at-row-0 deselects back to -1 (see below),
+            # this is the natural landing spot for the same action Del/X performs
+            # everywhere else in this panel — arm the SAME confirmation the button's own
+            # click already does (_on_delete_book_stats), not a separate path. Guarded on
+            # the button's own visibility (mirrors _populate_history's has_history gate —
+            # _on_delete_book_stats itself has no internal guard, since normally only a
+            # visible, clickable button could ever reach it) and on nothing already being
+            # armed, so a stray Delete while the confirm is already showing doesn't
+            # re-trigger _position_delete_history_confirm() pointlessly.
+            if (self._delete_history_btn.isVisible()
+                    and not self._delete_history_confirm_label.isVisible()):
+                self._on_delete_book_stats()
             return True
         if key in (Qt.Key.Key_Space, Qt.Key.Key_Return, Qt.Key.Key_Enter):
             row = self._confirming_history_row
@@ -1410,21 +1475,39 @@ class BookDetailPanel(QWidget):
         return False
 
     def _move_history_selection(self, direction: int):
-        """Up/Down: moves keyboard row selection by one, clamped (no wrap). Reuses
+        """Up/Down: moves keyboard row selection by one, clamped (no wrap) — EXCEPT Up at row 0,
+        which deselects back to "no row highlighted" (-1) rather than clamping in place. Reuses
         _HistoryRow.set_keyboard_selected — the SAME _slide_overlay/_state transition real
         mouse hover uses, so the visual is identical to hovering that row with the mouse (per
-        spec: 'hover styling animates an X on the right side, this will be the indicator')."""
+        spec: 'hover styling animates an X on the right side, this will be the indicator').
+
+        The Up-at-row-0-deselects behavior was added 2026-09-09 (live design ask, alongside the
+        Delete-key support in _history_key_event): with no row ever deselectable once the list
+        had been entered, Delete had no reachable path to "Delete listening history" — arming it
+        needs a state where NO row is selected, and Up at the top is the natural, low-friction
+        way to reach that state without leaving the tab. Down at the LAST row still clamps in
+        place — deliberately asymmetric: unlike Stats' Day/Week/Month row list (which has an
+        outer tab bar to hand off to on Up-at-first-row), this panel has nowhere further "up"
+        that a deselect-then-exit two-step would usefully reach — Book Detail's whole panel
+        already holds real Qt focus at all times, and Left/Right already cycles tabs regardless
+        of row-selection state (see keyPressEvent's dispatch order) — so deselecting IS the
+        full return-to-tab-level behavior here, not a first step toward a separate target."""
         n = len(self._history_rows)
         if n == 0:
             return
         if self._history_selected_index == -1:
             new_index = 0
+        elif self._history_selected_index == 0 and direction < 0:
+            new_index = -1
         else:
             new_index = self._history_selected_index + direction
-        if not (0 <= new_index < n):
+        if not (-1 <= new_index < n):
             return
         if 0 <= self._history_selected_index < n:
             self._history_rows[self._history_selected_index].set_keyboard_selected(False)
+        if new_index == -1:
+            self._history_selected_index = -1
+            return
         # Also clear any row the real mouse is currently hovering, if it's not the new
         # target — _history_selected_index only tracks KEYBOARD selection, so a row the
         # mouse is resting on (never touched _history_selected_index at all) would
@@ -1547,6 +1630,32 @@ class BookDetailPanel(QWidget):
             # view — a genuinely bad leak, worse than any missing in-panel Tab feature). Handling
             # every Tab locally and returning True seals that leak on all tabs: this filter runs
             # before MainWindow's, per QApplication reverse-install order.
+            #
+            # Checked FIRST, ahead of every branch below (added 2026-09-09 — live-reported gap:
+            # "Stats > History > Delete listening history and Delete this session: Tab is not
+            # swallowed"): Tab is entirely handled HERE, in eventFilter, which runs before
+            # keyPressEvent ever sees the key — so keyPressEvent's own top-level swallow-and-
+            # dismiss check (added earlier this same session) can never catch Tab; it was only
+            # ever reachable for a key that actually makes it to keyPressEvent. Same root cause
+            # as the Tags-panel Tab gap fixed earlier the same session (tag_manager.py's
+            # _handle_tag_detail_keys) — a key handled by a DIFFERENT, earlier-running dispatch
+            # path bypasses a swallow check placed in the wrong one. Covers all four confirms
+            # (two top-level, two History-tab-local) in this ONE place, since Tab's branch runs
+            # regardless of which tab is active — without this, Tab while "Delete listening
+            # history"/a per-row "Delete this session?" was armed silently entered metadata
+            # edit mode (_on_info_tab() below) with the confirmation left visibly armed.
+            if self._confirming_remove or self._confirming_finished:
+                if self._confirming_finished:
+                    self._cancel_finished_confirm()
+                if self._confirming_remove:
+                    self._cancel_remove()
+                return True
+            if self._delete_history_confirm_label.isVisible() or self._confirming_history_row is not None:
+                if self._delete_history_confirm_label.isVisible():
+                    self._cancel_delete_history()
+                if self._confirming_history_row is not None:
+                    self._dismiss_history_confirm()
+                return True
             backward = (event.key() == Qt.Key.Key_Backtab
                         or bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier))
             if self._editing:

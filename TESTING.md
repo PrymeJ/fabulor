@@ -1,3 +1,356 @@
+## Confirmation-dialog keyboard consistency — Escape/Delete/swallow-and-dismiss — 2026-09-09 Session 1
+
+Nine sites total. All nine share the same two rules now: Escape (and every other non-Space/
+Enter key) cancels JUST the confirmation, panel/tab stays open; Delete arms a confirmation
+where one was added this session (Stats/Sprint reset, Book Detail's history-delete).
+
+### Escape cancels the confirmation, not the whole panel
+- [ ] Stats ⚙ tab → "Reset all listening stats" → arm it → Escape: confirmation reverts, Stats panel stays open
+- [ ] Sprint panel → "Reset all sprint data" (only reachable when no sprint is active) → arm it → Escape: reverts, panel stays open
+- [ ] Sprint panel → trigger the conflict-confirm overlay (e.g. try to start a sprint while Sleep is active) → Escape: reverts, panel stays open
+- [ ] Sleep panel → trigger its own conflict-confirm overlay (e.g. try to start Sleep while a sprint is active) → Escape: reverts, panel stays open
+
+### Delete arms a confirmation, from anywhere on the relevant surface (not just when focus is on the button)
+- [ ] Book Detail → History tab, arrow down to select a row, then Up at row 0: row deselects (does not just stay put)
+- [ ] Book Detail → History tab, with NO row selected → Delete: arms "Delete listening history"
+- [ ] Book Detail → History tab, with a row selected → Delete: arms THAT row's own "Delete this session?" (unchanged, still works)
+- [ ] Stats ⚙ tab → Delete, with focus anywhere on that tab (the day-start-hour spinbox, a toggle button, the tab bar itself) — not just the reset button: arms "Reset all listening stats"
+- [ ] Stats → a DIFFERENT tab (Overall/Day/Week/Month/Timeline) → Delete: does nothing (the button isn't there)
+- [ ] Sprint panel → Delete, with focus anywhere on the panel (not just the reset button), while the button is genuinely visible (no sprint active): arms "Reset all sprint data"
+- [ ] Sprint panel → while a sprint IS active (reset button hidden) → Delete: does nothing
+- [ ] Sprint panel → focus the custom sprint-duration or grace-duration text field → Delete: deletes a character forward, does NOT arm the reset confirmation
+- [ ] Only Delete works for these — X does nothing (dropped as a synonym; confirm it's genuinely inert, not just untested)
+
+### Any key other than Space/Enter dismisses an armed confirmation and does nothing else (swallow, not also navigate)
+Test with Up/Down/Left/Right and at least one letter key at each site — the confirmation should
+revert and the key's normal action (row move, tab switch, etc.) should NOT also happen on that
+same press. A second press of the same key, now that nothing is armed, should behave normally.
+- [ ] Stats "Reset all stats" armed → Up/Down/Left/Right/a letter: reverts, no side navigation
+- [ ] Sprint "Reset all sprint data" armed → same
+- [ ] Sprint's conflict-confirm overlay armed → same
+- [ ] Sleep's conflict-confirm overlay armed → same
+- [ ] Book Detail "Remove/exclude book" armed → Left/Right does NOT also cycle to a different tab
+- [ ] Book Detail "Mark finished/unfinished" armed → same
+- [ ] Book Detail "Delete listening history" armed → Up/Down does NOT also move the row-selection cursor
+- [ ] Book Detail per-row "Delete this session?" armed on one row → Up/Down does NOT move the keyboard-hover cursor among the OTHER rows either — the whole row list should be inert until the confirm is dismissed
+- [ ] Tags panel, delete-a-tag confirm armed → Up/Down/Left/Right: reverts (this one already worked before this session — regression-check only)
+
+### Tab specifically (the gap that recurred three times in one pass)
+Tab in Book Detail is dispatched in `eventFilter`, separately from every other key — verify it
+independently, not just as "one of the arrow keys" above.
+- [ ] Book Detail → arm "Remove/exclude book" (from ANY tab, since the confirm is header-level, not tab-local) → Tab: dismisses, does NOT enter metadata edit mode
+- [ ] Book Detail → arm "Mark finished/unfinished" → Tab: dismisses, same check
+- [ ] Book Detail → History tab → arm "Delete listening history" → Tab: dismisses, does NOT enter metadata edit mode
+- [ ] Book Detail → History tab → arm a per-row "Delete this session?" → Tab: dismisses, same check
+- [ ] Tags panel → arm delete-a-tag → Tab: dismisses, does NOT move focus into the (read-only-while-confirming) tag-name field
+
+## Stats Day/Week/Month row-list keyboard nav — hover/cursor fixes, blur interaction — 2026-09-08 Session 4
+
+**LIVE-ONLY, blur specifically.** The two central bugs here (mouse/keyboard hover fight, marker
+bleeding onto Book Detail) only reproduce with the transport-bar blur setting ON — it drives the
+5-15x/sec hide/show grab cycle both bugs trace back to. All 507 automated tests passed throughout
+every attempt in this area, including the two that later failed live — do not treat a green test
+run as coverage for anything in this section.
+
+### Row-list cursor shape
+- [ ] Day/Week/Month, a period with few sessions (Finished-books carousel hidden): hover down past
+      the last real row into the empty space below it — cursor is a plain arrow, not a pointing hand
+- [ ] Move back up onto a real row: cursor returns to the pointing hand
+- [ ] Click in the empty space below the last row: no-op, no crash
+- [ ] Mouse leaves the row list entirely (off the bottom, into the tab bar area): cursor is the
+      arrow, not stuck as a hand
+
+### Mouse/keyboard hover fight (blur ON)
+- [ ] Arrow down into a Day/Week/Month tab's row list, rest the mouse on a DIFFERENT row than the
+      keyboard cursor, keep pressing Up/Down repeatedly: the keyboard's highlight stays on the
+      keyboard's own row — it does not snap to wherever the mouse is resting, on any single press
+- [ ] Same test with PgUp/PgDn/Home/End instead of Up/Down
+- [ ] After a burst of keyboard presses, physically move the mouse onto a different real row: the
+      highlight now correctly follows the mouse (reclaim still works — this isn't testing that
+      mouse control is broken, only that it doesn't fire from a stationary cursor)
+- [ ] Repeat the whole check with the transport-bar blur setting OFF: same correct behavior (this
+      was already working before blur was in the mix — confirms the fix didn't regress the no-blur
+      case while fixing the blur case)
+- [ ] Repeat with blur ON while a book is actively playing (the grab cycle only runs then) vs.
+      paused/no book (grab cycle idle) — the fight should be gone in both, but the playing case is
+      the one that actually exercises the fix
+
+### Marker bleeding onto Book Detail (blur ON, traveling marker style)
+- [ ] Settings > Controls > Keyboard marker style = "Traveling marker". Open Stats, arrow into a
+      tab (e.g. Day), press Enter/Space on a row to open Book Detail: the marker does NOT appear
+      anywhere on Book Detail, during or after its slide-in animation
+- [ ] Same check with the marker genuinely mid-patrol (still actively animating, not yet dormant)
+      the instant Enter is pressed — the in-flight animation must not continue rendering onto Book
+      Detail once it's open
+- [ ] Close Book Detail back to Stats: keyboard focus lands somewhere sane (the tab bar or the row
+      that was open), not stranded — arrow keys work immediately, no extra Tab/click needed
+- [ ] Repeat with blur OFF: same correct behavior (this bug was blur-specific; confirms no
+      regression to the already-correct no-blur case)
+- [ ] Repeat opening Book Detail from Library (not Stats) with blur ON and the marker mid-patrol on
+      some other keyboard-navigable panel state, if reachable — the underlying fix
+      (`_grab_and_blur`'s focus save/restore) is general, not Stats-specific, so this should also
+      be clean
+
+## Traveling focus marker — keyboard/mouse modality, Look-tab arrows — 2026-09-04
+
+**LIVE-ONLY.** Every bug in this section was invisible to scripted checks: three separate offscreen
+harnesses rendered the marker's geometry pixel-correct against a reference line while the live app
+showed a 1px offset, and the modality bugs were all found by tracing the running app, never by
+reading the code. Two of them were *introduced* by a fix that reasoned correctly from a passing
+test. Do not treat green tests or a clean render as coverage here.
+
+### Marker appearance (Settings > Look)
+- [ ] Tab into the Look tab's buttons: the marker traces the button's **rounded** corners, following the real border — not a sharp-cornered box, and not offset outside it
+- [ ] Marker on a settings TAB: top and both sides are traced, the bottom edge is deliberately not — and there is **no diagonal line** cutting across the untraced bottom, and no stray mark past the left or right edge
+- [ ] Both vertical sides reach the same depth (an uneven/"slanted" bottom means the endpoint sampling regressed)
+- [ ] The color visibly travels around the border. If it looks static, check the theme's `focus_marker_palette`: an HSV hue rotation on a near-white color is a visual no-op — this must be an RGB blend between genuinely different colors
+- [ ] No native dotted focus rectangle anywhere (suppressed app-wide by `NoFocusRectStyle`; QSS `outline: none` does NOT work on Fusion)
+
+### Modality — most recent input wins
+- [ ] Click a button with the mouse: marker does **not** appear
+- [ ] Click a **tab** with the mouse: marker does not appear (Qt reports this as `TabFocusReason`, hence `_MOUSE_PRESS_FOCUS_WINDOW_S` — a regression here shows the marker on mouse clicks)
+- [ ] Tab/arrow to navigate: marker appears, and any mouse `:hover` highlight **clears** — on both tabs and buttons
+- [ ] Hover a tab, then arrow through the tabs: the hovered tab's highlight goes away and stays away (no blink-then-return)
+- [ ] Hover a button, then arrow between buttons: same
+- [ ] Move the mouse onto a tab or button while the marker is showing: hover takes over, marker disappears
+- [ ] Move the mouse over **dead space** (a header, empty area): marker stays — only a real control hands control back
+- [ ] Keyboard-navigate, go to another settings tab and back: mouse hover still works **without** needing a click first (this specific strand needed the setter and the hand-back check to span the same controls)
+- [ ] Arrow around the **Themes** tab, return to Look: hover still works on both tabs and buttons
+- [ ] Type an arrow key inside a text field (Library search, sleep custom minutes): modality unaffected, no marker
+
+### Arrow navigation — all button-row tabs (Look, Controls, Audio, Library, Themes)
+Run these on **each** participating tab; the handler is generic, so a break on one is likely a break on all.
+Themes has its own additional row shape and internal swatch-grid navigation — see its own
+section below for that part specifically.
+- [ ] From the tab bar, **Down** enters the controls at the first row's first control
+- [ ] **Down**/**Up** move between rows, always landing on the row's **first** control
+- [ ] **Up** from the first row returns to the tab bar
+- [ ] **Left** at the first row's first control returns to the tab bar
+- [ ] **Left**/**Right** otherwise step within the row (native behaviour, unchanged)
+- [ ] **Down** on the last row does nothing (swallowed — it must not fall out of the grid)
+- [ ] Tab/Shift+Tab still cycle through every control exactly as before
+- [ ] **Space** and **Return/Enter** both activate the focused control (Qt gives Space for free; Enter is ours)
+
+### Settings → Themes tab (added 2026-09-06 Session 2)
+Row-to-row nav is the generic mechanism above (mode row, swatch grid as one stop, bulk row,
+interval row); this section covers the swatch grid's own internal navigation and the tab's
+shortcuts, which are Themes-specific.
+
+**Swatch grid entry/exit**
+- [ ] **Down** from the mode row lands on the swatch grid's first item (Cover art based theme),
+  and previews it automatically (no extra keypress) — same debounced preview a mouse hover uses
+- [ ] **Up** from the grid's first row leaves to the mode row above; the swatch's preview reverts
+  to the committed theme the instant you leave (no lag, no stuck highlight)
+- [ ] **Down** off the grid's last row leaves to Add all/Remove all/Change now; preview reverts
+- [ ] **Left** off the grid's first column (row 0 only) leaves to the tab bar; preview reverts
+- [ ] **Tab** away from the grid (forward or Shift+Tab backward) also reverts the preview — this
+  was a real bug (2026-09-06): both Tab and every arrow exit initially failed to revert whenever
+  the real mouse cursor happened to be resting near wherever it last hovered a swatch, because
+  the exit path was reusing the MOUSE leaveEvent's jitter-detection heuristic on a keyboard
+  action that has nothing to do with where the mouse physically is
+- [ ] Leave the grid, then re-enter with Down/Up: lands back at row 0/last row (no memory of the
+  previous position — same as folder_list_widget's own exit-and-reenter behaviour)
+
+**Inside the grid**
+- [ ] **Right** from a row's last swatch continues onto the NEXT row's first swatch (reading-order
+  wrap, not a clamp) — confirmed on a genuinely bin-packed row boundary, not just a short row
+- [ ] **Left** from a row's first swatch continues onto the PREVIOUS row's last swatch
+- [ ] **Right** off the grid's very last swatch exits downward (same as Down there)
+- [ ] **Up**/**Down** move to the same column index on the row above/below, clamped to that row's
+  own length if it's shorter — this is a DIFFERENT movement than Left/Right's wrap
+- [ ] Arrival at any swatch shows a visible hover-look highlight (a real QSS property,
+  `kbdnav_hover` — NOT `Qt.WA_UnderMouse`, which was tried first and confirmed live not to
+  actually repaint `:hover` at all) — moving to a new swatch must not leave two swatches
+  highlighted, or none
+- [ ] **Space** toggles the focused swatch's pool membership only (mirrors a LEFT click) —
+  it must NOT also switch the active theme
+- [ ] **Enter/Return** selects the focused swatch AND switches to it immediately (mirrors a
+  RIGHT click) — it must NOT just toggle pool membership
+- [ ] No traveling marker ever appears inside the grid — the hover-look property above is the
+  only "where am I" affordance
+- [ ] Resting the real mouse somewhere outside the grid while navigating with arrows: the preview
+  must hold (this was the periodic-backstop bug, fixed earlier this session — the 500ms
+  swatch-leave-still-hovered check was treating "mouse physically outside the box" as a leave
+  signal even though the keyboard, not the mouse, was driving)
+
+**Interval row**
+- [ ] **Left/Right** move between the interval values (2/5/10/20/30/60/120/Off) — plain `QLabel`s
+  have NO native arrow-key focus chaining (confirmed live and synthetically; unlike QPushButton,
+  which gets this from Qt's own style), so this needs its own explicit handling — a regression
+  here would show Right/Left doing nothing
+- [ ] The focused interval value shows an underline via a bottom border — NOT
+  `text-decoration: underline`, which was tried first and confirmed live not to render on
+  `QLabel` at all (identical output with/without the rule)
+- [ ] **Enter/Space** on the focused interval value sets the rotation interval
+
+**Tab-scoped shortcuts** (work no matter which control on the tab has focus)
+- [ ] `A` and `Ctrl+A` both trigger Add all
+- [ ] `R` triggers Remove all; `Ctrl+D` also triggers Remove all
+- [ ] `T` and `C` both trigger Change now
+- [ ] Typing "20", "30", "60", "120" (as separate keystrokes, quickly) sets that rotation interval
+  after a short pause (buffered, not one-key-per-value — typing "2" then "0" quickly must set
+  20, not land on 2 then separately on 0)
+- [ ] Typing an interval that doesn't exist (e.g. `9`, `121`) does nothing after the pause
+- [ ] None of these letters/digits do anything on any OTHER settings tab, or leak to the global
+  shortcuts (e.g. `T` must not rotate the main-window theme while Settings has focus)
+
+### Live row membership (controls that appear and disappear)
+- [ ] Look: set **Chapter notches** Off — the Animation pair disappears and stops being a stop; On again and it returns
+- [ ] Audio: with every audio setting at default, **Reset to defaults** is hidden and is not a stop; change any setting and it becomes reachable
+- [ ] Library with **no folders**: the folder box is skipped entirely (Down from the tab lands on **Add**), and Remove/Rescan are dimmed, unhoverable, unclickable and skipped by both Tab and arrows
+- [ ] Library after adding a folder: the box becomes a stop and Remove/Rescan come back
+
+### Audio — slider and Reset button
+- [ ] **Left/Right** on the focused balance slider change its value instead of moving focus
+- [ ] Holding Left/Right keeps the marker awake indefinitely — it must not fade mid-adjustment
+- [ ] The marker stops and fades normally a couple of seconds after you stop pressing
+- [ ] **Enter** on the slider does nothing (no crash — it has no click())
+- [ ] **Reset to defaults** shows a FILL SHIFT when focused, not a traveling marker
+- [ ] Its mouse hover works (this was broken pre-existing) and matches the keyboard focus colour
+- [ ] Both follow `focus_audio_tab_reset` if a theme overrides it
+
+### Library — Manage folders list (cursor and selection are independent facts)
+No traveling marker here — the current row is shown as a small dot at the row's right edge
+(`_FolderListItemDelegate`), separate from the accent fill a selected row gets. Arrow keys never
+change selection, on entry, mid-list, or exit; Space/Enter is the only thing that does.
+- [ ] **Down** from the tab bar enters the box **on the first path**, with **nothing selected** —
+  the dot shows on row 0, no accent fill anywhere
+- [ ] **Up** from the Add row enters the box **on the last path**, same: dot only, nothing selected
+- [ ] Arrow through several rows with nothing selected: only the dot moves, no row ever gets an
+  accent fill from arrowing alone
+- [ ] **Space** (or **Enter**) toggles the current row's selection on; press it again on the same
+  row and it toggles back off — both keys must behave IDENTICALLY, never split add/remove
+- [ ] Select two or three non-adjacent rows with Space, then arrow through the whole list: the
+  dot moves freely and the selected rows' accent fill is undisturbed the entire time
+- [ ] With exactly **ONE** path: Down enters it (must not bounce straight back out)
+- [ ] Up on the first path / Down on the last leaves the box — **whatever is selected stays
+  selected** (this used to clear on the way out; it must not anymore, since Remove needs to act on
+  it after Tabbing away)
+- [ ] Tab/Shift+Tab into the box also land on a path (dot on row 0/last, nothing selected), not the
+  bare box
+- [ ] **Del** removes the CURRENT-ROW path immediately, with no selection required first — works
+  identically whether or not that row happens to also be selected, and never touches other selected
+  rows
+- [ ] **Remove** button is dimmed/unclickable whenever nothing is selected, and enables live the
+  instant a row is Space-selected — including right after a scan finishes (it must not silently
+  re-enable itself with no selection)
+- [ ] A plain click on the sole selected path deselects it (toggle-off) instead of re-selecting the
+  same path; Ctrl+click's own toggle behavior is unaffected
+- [ ] **Left** anywhere inside the box goes to the tab bar; **Right** anywhere inside the box is a
+  no-op (neither has a native meaning for a folder-path row)
+- [ ] The folder list's own scrollbar has **square** corners, matching its border-radius override
+  (a themed scrollbar rule elsewhere in Settings sets 4px and can silently win if this one's value
+  is ever merely omitted rather than set to 0px)
+
+### Excluded Books popup (Settings → Library, below Persist search filter)
+Self-managed overlay with its own `keyPressEvent` — mirrors `ChapterList`'s conventions rather than
+`_handle_settings_arrows`'s button-row model. No separate marker/fill/dot: the row's own hover-
+reveal eye slide IS the "you are here" indicator, driven by keyboard exactly like a real mouse hover
+would.
+- [ ] **Down** from any Persist search filter button enters the box on row 0, eye revealed
+- [ ] **Right** from Persist search filter's rightmost button also enters the box on row 0
+- [ ] With 0 excluded books, the box is invisible and never becomes a keyboard stop at all
+- [ ] Up/Down move the eye one row at a time; scrolling happens automatically once past the visible
+  window, including past the 7-row expanded cap if there are more than 7 excluded books
+- [ ] **Left/Right** (either key) toggle expand/collapse, same as `ChapterList`'s own convention —
+  not tied to scroll position, a deliberate action only
+- [ ] **Space/Enter** on the current row restores it — same effect as clicking its eye
+- [ ] **Up** at row 0 always exits to Persist search filter's row, collapsing the box first if it
+  was expanded (never a no-op, regardless of expand state)
+- [ ] Collapsing while the eye is on a row beyond the default 3 (only reachable while expanded)
+  scrolls that row back into view rather than resetting the cursor to row 0
+- [ ] Shift+Tab away from the box, or a mouse click landing on any other Settings control, also
+  collapses an expanded box — not just the Up-at-row-0 path
+- [ ] **Mouse and keyboard, "most recent move wins":** rest the mouse on one row while arrowing the
+  keyboard to a different row — only ONE eye is ever open at a time, and it always follows whichever
+  input moved most recently
+- [ ] With the transport-bar blur enabled and the panel open, rest the mouse motionless on a row and
+  press an arrow key repeatedly: the keyboard's eye must stay put on the new row, not flash and
+  immediately revert to the mouse's row (this was a real, confirmed bug — the blur's hide/show grab
+  cycle delivers a real, matched leave+enter pair to a perfectly stationary mouse roughly every
+  200ms)
+- [ ] Expand the box with the MOUSE while a Persist search filter button holds keyboard focus: focus
+  moves into the box (row 0) rather than staying stranded under the now-covered button
+- [ ] Arrow (Left/Right) across Persist search filter's own buttons while the box is ALREADY
+  expanded: same redirect, focus moves into the box instead of landing on a covered PSF button
+- [ ] The scrollbar handle is a distinct, darker shade from `ExcludedBooksSection`'s expand arrow
+  directly above it (both used to be plain `accent` and visually merged at their shared edge), and
+  has square corners like the folder list's
+
+### Marker shape (per control type)
+- [ ] Small buttons: rounded corners traced, all four corners intact — no corner cut off as a diagonal
+- [ ] Balance slider: a crisp **square** rectangle sitting on the bar, not rounded and not spilling past its right/bottom edge
+- [ ] Settings tabs: one flat sweep along the top edge only, stopping short of the rounded corners, not slanting at the ends
+- [ ] Selected folder path: square outline around the **row**
+- [ ] If a theme's tab marker blends into the tab bar, `focus_marker_tab_palette` overrides it for tabs alone
+
+### Theme preview revert on tab switch
+- [ ] Hover a theme swatch to preview, then switch tabs **with the mouse**: the preview reverts fully, *then* the tab switches — the snapback must not play over the newly-arrived tab
+- [ ] Same with **arrow keys** on the tab bar (this path used to revert after the switch)
+- [ ] Switching tabs with no preview showing: no added delay, behaves exactly as before
+
+### Speed / Sleep / Sprint panels — keyboard navigation (added 2026-09-07 Session 1)
+These three panels have no tabs — one flat row-of-rows per panel (`PanelManager.
+flat_panel_rows`), with each panel's own preset grid a single stop that owns its own internal
+navigation (`MainWindow._handle_panel_grid_arrows`). Run the row-to-row checks on **all three**
+panels; the mechanism is shared.
+
+**Row-to-row**
+- [ ] Down/Up move between rows (the preset grid, custom-duration row, and whatever else the
+  panel has), landing on the row's first control
+- [ ] **Right/Left at a row's last/first item continue into the NEXT/PREVIOUS row** rather than
+  stopping or jumping to an unrelated row — this was a real, repeatedly-reported bug (Qt's
+  native inter-button arrow stepping is NOT scoped to the visual row, it follows construction
+  order) fixed by handling Left/Right fully explicitly; re-check every row boundary in each
+  panel, not just one, since the bug's exact landing spot depended on construction order
+- [ ] Space and Enter BOTH activate a plain click (a real inversion bug had Space doing nothing)
+- [ ] Shift+Space and Shift+Enter both trigger a `rightClicked` action where one exists (Sleep's
+  Fade-out row: left-click applies now, Shift-click sets as default) — a no-op, not a plain
+  click, on any control with no `rightClicked` signal
+
+**Preset grid (Speed's 12 speed buttons; Sleep's 14 duration + End of chapter; Sprint's 10
+duration + End of chapter)**
+- [ ] Right/Left wrap in reading order across grid rows — rightmost cell continues onto the
+  NEXT row's first cell, leftmost continues onto the PREVIOUS row's last; off the grid
+  entirely in either direction, exits to the row above/below the grid in the panel
+- [ ] Up/Down move by column, clamped to a shorter row's own length where relevant
+- [ ] The spanning "End of chapter" cell (Sleep/Sprint) is ONE stop reachable from either
+  column it occupies, not two, and Left/Right/Up/Down around it behave like any other cell
+- [ ] The keyboard-focused grid button shows the SAME hover-style highlight a mouse hover
+  would (a real `:focus` QSS rule reproduced in each grid's own per-instance ramp
+  stylesheet) — moving to a new cell must show exactly one highlighted button, never zero,
+  never two
+- [ ] **This highlight must NOT appear on any other button in the panel** — Default speed,
+  Percentage/Fixed/Custom/None, Off/On, or (critically) Reset all sprint data. A real bug
+  briefly leaked it onto all of these via an unscoped `QPushButton:focus` rule; confirm via
+  screenshot comparison across a full navigation pass, not just a glance
+- [ ] Resting the real mouse on a DIFFERENT grid button than the keyboard-focused one:
+  exactly one of the two shows a highlight at a time, never both (kbdnav hover-suppression)
+
+**Text fields (Sleep's custom-duration input; Sprint's custom-duration and custom-grace-period
+inputs)**
+- [ ] Left/Right on a focused text field do NOT move the text cursor and do NOT dead-end —
+  they act like Down/Up respectively (there's no horizontal sibling to distinguish the two)
+- [ ] Up/Down on a focused text field move rows normally, untouched by the above
+- [ ] Typing a digit while focus is ANYWHERE ELSE on Sleep or Sprint redirects into that
+  panel's DURATION field (not the grace field) and starts typing fresh, replacing any stale
+  text — never fires while already inside that field
+- [ ] On Sprint specifically, with Grace mode = Custom (so `custom_grace_input` is visible):
+  typing a bare digit still goes to the DURATION field, never the grace field
+
+**Panel-specific**
+- [ ] Sprint's grace-period submenu (Percentage/Fixed/Custom sub-rows) is fully reachable by
+  arrow navigation in EVERY grace mode that shows it — this was completely unreachable before
+  a real fix (a bare-`QWidget`-wrapper case `flat_panel_rows` didn't handle at all)
+- [ ] Sprint responds to Tab and Shift+Tab at all (a pre-existing, unrelated gap — the panel
+  was simply missing from the Tab-cycling dispatch list)
+- [ ] `disable_sleep_btn`/`disable_sprint_btn` show ONLY a hover-style fill for both mouse and
+  keyboard focus — no traveling marker ever appears on them
+- [ ] `stats_reset_btn` ("Reset all sprint data") shows ONLY the traveling marker — no fill of
+  any kind, confirming it was NOT swept up by the grid's keyboard-focus rule
+- [ ] Closing any of the three panels (Escape, gutter click, or its own action) never shows the
+  marker visibly sliding off-panel with the close animation
+
 ## Playback
 
 - [x] Play/pause toggles correctly
@@ -823,7 +1176,7 @@ handling (search field, list) is a separate, more specific mechanism — see the
 - [ ] In EVERY context (no panel open; Library; Settings; Speed; Sleep; Tags; Book Detail open) — repeatedly pressing Tab NEVER moves focus to the window's minimize or close button
 - [ ] With no panel open: Tab does nothing
 - [ ] Settings panel open: Tab cycles through the ACTIVE tab's controls in a sensible order, wrapping at the end back to the first; Shift+Tab (Backtab) cycles backward; never lands on minimize/close
-- [ ] Settings → Themes tab specifically: Tab cycles only the mode/bulk buttons — the generated theme swatches and the cover-pool button are skipped entirely (not yet given dedicated keyboard nav)
+- [ ] Settings → Themes tab specifically: Tab cycles the mode row, the swatch grid (as ONE stop), the bulk row, and the interval row — see the dedicated Themes tab section below for what Tab does entering/leaving the swatch grid specifically
 - [ ] Speed panel open: Tab cycles that panel's controls with wrap, same as Settings
 - [ ] Sleep panel open: Tab cycles that panel's controls with wrap, same as Settings
 - [ ] Tags panel open: Tab does nothing (no controls wired for cycling yet)

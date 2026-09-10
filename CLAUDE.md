@@ -119,6 +119,49 @@ The real library used for day-to-day testing has been ~400 books. That is not re
   top-level widget's own cursor property, not the platform's actual visible cursor
   state. Don't use it as a proxy for "what does the user currently see."
 - **Qt's `QRect.right()`/`.bottom()` are inclusive (last pixel), not the true edge** — documented historical quirk, not a bug. Use `x()+width()`/`y()+height()`. Suspect first for any single-pixel boundary hit-test mismatch.
+- **A 1px antialiased stroke on an INTEGER coordinate straddles two pixel lines at ~50% each; on a
+  half-integer it fills one crisply** (measured 2026-09-05: `#7f7f7f`/`#808080` vs. one `#ffffff`
+  row). Qt puts pixel centres at half-integers, so a hand-drawn 1px outline wants `+0.5`. Invisible
+  on short/diagonal runs, unmissable on a long axis-aligned one — it presents as a horizontal line
+  "slanting" at its ends, not as blur. Combined with the `QRect` rule above, the same half-pixel
+  inset is also what pulls a right/bottom stroke back ONTO the widget.
+- **A QSS ID selector (`#name`) outranks a plain type selector (`QPushButton:hover`), so a widget
+  with an `#id` background rule silently has NO hover** unless given its own ID-level `:hover`.
+  Found 2026-09-05 on `#reset_audio_btn`, which had never responded to the mouse; `#disable_sleep_btn`
+  still has the same gap. Suspect this whenever a styled-by-id control ignores a generically
+  defined state rule.
+- **A mouse click on a QTabBar tab arrives as `TabFocusReason`, not `MouseFocusReason`** (measured
+  2026-09-03) — the reason describes focus moving *to a tab*, not the Tab key. `OtherFocusReason` is
+  no better: it covers both a tab click AND the legitimate keyboard hop where Tab lands on the tab
+  bar and Qt forwards focus onward ~2ms later. **No `QFocusEvent.reason()` value reliably means
+  "the user is on the mouse."** Record modality from the actual `MouseButtonPress`/`KeyPress`
+  instead — same shape as the `user_seek_pending`/`sleep_fired` rule: a flag set where intent is
+  known beats anything inferred downstream. Two successive fixes here were defeated by trusting a
+  reason (see `_set_keyboard_nav_active`'s MODALITY OWNERSHIP notes, app.py).
+- **`QAbstractButton::mouseReleaseEvent` repaints the button back to enabled/hover-visible BEFORE
+  it emits `clicked()`, not after.** Confirmed via a live paint-event trace with timestamps, not
+  assumed — a flash frame painted 0.3ms before a `setEnabled(False)` placed at the very top of the
+  `clicked` slot could run. Nothing reachable from inside a `clicked` slot (disabling, hiding,
+  reordering statements) can suppress that specific repaint; disabling any EARLIER than release
+  (e.g. on `pressed`) instead kills `clicked()` outright, since Qt gates it on `isEnabled()` at
+  release time. If a button's own native release-repaint is the thing that needs suppressing —
+  not just something to react to afterward — it needs an opaque overlay painted over the button
+  itself (with its own full press/drag-off/release state tracking), not a `clicked`-slot fix. See
+  NOTES.md, 2026-09-10 (Sleep/Sprint Disable-Cancel button blink — three fix attempts, all reverted).
+- **`unpolish`/`polish` on a parent does NOT re-resolve a child's cached style.** A dynamic
+  property gating QSS on an ancestor (e.g. `#settings_panel[kbdnav="true"] ... :hover`) will not
+  take effect on descendants until each one is polished itself — and `update()` alone is not
+  enough. Found twice in one session, separately, on `QTabBar` (whose `::tab` sub-controls cache
+  their own hover state) and then on the buttons underneath it (2026-09-04). If a property-gated
+  rule "isn't applying" while the property and flag both verify correct, this is the cause.
+  **Recurred 2026-09-08** in a NEWER, more general repolish helper (`app.py`'s
+  `_set_kbdnav_property`, added after the above finding) that walked only `QPushButton` children
+  and never got the tab-bar-specific repolish call the original fix required — surfaced as an
+  intermittent bug (worked only when an unrelated theme switch happened to also repolish the tab
+  bar) rather than a consistent failure, which is a harder signature to recognize as this same
+  cause. Any new helper that repolishes a `#settings_panel`-rooted subtree needs the SAME explicit
+  `tabs.tabBar()` unpolish/polish call this rule already documents — do not assume a
+  `findChildren(QPushButton)`-style loop covers it.
 - **Constraining a lone stretch participant's height moves the whole block.** In a `QVBoxLayout`
   with one `stretch=1` member, that member absorbs all leftover height. `setFixedHeight` or
   `setMaximumHeight` on it withdraws it from the stretch and the layout redistributes the freed
@@ -541,8 +584,10 @@ CUE mode is indicated solely by `_chapter_list` being non-`None` with `_virtual_
 ### DO NOT simplify `Player.terminate()`
 It must store the instance reference, clear `self.instance`, call `terminate()`, then `wait_for_shutdown()`. Without `wait_for_shutdown()`, libmpv's internal threads outlive Qt's cleanup and crash in `avformat_close_input`. This was masked for an unknown period by a debug print. The sequence is intentional — do not reorder or remove steps.
 
-### DO NOT move the checkpoint `unlink` back into `SessionRecorder.close()`'s daemon thread, and DO NOT make `closeEvent`'s `clear_checkpoint()` conditional
-`close()` flushes the session to DB on a daemon thread and RETURNS that thread (or `None` on the sub-60s/no-book discard). The checkpoint deletion is NOT inside that daemon closure — it is a separate synchronous `SessionRecorder.clear_checkpoint()` that `closeEvent` calls **unconditionally** after `flush_thread.join(timeout=0.5)`. Ordering is load-bearing: `t = close(); if t: t.join(timeout=0.5); clear_checkpoint(); event.accept()` — all before `event.accept()` (the point of no return). The original code did the `unlink` inside the daemon `_write` after the DB write; on graceful close the process exits right after `close()` returns, killing that daemon thread before the unlink but AFTER the DB write landed → stale checkpoint → next startup's `_recover_checkpoint()` re-wrote the SAME session as a **duplicate** (FIXED 2026-06-21; see NOTES.md "Session recorded twice on graceful app close"). Two independent guards with two distinct jobs: the **join** gives the DB write a bounded chance to land (it can be lost only if a single-row WAL insert exceeds 500ms — DB-broken territory); the **unconditional synchronous clear** makes the duplicate impossible regardless of how the join resolved. If the clear were left inside `_write` (or made conditional on the join completing), a join *timeout* could strand a checkpoint after a committed write and resurrect the bug. `losing-at-worst` beats `duplicating`; the prior behavior was a guaranteed duplicate. The recovery-path `unlink` in `_recover_checkpoint`'s `finally` is a DIFFERENT path (runs at startup while the app stays alive) — leave it as-is.
+### The checkpoint `unlink` must always run synchronously, never deferred to a daemon write thread's `finally` — true on BOTH the close path and the recovery path
+`close()` flushes the session to DB on a daemon thread and RETURNS that thread (or `None` on the sub-60s/no-book discard). The checkpoint deletion is NOT inside that daemon closure — it is a separate synchronous `SessionRecorder.clear_checkpoint()` that `closeEvent` calls **unconditionally** after `flush_thread.join(timeout=0.5)`. Ordering is load-bearing: `t = close(); if t: t.join(timeout=0.5); clear_checkpoint(); event.accept()` — all before `event.accept()` (the point of no return). DO NOT move the checkpoint `unlink` back into `SessionRecorder.close()`'s daemon thread, and DO NOT make `closeEvent`'s `clear_checkpoint()` conditional. The original code did the `unlink` inside the daemon `_write` after the DB write; on graceful close the process exits right after `close()` returns, killing that daemon thread before the unlink but AFTER the DB write landed → stale checkpoint → next startup's `_recover_checkpoint()` re-wrote the SAME session as a **duplicate** (FIXED 2026-06-21; see NOTES.md "Session recorded twice on graceful app close"). Two independent guards with two distinct jobs: the **join** gives the DB write a bounded chance to land (it can be lost only if a single-row WAL insert exceeds 500ms — DB-broken territory); the **unconditional synchronous clear** makes the duplicate impossible regardless of how the join resolved. If the clear were left inside `_write` (or made conditional on the join completing), a join *timeout* could strand a checkpoint after a committed write and resurrect the bug. `losing-at-worst` beats `duplicating`; the prior behavior was a guaranteed duplicate.
+
+**The recovery path (`_recover_checkpoint`) had the EXACT SAME bug shape, independently, until 2026-08-22 — this section's earlier text calling it "a DIFFERENT path... leave it as-is" was itself wrong and has been corrected here, not left to stand as stale documentation.** `_recover_checkpoint` used to unlink the checkpoint file inside its own daemon write thread's `finally`, mirroring the exact defect `close()` was already fixed for above. A second process launch arriving before that thread finished — trivially reachable under an `entr -r python main.py` dev loop, which kills the process on every file save and never runs `closeEvent`/`clear_checkpoint()` at all, but also reachable by any real crash-then-quick-relaunch — would see the same still-present checkpoint and recover it AGAIN as a duplicate `listening_sessions` row, sometimes cascading across several rapid restarts as the checkpoint's `listened_seconds` kept growing between kills. Found live 2026-08-22 after 67 such duplicate rows had accumulated since 2026-06-19 (cleaned up via a one-off dedup script, full table backed up first — see NOTES.md). Fixed (`43a9fca`) by unlinking synchronously in `_recover_checkpoint` itself, immediately after reading the file and BEFORE the write thread is spawned — not in the thread's `finally`, same fix shape as `close()`'s. A second, independent bug was found and fixed in the same investigation: `_recover_checkpoint` had stamped a recovered session's `session_end` as `datetime.now()` **at recovery time** (i.e. whenever the app next happened to launch) rather than when the session actually stopped — corrupting both the streak grid (wrongly crediting a day with no real listening, via the correct-in-general `get_streaks()` start-OR-end union rule reading a bogus input) and the hourly heatmap (`get_hourly_heatmap`'s proportional wall-time split smearing real seconds across every clock-hour between the true stop and the eventual relaunch). Fixed (`f3816cf`, the commit immediately before `43a9fca`) via `session_end = max(checkpoint_mtime, session_start)` — the checkpoint file's own mtime (rewritten every 30s while a session stays open) is the tightest honest estimate available, floored at `session_start` to guard clock skew. Both fixes are pinned by regression tests in `tests/test_session_recorder.py`, each independently verified to fail against the pre-fix code before confirming they pass against the fix.
 
 ### DO NOT call `session_recorder.close()` after nulling `_current_book` / `current_file`
 `SessionRecorder` is constructed with `get_book_fn=lambda: self._current_book` (`app.py`). `close()`
@@ -1253,6 +1298,12 @@ Consequences of this shared fact, each independently load-bearing:
 self-manage focus like Library/ChapterList) in its open/close flow — nothing else in the codebase
 enforces this per-panel; skipping it silently reintroduces the bleed-through bug.
 
+**1a. The settings Tab cycle is HAND-ROLLED, so it inherits none of Qt's own skip rules.**
+`panel_tab_widgets` and `settings_tab_button_rows` (arrow navigation) each filter membership
+themselves — `isVisibleTo`, `focusPolicy`, `isEnabled`. **A filter added to one must be mirrored
+in the other**, or Tab and the arrows disagree about what is reachable (2026-09-05: Tab landed on
+a disabled button the arrows correctly skipped).
+
 **2. The NoFocus sweep must stay complete — this entire mechanism depends on it.**
 `_focus_allows_global_shortcuts()`'s "not None, not MainWindow ⇒ panel-local" equivalence is only
 true because every always-on chrome widget outside a panel is `Qt.NoFocus`. **Any new always-on
@@ -1392,9 +1443,7 @@ PySide6 (Qt) + mpv via python-mpv. Python. SQLite. Mutagen for metadata.
 
 ## Collaboration Model
 
-- **Claude**: architecture, decisions, code review, documentation, root-cause investigation
-- **Windsurf / Copilot**: code generation
-- **GPT**: critique
+- **Claude**: architecture, decisions, code generation, code review, documentation, root-cause investigation
 
 (Gemini was previously used for pipeline scripts / folder-naming conventions, kept in lane by a
 GEMINI.md guardrail file; both were retired 2026-06-12.) The working model is "flag, confirm, then act."
@@ -1721,7 +1770,332 @@ Any `QWidget` subclass (not `QFrame`, not `QLabel`) that owns a background-color
 
 *Reorganization note (2026-07-13): the "Critical Architecture Rules" section was restructured to remove repetition — it previously existed as two passes (a full-prose section and a later condensed second pass covering many of the same rules). The two were merged: rules that appeared in both now appear once, under whichever fact they share, with no information dropped. Rules unique to either pass are unchanged. See the note directly under the "Critical Architecture Rules" heading for detail.*
 
-*Last updated: 2026-08-13 — Scrollbar row-alignment work extended to a third and fourth panel.
+*Last updated: 2026-09-09 Session 1 — App-wide confirmation-dialog keyboard consistency: audited
+all nine "arm a destructive confirmation, auto-revert after 7s" sites (Book Detail's four, Tag
+Manager's delete-a-tag, Stats' reset-all-stats, Sprint's reset-all-sprint-data + a generic
+conflict-confirm overlay, Sleep's own conflict-confirm overlay), then unified them on two rules:
+Escape (or ANY key other than Space/Enter/Return) cancels just the confirmation and swallows that
+press — never falling through to close the whole panel or perform the key's normal action — and,
+at three of them, Delete now arms the confirmation from anywhere on the relevant surface.
+Committed `dd3b0e6`, `fc29062`, `9eeddbc`, `ca9036f`.
+
+**New load-bearing fact, discovered twice independently in the same pass, worth stating once
+here rather than leaving it implicit in two separate commit messages:** a `keyPressEvent`
+override on a panel WIDGET is not reliably reachable for every key that widget's own confirm
+logic needs to intercept — TWO different keys failed this way, for two different underlying
+reasons, at three different confirmations, before the actual fix landed.
+
+- **Escape, at Sprint's and Sleep's conflict-confirm overlays.** Neither panel's widget ever
+  holds real Qt focus (`PanelManager._claim_panel_focus` targets a child button instead —
+  see the "Keyboard focus ownership" section above), so a `keyPressEvent` override on the
+  PANEL itself was silently dead code regardless of what it contained. Confirmed via a direct
+  synthetic test (not assumed) that `QObject::installEventFilter`'s documented reverse-install
+  order is real: the MOST RECENTLY installed filter runs first, so `MainWindow`'s own
+  `__init__`-time `QApplication`-wide filter — installed before any panel exists — runs BEFORE
+  a panel's `keyPressEvent` would ever get the chance, for any key that filter chain claims
+  first. The fix is the same shape Stats' `StatsPanel.eventFilter` already used correctly:
+  install the panel's OWN `QApplication`-wide filter in `showEvent` (i.e. AFTER `MainWindow`'s),
+  so it intercepts first. Any future confirm/dismiss logic on Sprint, Sleep, or a similar panel
+  that doesn't itself hold real focus must go in `eventFilter`, not `keyPressEvent`.
+- **Tab, at three Book Detail confirmations and separately at Tags' delete-tag confirm.**
+  Different root cause, same shape of bug: Tab is deliberately dispatched entirely inside
+  `BookDetailPanel.eventFilter` (sealed there specifically to stop it leaking to the library
+  underneath — see that branch's own long-standing comment), which runs before
+  `BookDetailPanel.keyPressEvent` is ever reached — so a swallow-and-dismiss check added to
+  `keyPressEvent`/`_history_key_event` could never see a Tab press at all. Found live, THREE
+  separate times, all traced to the one root cause and fixed in ONE place: the top of
+  `eventFilter`'s own Tab branch, ahead of every tab-specific thing that branch already does
+  (entering metadata edit mode, the Tags-tab field-focus toggle) — covering all four Book
+  Detail confirms (two top-level: remove/mark-finished; two History-tab-local: bulk delete,
+  per-row delete) in that one place, since the branch runs regardless of which tab is active.
+  The IDENTICAL root cause was independently found and fixed the same session for Tags' own
+  delete-tag confirm (`tag_manager.py`'s `_handle_tag_detail_keys`), where Tab was checked
+  unconditionally ahead of the `_confirming_delete` swallow block, for the same underlying
+  reason: Tab and "every other key" were never actually the same dispatch path to begin with.
+
+**The transferable lesson, stated once for future reuse:** a swallow/dismiss check placed inside
+one method only protects the keys that are ACTUALLY DISPATCHED THROUGH that method. Before
+declaring a "catch every key except X/Y/Z" rule complete at any site, check whether every key in
+that catch-all genuinely reaches the code doing the catching — Tab, Escape, and any
+app-installed-`eventFilter`-intercepted key are the recurring exceptions in this codebase, not a
+one-off, having now caused this same class of gap at four confirmations across two files.
+
+**Design note on the swallow-vs-navigate question itself:** the confirm-dismiss rule chose
+"swallow the triggering key entirely" (pure dismiss, no side navigation on that same press) over
+"dismiss AND also perform the key's normal action" — the ONE pre-existing site that already had
+any such behavior (Tags' delete-tag confirm) already swallowed, and it was kept as the reference
+design rather than switched to match click-outside's own "dismiss AND land on the click target"
+behavior. The two aren't actually parallel: a click's meaning is inherently spatial (it always
+lands somewhere concrete), while a key's meaning is entirely contextual — letting Down both
+cancel a confirm and silently move a row selection underneath it was judged a busier, less
+predictable side effect than a click landing somewhere visible. Live-check list: TESTING.md's
+new "Confirmation-dialog keyboard consistency" section. Full narrative, including the two failed
+first attempts (an unreachable `keyPressEvent` override; a widened-but-still-incomplete Delete
+scope corrected twice from live feedback) and the exact live reports that caught each gap:
+SESSION.md, 2026-09-09 Session 1.
+
+*Previously: 2026-09-08 Session 4 — Stats Day/Week/Month row-list keyboard-nav follow-through
+from live testing (branch `feature/traveling-focus-marker`, still NOT merged): a pre-existing
+pointing-hand-cursor-over-dead-space bug, a mouse/keyboard hover fight that took two failed ad hoc
+attempts before being rewritten as a real port of the traveling marker's own poll mechanism, and a
+focus-strand bug that made the marker bleed onto Book Detail. Committed `6845317`, `929cc85`.
+
+**Mouse/keyboard hover fight — the fix is now the reference implementation for this app's
+"most-recent-input-wins" principle on a `QAbstractItemView`, and TWO EARLIER ATTEMPTS at the
+identical Stats bug both failed live before this one shipped.** Keyboard Up/Down/PgUp/PgDn/
+Home/End on `StatsRowListView` (Day/Week/Month) move `_hovered_row` — the SAME state mouse hover
+writes, by explicit live design call ("down arrow goes to the first row, highlights using the
+current mouse hover"). `keyPressEvent`'s own `self.scrollTo(...)` moves row content under a
+stationary cursor, and Qt still re-evaluates what's under it and can re-fire `entered` for
+whatever row the mouse now occupies — even with zero real movement. Attempt 1 (exact
+`QCursor.pos()` equality, refreshed on every `mouseMoveEvent`) failed live: this desktop's
+cursor-position reporting is not reliably exact-equal across two reads even with the physical
+mouse untouched (matches this file's own existing Wayland/KDE cursor-and-hover-quirk catalog), so
+the gate was a near-always-true "moved" reading — "goes back to mouse... more aggressively"
+(worse than before the fix, since the accompanying cursor-shape fix made Qt's hover
+re-evaluation fire more reliably). Attempt 2 (a flat 150ms suppression window after every
+keyboard move) never addressed the deeper problem: reacting to `entered` AT ALL inherits its
+firing-order ambiguity relative to `scrollTo()`, which is a Qt internal, not a contract.
+
+**The fix that actually worked ports `MainWindow._kbdnav_cursor_poll`/`_KBDNAV_CURSOR_JITTER_PX`
+verbatim in shape** (the traveling-focus-marker's own, proven mechanism, already used by
+Settings/Speed/Sleep/Sprint) rather than inventing a fourth mechanism: `StatsRowListView` gets its
+own `QTimer` (`_kbdnav_hover_poll`, same 60ms/3px constants as the app-level version, see
+`_STATS_KBDNAV_HOVER_POLL_MS`/`_STATS_KBDNAV_HOVER_JITTER_PX`) that independently samples
+`QCursor.pos()` on its own clock — never reacting to any Qt hover SIGNAL while keyboard mode is
+active (`_on_entered` is silenced outright) — and only hands control back to the mouse once it has
+moved past jitter tolerance AND is genuinely resting over a real, DIFFERENT row (mirrors
+`_cursor_over_navigable_control`'s two-part test: moved, AND actually over something). **If any
+future panel needs this same "keyboard wins unless the mouse genuinely moved onto something else"
+behavior, start from this poll design — an anchor-refresh design (the shape both failed Stats
+attempts used, and the shape the still-paused Settings/Speed/Sleep/Sprint hover-pickup TODO item
+tried and abandoned twice, see TODO.md) has now failed at this exact problem three separate
+times.** Pryme's own framing, worth keeping verbatim for any future session extending this:
+"Make the keys pickup from where the mouse is, and make the keys win unless the mouse hovered over
+something else. This principle should be observed throughout the app with a holistic approach" —
+named explicitly as not-yet-applied to Library's own pagination (same symptom: "Library doesn't
+get it correctly either. Pagination makes it jump to the mouse"), deferred to TODO.md.
+
+A SECOND, related bug surfaced from the same live re-test once the poll shipped: `showEvent` and
+`leaveEvent` (both pre-existing, from the 2026-08-09 blur-grab hover-flicker fix) fire on EVERY
+one of `TransportBarBlurOverlay._grab_and_blur`'s 5-15x/sec hide/show ticks while blur is enabled
+and a book plays, completely unrelated to real mouse input — and both were unconditionally
+re-deriving/blanking `_hovered_row` from the current cursor position on every single tick,
+defeating the poll's exclusivity entirely. Pryme's own diagnosis pinned it directly: "The problem
+is the blur. If I turn it off, I can navigate there with arrows. If it is on, mouse always wins."
+Fixed by making both handlers defer to keyboard-hover mode exactly like `_on_entered` does — an
+EARLIER version of the `showEvent` fix had called `_exit_kbdnav_hover_mode()` unconditionally
+there, reasoning (wrongly) that a blur-grab-triggered visibility change was "unrelated to keyboard
+state" and should always win; it is in fact the opposite, being the highest-frequency source of
+spurious hover reclaims in the whole system.
+
+**Third bug, found live during the SAME re-test session, not part of any original report: the
+marker bled onto Book Detail when opened over Stats with blur on.** Traced to
+`TransportBarBlurOverlay.frost_panel_backdrop`'s one-shot backdrop grab (fires once, when Book
+Detail's slide-in finishes) passing Book Detail itself as the `panel` to hide for
+`_grab_and_blur`'s grab (a deliberate self-exclusion, so the panel BEHIND it shows through the
+frost) — Book Detail had just been given real Qt focus by `_claim_panel_focus` moments earlier at
+open-start, and `_grab_and_blur`'s bare `panel.hide()`/`panel.show()` had no focus handling around
+either call. Per this file's own already-documented Qt gotcha (hide() on a still-focused widget
+silently re-grants focus to whatever else is around — see the "Keyboard focus ownership" section's
+consequence 3), this hide handed focus back to whatever was focused in Stats BEFORE Book Detail
+opened, firing a genuine FocusIn there that re-triggered the marker via the normal
+`TabFocusReason`/`_update_focus_marker` path — and `panel.show()` never reclaimed focus
+afterward, so it could stay stranded on the underlay rather than only flickering. Fixed by
+saving/restoring focus around the hide, joining the two OTHER known side effects
+`_grab_and_blur` already compensates for at the exact same hide/show pair: cursor shape
+(2026-07-21 fix) and mouse hit-testing (2026-08-01 fix). **Any future addition to
+`_grab_and_blur`'s hide/show block should check whether the hidden panel could plausibly hold real
+Qt focus at that moment — this is now the third independently-discovered side effect of the same
+two lines, not a one-off.** Confirmed working live: "I confirm it fixed. It doesn't reappear."
+Also confirmed in the same pass that Session 3's `[STATS-FOCUS-TRACE]` diagnostic probe (armed for
+a separate, unrelated intermittent stuck-focus bug) stopped reproducing once the
+`_on_tab_changed`-tab-bar-reclaim fix from earlier this session landed — the probe was removed as
+no-longer-needed. Live-check list: TESTING.md's new "Stats Day/Week/Month row-list keyboard nav"
+section. Full trace, including the exact wording of both failed attempts and Pryme's own
+mid-session correction about not extending working logic between panels: SESSION.md 2026-09-08
+Session 4.
+
+*Previously: 2026-09-08 Session 3 — Fill-highlight follow-up fixes, and a theme-key rename.
+Two real regressions found in Session 2 earlier the same day: `kbdnav_fill_active` could get stuck
+`"true"` on a panel after switching from "fill_highlight" back to "traveling" — nothing ever
+cleared it under traveling style, since it's written only from the fill_highlight branch — fixed
+via `MainWindow.clear_all_kbdnav_fill_active()`, the mirror-image of the existing switch-TO-
+fill_highlight clear that only handled one direction. Also: **`_set_kbdnav_property`'s repolish
+loop never walked the settings `QTabBar` itself, only `QPushButton` children** — `QTabBar`'s
+`::tab` sub-controls cache their own style state and don't re-resolve from an ancestor's
+unpolish/polish alone (the exact same fact `_set_keyboard_nav_active` already has its own
+tab-bar-specific repolish block for, 2026-09-04 — the newer, more general helper never got the
+same treatment). This made a new `kbdnav_tab_focused` property's own QSS rule (added this session
+so fill_highlight shows a highlight on the tab bar itself, not just inside a tab) appear to work
+only when an UNRELATED event — a theme switch, which does its own full repolish — happened to
+also repolish the tab bar; reported live as "worked for some themes, then didn't on the same
+themes again." **Any future property whose QSS rule targets a `QTabBar`/`::tab` must repolish the
+tab bar explicitly — repolishing an ancestor is not enough**, joining the existing "polishing a
+parent does not re-resolve a child's cached style" rule in this file's Debugging discipline
+section as a second, tab-bar-specific instance of it. Also fixed: `kbdnav_fill_highlight` was
+missing from `_NO_BASE_INHERIT_KEYS`, so every theme silently inherited The Color Purple's
+override; and — per live color-consistency feedback comparing a Look-tab pattern-button screenshot
+against a Library-tab tab-bar screenshot — keyboard focus on the tab bar was switched from the
+pattern-button fill color to the SAME color mouse hover already uses, surfacing that the relevant
+key was already shared across Settings/Stats/Book Detail despite its `settings_tab_hover_*`
+name — renamed to `tab_hover_bg`/`_opacity`/`_text` (all ~30 theme entries, both stylesheet
+functions, and a stray reference in `cover_theme.py`'s cover-art generator that the rename grep
+caught). Mouse hover on a different tab is now also suppressed once keyboard focus lands on the
+tab bar (narrow fix, not the full hover-pickup consolidation — that stays paused, see TODO.md).
+Theme-key doc groups renumbered (GROUP 8 had shrunk to one entry, folded into GROUP 9/MISC UI).
+Also this session: Look/Controls tab reordering, a Themes-tab label/spacing fix, and dimming the
+theme-pool bulk buttons when they'd be a no-op — all direct live-feedback fixes, no new mechanism.
+Full trace: SESSION.md, 2026-09-08 Session 3. Commits `ac0c9f1`, `8eedb00`.
+
+*Previously: 2026-09-08 Session 2 — Added a second, alternate keyboard-nav marker style:
+"fill highlight" (Settings > Look toggle, alongside the existing "Traveling marker", default
+unchanged) tints the focused control's own background toward a lighter/desaturated accent instead
+of drawing the separate `TravelingFocusMarker` overlay widget. `config.get_keyboard_marker_style()`
+("traveling" | "fill_highlight"). New: `themes.derive_lighter_accent_rgb()` (Qt-free, `colorsys`,
+same hue/lighten-desaturate design as `StreakGrid._derive_longest_fill` but independently tuned —
++12/255 value boost after two live tune-downs from +60/255, since a single global boost read wrong
+on some themes' accents regardless of tuning); `kbdnav_fill_highlight` (Group 10 optional
+per-theme hex override, for exactly the themes where the derived color still doesn't fit — see the
+theme-key doc block); `kbdnav_fill_active` (a THIRD kbdnav QSS property, deliberately distinct
+from the pre-existing `kbdnav_marker_active` — the two must never be conflated, see below);
+`kbdnav_style` (a new, always-set property recording which style is active, needed because the
+two style-specific properties above are each written only by their own style's code path and are
+therefore unreliable to gate an "is NOT this style" check on).
+
+**Four live-reported bugs in one feature, escalating in subtlety, each requiring the fix to be
+re-opened rather than a fresh guess layered on top:** a genuinely novel QSS combinator
+(`QTabBar:focus::tab:selected`, a pseudo-state chained ahead of a sub-control — nothing else in
+this codebase's stylesheets does this) caused paint artifacts on Settings tab switch and was
+removed outright rather than debugged blind; the new fill rule was first gated on the PRE-EXISTING
+`kbdnav_marker_active` property, which is the traveling style's own "is the marker's patrol
+visible" flag — conflating the two made the fill paint on top of the real traveling marker
+whenever it was genuinely showing ("traveling marker still everywhere" after supposedly switching
+to fill_highlight — the two style names were briefly swapped in the live bug report itself, caught
+and corrected mid-diagnosis); a missing `QPushButton:focus:hover` compound (this codebase's
+established pattern for a control that's simultaneously hovered and keyboard-focused) was a real
+but INSUFFICIENT fix for "fill skips painting when the mouse rests on the target button" — the
+actual, deeper cause was a set of pre-existing, style-unaware `[kbdnav="true"] #pattern_button:hover
+{ background: transparent; }` suppression rules (2026-09-03/04 vintage, written when only the
+traveling style existed) whose ID-selector specificity beat even the `:focus:hover` fix; fixing
+that split the ramp-preset buttons' own separate highlight (`kbdnav_marker_active` no longer went
+true at all under fill_highlight, since it's normally set only by the marker's own dormant-state
+callbacks) — closed by also driving that property off the same active/inactive value
+`kbdnav_fill_active` gets. Full trace-by-trace narrative, including which fixes were later shown
+incomplete rather than wrong: SESSION.md, 2026-09-08 Session 2.
+
+*Previously: 2026-09-07 Session 1 — Full keyboard navigation added to the Speed, Sleep and
+Sprint panels (branch `feature/traveling-focus-marker`, still NOT merged) — the three panels
+that were never tab-based, so this also required GENERALIZING the traveling-marker modality
+machinery (`_set_keyboard_nav_active`, `_focus_marker_in_scope`, the `kbdnav` QSS property,
+the cursor hand-back poll) beyond Settings for the first time, via a new
+`_kbdnav_active_panel_key` that parameterizes on the active panel rather than rewriting the
+Settings-only logic — Settings' own path stayed byte-for-byte reachable throughout, verified
+against the full 504-test suite plus no live regression reports. `PanelManager.
+flat_panel_rows()`/`grid_layout_for()` are the new row source for a tabless panel — a third row
+shape (a real `QGridLayout`, unlike anything on a Settings tab) is represented as one opaque
+stop, same architecture as Themes' `swatch_box`, that hands off to `MainWindow.
+_handle_panel_grid_arrows` for real 2-D grid movement read straight from Qt's own row/column/
+span structure. **Five live-found bugs, several requiring a second correction after an
+initially-plausible fix was shown wrong by direct evidence**: Sprint's entire grace-period
+submenu was unreachable (`flat_panel_rows`'s walk had no case for a bare `QWidget` row-wrapper —
+added recursive handling that tells a `QHBoxLayout` wrapper, one row, apart from a `QVBoxLayout`
+wrapper, several rows); plain Space did nothing because the code explicitly swallowed it instead
+of deferring to Qt's own native Space-click; Right/Left at any row boundary could silently jump
+to an unrelated row because deferring to Qt's native inter-sibling arrow stepping is NOT actually
+scoped to the visual row — it follows construction order — the exact same shape
+`_handle_settings_arrows` also uses and has "never shown live, but only out of luck," now flagged
+in TODO.md rather than left implicit; a keyboard-focus QSS rule written as a bare
+`QPushButton:focus` type selector leaked onto every plain button in the panel including
+`stats_reset_btn` (a wrong in-code claim that its own ID rule would "outrank" the generic one —
+it had no competing `:focus` rule at all), fixed by giving the grid's one non-ramped button
+(`end_chap_btn`/`_eoc_btn`) a dedicated objectName; and the marker visibly slid off-panel with a
+closing panel's slide-out on Speed/Sleep/Sprint (Settings already had this exact fix from an
+earlier session, just never generalized) — now one shared `_clear_focus_marker_for_close`
+helper instead of three near-copies. Also fixed: Sprint was completely missing from Tab/
+Shift+Tab cycling, a pre-existing gap unrelated to this session's own work. Design corrections
+applied live, not deferred: a text field's Left/Right went from "defer to native" (wrong — moves
+the text cursor) to "swallow" (also rejected — "just let them continue the navigation") to
+remapping Left/Right onto Up/Down for a one-item row; Sprint's duration field gained the same
+digit-redirect Sleep already had, with an explicit rule that a bare digit always means duration,
+never the second, conditional grace-custom field. Full narrative, including every live report
+that caught each bug, in SESSION.md 2026-09-07 Session 1; live checks in TESTING.md; the
+now-closed TODO.md item is removed, with the Settings-side Left/Right risk newly flagged there
+instead of left implicit.
+
+*Previously: 2026-09-06 Session 2 — Full keyboard navigation added to Settings' Themes tab
+(branch `feature/traveling-focus-marker`, still NOT merged), closing out keyboard nav for the
+whole Settings panel — Themes was the one tab deferred across every prior pass because its swatch
+grid is bin-packed (a variable item count per row), not a fixed button row. `PanelManager.
+themes_tab_rows()` is a Themes-specific row source (the generic `settings_tab_button_rows()` walk
+can't see inside `pool_container`, which nests the bulk/interval rows); the swatch grid itself is
+ONE opaque row (`swatch_box`, same shape as `folder_list_widget`) that owns its own internal
+Left/Right/Up/Down (`MainWindow._handle_themes_swatch_arrows`) once focus reaches it. Left/Right
+wrap in reading order across rows; Up/Down move by column, clamped — deliberately different
+gestures. Arrival at a swatch previews it automatically through the existing 150ms hover-debounce
+pipeline; Space toggles pool membership (left-click equivalent), Enter selects and activates
+immediately (right-click equivalent) — these were briefly built identical and split apart after a
+live design correction. **Two new "plausible QSS property, silently inert on this widget" gotchas
+found by direct pixel comparison, joining the QComboBox/QListWidget ones already documented**:
+`Qt.WA_UnderMouse` (even paired with `unpolish`/`polish`, even via a real dispatched
+`QEnterEvent`) does NOT drive `:hover` QSS matching — confirmed by identical before/after
+screenshots; fixed with a plain QSS property (`kbdnav_hover`) instead, the same mechanism
+`selected`/`active_display` already use successfully in this file. `text-decoration: underline`
+does NOT render on `QLabel` via QSS at all (same pixel-comparison method) — fixed with
+`border-bottom` instead. A third bug needed log tracing rather than pixel comparison: the grid's
+row model could silently diverge from the real on-screen layout, because `build_themes_tab` bin-
+packs the swatch rows ONCE against `settings_panel`'s pre-layout width, while the keyboard-nav
+code was recomputing that same limit from the panel's CURRENT (wider, post-layout) width on every
+call — invalidating `get_packed_themes()`'s limit-keyed cache and returning a different packing
+than what was actually painted; fixed by reading the cache directly. A fourth needed the same
+category-error framing as the transport-bar-blur bug below it in this file: the keyboard exit path
+was reusing `swatch_box`'s real MOUSE leaveEvent handler (`_on_themes_tab_left`), whose entire job
+is telling a genuine mouse leave apart from a stationary-cursor/blur-grab artifact by comparing the
+mouse's CURRENT position against where it last hovered — a keyboard exit never moves the mouse, so
+a resting cursor near its last real hover position silently swallowed every arrow/Tab exit as
+spurious jitter; fixed by calling the revert directly, bypassing mouse-specific disambiguation a
+keyboard action doesn't need. Full narrative, including the exact live reports that caught each of
+these, in SESSION.md 2026-09-06 Session 2; live checks in TESTING.md; the TODO.md item this closed
+is removed — next up: Playback, Sleep and Sprint panels.
+
+*Previously: 2026-09-05/06 Session 1 — Library's folder-list keyboard model rebuilt: cursor
+position and selection are now fully independent — arrows never touch selection, Space/Enter is
+the only thing that does, toggling (never splitting into add/remove keys).
+`QListWidget.setCurrentRow()` is banned from this codebase's own arrow-nav paths for exactly this
+widget's `ExtendedSelection` mode — it silently does `ClearAndSelect`; `_move_list_current_row`
+(`QItemSelectionModel.setCurrentIndex(idx, NoUpdate)`) is the only correct way to move the cursor
+alone. The current row shows as a small dot (`_FolderListItemDelegate`, `focus_folder_list_dot`),
+not the traveling marker or a second fill — a fill couldn't stay legible once real selection
+existed alongside it. Excluded Books (`ExcludedBooksPopup`) gained a full keyboard model of its
+own, mirroring `ChapterList`'s Up/Down-scroll / Left-Right-expand / Space-Enter-activate split,
+with the per-row hover-reveal eye itself standing in for a marker. Along the way: a genuine,
+branch-independent interference bug between `transport_bar_blur`'s hide/show grab cycle and any
+hover-driven UI (a real, matched leave+enter pair delivered to a perfectly stationary mouse,
+confirmed live) — see that file's `_grab_and_blur` docstring and the "Hover-flicker" section
+above, and `_leave_suppressed_recently` in `excluded_books.py` for the fix shape (suppressing only
+half of a spurious pair is not enough; the matching half needs its own flag). Full narrative in
+SESSION.md 2026-09-05/06 Session 1; live checks in TESTING.md.
+
+*Previously: 2026-09-05 — Keyboard navigation extended from Look to Controls, Audio and Library
+(branch `feature/traveling-focus-marker`, still NOT merged). Adding a button-row tab is now one
+line in `panels._ARROW_NAV_TABS`; row membership goes by focus policy, and a widget in a tab's own
+column becomes a one-item row (Audio's slider, Library's folder list). Large filled controls show
+focus as a QSS fill shift instead of the marker (`_FILL_FOCUS_OBJECT_NAMES`). Full narrative in
+SESSION.md 2026-09-05; live checks in TESTING.md; open items in TODO.md.
+
+*Previously: 2026-09-04 — Traveling focus marker (branch `feature/traveling-focus-marker`, NOT
+merged): rebased onto current `main` after being parked since 2026-07-10, geometry corrected, made
+keyboard-only, given row-aware arrow navigation on Settings > Look, and paired with mouse-hover
+suppression so only one affordance answers "where am I?" at a time. Two new Qt gotchas added to
+Debugging discipline above — a tab CLICK arrives as `TabFocusReason` (so no focus reason can mean
+"mouse"; record modality from the press), and polishing a parent does not re-resolve a child's
+cached style (property-gated QSS needs each widget polished). Full narrative, including the three
+failed modality designs and why each was wrong, in SESSION.md 2026-09-03/04; live-check list in
+TESTING.md's "Traveling focus marker" section. Next session extends this to the other Settings tabs
+and other panels — `_settings_is_active`/`_look_tab_is_active` and `look_tab_button_rows()` are the
+Look-specific pieces that will need generalizing.
+
+*Previously: 2026-08-13 — Scrollbar row-alignment work extended to a third and fourth panel.
 **Tags panel** (`ui/tag_manager.py`) gained `register_snap` for `_tag_scroll`'s right-click jump
 (`0cbddbd`) — its wheel step and viewport cap were already row-pitch-correct (`_TAG_ROW_PITCH`,
 fixed/uniform), so this was purely additive: right-click jump was the only gap, same as the

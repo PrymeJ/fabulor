@@ -8,13 +8,13 @@ from datetime import datetime
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTabWidget, QLabel,
     QGridLayout, QSpinBox, QScrollArea, QPushButton, QApplication,
-    QListView, QStyledItemDelegate, QStyle,
+    QListView, QStyledItemDelegate, QStyle, QStyleOptionSpinBox, QAbstractItemView,
 )
 from PySide6.QtCore import (
     Qt, QRect, QRectF, Signal, QSize, QPoint, QPointF, QEvent, QThreadPool, QTimer, Property,
     QPropertyAnimation, QEasingCurve, QAbstractListModel, QModelIndex, QObject, QRunnable, Slot,
 )
-from PySide6.QtGui import QPainter, QColor, QFont, QPixmap, QImage, QIcon, QEnterEvent, QPen, QPainterPath, QKeyEvent, QCursor
+from PySide6.QtGui import QPainter, QColor, QFont, QPixmap, QImage, QIcon, QEnterEvent, QPen, QPainterPath, QKeyEvent, QCursor, QPolygon
 from PySide6.QtWidgets import QAbstractScrollArea
 from .cover_loader import CoverLoaderWorker, to_grayscale
 from .library import _cover_cache
@@ -27,6 +27,14 @@ from . import scrollbar_jump
 # does not — the SVG is already a flat icon and the grey wash just looks odd. Instead,
 # render the placeholder in a fixed monochrome colour so it reads as intentionally greyed.
 _ARCHIVED_PLACEHOLDER_COLOR = "#888888"
+
+# StatsRowListView's keyboard/mouse hover-coexistence poll — see the design note in
+# StatsRowListView.__init__. Same values as app.py's _KBDNAV_CURSOR_POLL_MS/
+# _KBDNAV_CURSOR_JITTER_PX (the traveling-focus-marker's own, proven modality mechanism)
+# deliberately, not independently tuned — no reason for this list to disagree with the rest
+# of the app about how much cursor drift counts as "the user moved the mouse."
+_STATS_KBDNAV_HOVER_POLL_MS = 60
+_STATS_KBDNAV_HOVER_JITTER_PX = 3
 
 
 def _make_stats_snap(view):
@@ -547,6 +555,17 @@ class FinishedScrollRow(QWidget):
         self._scroll.setWidgetResizable(True)
         self._scroll.setSizeAdjustPolicy(QAbstractScrollArea.SizeAdjustPolicy.AdjustIgnored)
         self._scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        # QScrollArea's Qt DEFAULT focus policy is StrongFocus, not NoFocus like a plain
+        # QWidget — found 2026-09-09 as the second half of a live-reported regression (Stats'
+        # OTHER QScrollArea, Overall's own stat-grid wrapper, had the identical gap — see that
+        # one's own comment in _build_overall_tab for the full mechanism). This row appears on
+        # Overall, Day, Week, and Month (the "Recently finished" carousel), so a click on it
+        # anywhere silently stole real Qt focus off the tab bar on every one of those tabs,
+        # breaking arrow-key tab cycling (_handle_stats_arrows only acts when the tab bar
+        # itself holds focus) with no visible sign anything had changed. This carousel already
+        # has its own dedicated navigation (the left/right arrow buttons); it was never meant
+        # to be a keyboard Tab stop.
+        self._scroll.setFocusPolicy(Qt.FocusPolicy.NoFocus)
 
         self._container = QWidget()
         self._layout = QHBoxLayout(self._container)
@@ -1230,7 +1249,13 @@ class StatsRowListView(QListView):
         # behaves the same way Week/Month's scrollbar does.
         self.setVerticalScrollMode(QListView.ScrollMode.ScrollPerPixel)
         self.setSelectionMode(QListView.SelectionMode.NoSelection)
-        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)  # BookDayRow was never focusable either
+        # Keyboard-navigable as of 2026-09-09 (was NoFocus, "BookDayRow was never focusable
+        # either") — Day/Week/Month's row-list keyboard-nav pass. Up/Down move the SAME
+        # `_hovered_row` mouse hover already uses (see keyPressEvent below), so "keyboard
+        # cursor" and "mouse hover" are one shared concept, not two that could disagree —
+        # explicit live design call: most-recent-input-wins with zero reconciliation code,
+        # same principle as Tags' ScrollHoverTracker/Library's own hover mechanism.
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setFrameShape(QListView.Shape.NoFrame)
         self.setEditTriggers(QListView.EditTrigger.NoEditTriggers)
         # BookDayRow sets the hand cursor on each ROW widget (stats_panel.py,
@@ -1246,8 +1271,81 @@ class StatsRowListView(QListView):
         self.viewport().setCursor(Qt.CursorShape.PointingHandCursor)
         self.viewport().setMouseTracking(True)
         self.entered.connect(self._on_entered)
+        # ── Keyboard/mouse hover coexistence ────────────────────────────────────────────
+        # Two prior attempts on this exact list both failed live and are worth recording so
+        # a THIRD ad hoc attempt doesn't get tried here again:
+        #   1. Exact QCursor.pos() equality against a last-seen value, refreshed on every
+        #      mouseMoveEvent. Reported live as not holding at all ("goes back to mouse...
+        #      more aggressively") — this desktop's cursor-position reporting is not reliably
+        #      exact-equal across two reads even with the physical mouse untouched (see
+        #      CLAUDE.md's Wayland/KDE cursor-and-hover quirks), so exact equality was a
+        #      near-always-true "moved" reading, close to no gate at all.
+        #   2. A flat time-based suppression window after every keyboard move, ignoring ALL
+        #      hover signals for ~150ms regardless of cursor position. Never actually
+        #      verified live before this rewrite — abandoned because it was still built on
+        #      the wrong primitive: reacting to `entered`, whose firing order relative to
+        #      keyPressEvent's own scrollTo() is a Qt internal, not a contract this code can
+        #      rely on.
+        # This is a genuine third design, not a third patch on the same idea: it PORTS
+        # MainWindow._kbdnav_cursor_poll (app.py) — the traveling-focus-marker's own
+        # keyboard/mouse modality mechanism, proven across Settings/Speed/Sleep/Sprint — to
+        # this row list. Same two ingredients, both load-bearing in the original:
+        #   - A JITTER-TOLERANT anchor comparison (_KBDNAV_CURSOR_JITTER_PX equivalent
+        #     below), not exact equality — attempt 1's actual bug, not the anchor concept.
+        #   - A POLL, not an event-driven check. Qt's `entered` signal is what fires the
+        #     synthetic re-evaluation in the first place (via keyPressEvent's scrollTo), so
+        #     gating logic that itself runs FROM `entered` inherits the exact ambiguity it's
+        #     trying to resolve — was this `entered` call real or a scrollTo echo? A poll
+        #     never asks that question: it independently samples QCursor.pos() on its own
+        #     clock, entirely decoupled from whatever triggered any specific `entered` call.
+        # `_on_entered` (below) is now GATED, not authoritative, while keyboard mode is
+        # active — mouse hover can only reclaim `_hovered_row` via the poll finding a
+        # genuine, sustained mouse position over a REAL, DIFFERENT row (mirrors
+        # _kbdnav_cursor_poll's _cursor_over_navigable_control check, not just raw movement).
+        self._kbdnav_hover_active = False
+        self._kbdnav_hover_anchor: QPoint | None = None
+        self._kbdnav_hover_poll = QTimer(self)
+        self._kbdnav_hover_poll.setInterval(_STATS_KBDNAV_HOVER_POLL_MS)
+        self._kbdnav_hover_poll.timeout.connect(self._on_kbdnav_hover_poll)
 
-    def _on_entered(self, index: QModelIndex):
+    def _enter_kbdnav_hover_mode(self):
+        """Call at the START of every keyboard-driven `_hovered_row` change (Up/Down/PgUp/
+        PgDn/Home/End in keyPressEvent, and _enter_from_tab_bar). Arms the anchor at the
+        cursor's CURRENT position — not wherever it was on some earlier keypress — so a
+        cursor that has already drifted (but not far enough to reclaim) doesn't get a free
+        pass on the next comparison. Idempotent: repeated keyboard presses just keep
+        re-anchoring to "here, right now," which is exactly what should happen."""
+        self._kbdnav_hover_active = True
+        self._kbdnav_hover_anchor = QCursor.pos()
+        if not self._kbdnav_hover_poll.isActive():
+            self._kbdnav_hover_poll.start()
+
+    def _exit_kbdnav_hover_mode(self):
+        self._kbdnav_hover_active = False
+        self._kbdnav_hover_anchor = None
+        self._kbdnav_hover_poll.stop()
+
+    def _on_kbdnav_hover_poll(self):
+        """Hand hover back to the mouse only once it has both moved past jitter tolerance
+        AND is genuinely resting over a real, different row — mirrors
+        MainWindow._on_kbdnav_cursor_poll's own two-part test (jitter, then
+        _cursor_over_navigable_control) so "moved a couple px across dead space" can't
+        silently steal the highlight back mid-arrow-press."""
+        anchor = self._kbdnav_hover_anchor
+        if anchor is None:
+            self._kbdnav_hover_poll.stop()
+            return
+        pos = QCursor.pos()
+        if (abs(pos.x() - anchor.x()) < _STATS_KBDNAV_HOVER_JITTER_PX
+                and abs(pos.y() - anchor.y()) < _STATS_KBDNAV_HOVER_JITTER_PX):
+            return  # hasn't left its resting spot yet
+        viewport_pos = self.viewport().mapFromGlobal(pos)
+        if not self.viewport().rect().contains(viewport_pos):
+            return  # moved, but off this list entirely — keyboard keeps the highlight
+        index = self.indexAt(viewport_pos)
+        if not index.isValid():
+            return  # moved, but over dead space within the viewport — same reasoning
+        self._exit_kbdnav_hover_mode()
         delegate = self.itemDelegate()
         if delegate is not None:
             prev = delegate._hovered_row
@@ -1255,18 +1353,76 @@ class StatsRowListView(QListView):
             if prev != index.row():
                 self.viewport().update()
 
-    def leaveEvent(self, event):
+    def _on_entered(self, index: QModelIndex):
+        # Real Qt signal — fires on both genuine mouse movement AND a scrollTo-triggered
+        # synthetic re-evaluation, and there is no reliable way to tell those apart from
+        # inside this handler (see the design note in __init__). While keyboard mode is
+        # active, this is therefore SILENCED entirely; _on_kbdnav_hover_poll is the only
+        # path that can hand hover back to the mouse. Once keyboard mode is off, this is
+        # authoritative again, same as it always was.
+        if self._kbdnav_hover_active:
+            return
         delegate = self.itemDelegate()
-        if delegate is not None and delegate._hovered_row != -1:
-            delegate.set_hovered_row(-1)
-            self.viewport().update()
+        if delegate is not None:
+            prev = delegate._hovered_row
+            delegate.set_hovered_row(index.row())
+            if prev != index.row():
+                self.viewport().update()
+
+    def mouseMoveEvent(self, event):
+        # The viewport's PointingHandCursor (set in __init__, see that comment for why it's on
+        # the viewport rather than the row widgets themselves) was UNCONDITIONAL — live-reported
+        # 2026-09-08 as a regression, but confirmed on inspection to be pre-existing (916e125,
+        # predates this session): `entered` only fires while hovering a VALID row, so it was
+        # always correct as long as the viewport was never much taller than its real content.
+        # This pass's row-list keyboard-nav didn't create that mismatch, but it's what made the
+        # mismatch newly visible/reportable — a short list (few sessions that day) with the
+        # "Finished this X" carousel hidden lets the list's stretch=1 layout allocation run well
+        # past the last real row, and the hand cursor stayed pointing-hand over all of that dead
+        # space with clicks silently doing nothing there. Qt's own `entered` signal has no
+        # counterpart for "now hovering nothing" to hook the reverse transition onto, so this
+        # explicit mouseMoveEvent override checks indexAt() directly and swaps to the plain
+        # arrow cursor over empty space, restoring the hand only when back over a real row.
+        # NOTE: cursor-shape sync deliberately bypasses keyboard-hover-mode entirely — that
+        # mode only guards _hovered_row (the fill highlight) from a scrollTo's synthetic hover
+        # echo; the cursor glyph itself has no such conflict and should always track whatever
+        # is really under the pointer, keyboard mode or not.
+        self._sync_cursor_to_index(self.indexAt(event.pos()))
+        super().mouseMoveEvent(event)
+
+    def _sync_cursor_to_index(self, index: QModelIndex):
+        self.viewport().setCursor(
+            Qt.CursorShape.PointingHandCursor if index.isValid() else Qt.CursorShape.ArrowCursor)
+
+    def leaveEvent(self, event):
+        # Must respect keyboard-hover mode exactly like showEvent/_on_entered do, for the same
+        # reason: this fires on EVERY blur-grab hide tick (5-15x/sec while blur is enabled), not
+        # only on a genuine mouse-leaves-the-widget event. Blanking _hovered_row here
+        # unconditionally would erase the keyboard-selected row on every single tick while
+        # keyboard mode is active, with showEvent (now correctly gated, see its own comment)
+        # no longer there to restore it — the highlight would flicker to nothing or vanish
+        # outright for as long as blur keeps grabbing. A REAL leave (the user's cursor actually
+        # exiting the widget) is still handled correctly: it's exactly what
+        # _on_kbdnav_hover_poll's own viewport().rect().contains() check is for — the poll will
+        # notice the cursor left and clear keyboard mode on its own next tick.
+        if not self._kbdnav_hover_active:
+            delegate = self.itemDelegate()
+            if delegate is not None and delegate._hovered_row != -1:
+                delegate.set_hovered_row(-1)
+                self.viewport().update()
+        # NOT an unconditional PointingHandCursor reset (that was the original bug's twin: a
+        # widget-visibility hide/show cycle — see showEvent's HOVER-TRACE comment below — fires
+        # leaveEvent on every hide, and blindly restoring the hand here would repaint the wrong
+        # cursor over dead space on every blur-grab cycle even after the mouseMoveEvent fix above.
+        # Empty-space leaves should land on the arrow, same as everywhere else in dead space.
+        self._sync_cursor_to_index(QModelIndex())
         super().leaveEvent(event)
 
     def showEvent(self, event):
         super().showEvent(event)
         # Re-derive hover from the CURRENT cursor position instead of waiting for
         # entered — the transport-bar blur (TransportBarBlurOverlay._grab_and_blur)
-        # hides then shows this panel ~5x/sec while blur is enabled and any panel
+        # hides then shows this panel ~5-15x/sec while blur is enabled and any panel
         # is open (see transport_bar_blur.py). Hiding a widget correctly delivers a
         # real leaveEvent (Qt recomputes what's under the cursor), which clears the
         # hover fill; but re-showing only fires showEvent/enterEvent, NOT Qt's
@@ -1280,11 +1436,35 @@ class StatsRowListView(QListView):
         # in between. Fix: ask indexAt() directly what's under the cursor right
         # now, the same query a real mouse-move would trigger — restores the
         # correct hover immediately instead of leaving it stranded.
+        #
+        # MUST respect keyboard-hover mode exactly like _on_entered does (added
+        # 2026-09-08, corrected same day): this handler fires on EVERY blur-grab
+        # hide/show tick — 5-15x/sec, unconditionally, with zero relationship to real
+        # user input — not just on a genuine app-level show. An earlier version of this
+        # fix called _exit_kbdnav_hover_mode() here unconditionally, reasoning it was
+        # "unrelated to keyboard state" — live-reported as the opposite of that:
+        # "the problem is the blur. If I turn it off, I can navigate there with
+        # arrows. If it is on, mouse always wins." With blur on, every one of those
+        # 5-15 ticks/sec forcibly kicked keyboard nav back to wherever the mouse
+        # physically rested, regardless of how recently or deliberately an arrow key
+        # had just moved the highlight — the poll (_on_kbdnav_hover_poll) never got a
+        # chance to be the sole authority it's designed to be, because this handler
+        # was constantly overriding it via a completely unrelated trigger. Skipping
+        # entirely while keyboard mode is active leaves the poll as the ONLY path
+        # that can hand control back to real mouse movement, same as _on_entered.
+        if self._kbdnav_hover_active:
+            return
         pos = self.viewport().mapFromGlobal(QCursor.pos())
         if self.viewport().rect().contains(pos):
             index = self.indexAt(pos)
+            self._sync_cursor_to_index(index)
             if index.isValid():
-                self._on_entered(index)
+                delegate = self.itemDelegate()
+                if delegate is not None:
+                    prev = delegate._hovered_row
+                    delegate.set_hovered_row(index.row())
+                    if prev != index.row():
+                        self.viewport().update()
 
     def mousePressEvent(self, event):
         if event.button() in (Qt.MouseButton.LeftButton, Qt.MouseButton.RightButton):
@@ -1295,6 +1475,141 @@ class StatsRowListView(QListView):
                     self.row_clicked.emit(row_data)
                     return
         super().mousePressEvent(event)
+
+    def _owning_tab_bar(self):
+        """The QTabBar of the nearest ancestor QTabWidget (Stats' own `tabs`) — walks the
+        parent chain rather than hardcoding its depth, since this view sits several layout
+        containers below it (StatsRowListView -> QWidget -> QStackedWidget -> QTabWidget).
+        Used to exit the list back to the tab bar (Up at row 0, Home... no — see keyPressEvent
+        for which keys use this) without this view needing a stored panel/tabs reference."""
+        w = self.parentWidget()
+        while w is not None and not isinstance(w, QTabWidget):
+            w = w.parentWidget()
+        return w.tabBar() if w is not None else None
+
+    def keyPressEvent(self, event):
+        key = event.key()
+        model = self.model()
+        row_count = model.rowCount() if model is not None else 0
+        # Tab/Shift+Tab and Up-at-the-first-row all exit back to the tab bar — deliberately
+        # NOT routed through the generic Tab-cycle (panel_tab_widgets excludes this view, see
+        # that method's own comment) or Down's own boundary handling (which stays a no-op on
+        # the LAST row — explicit live design call, no wrap). Live design call: "Up arrow or
+        # Shift+Tab from the first row should go up to tab" — Tab (forward) goes there too,
+        # for the same reason Down has nowhere further to go past this view: there is no
+        # "next" widget after the row list in this tabbed layout worth landing on (a plain Tab
+        # press before this fix landed on the main window's cover-art carousel instead, live-
+        # reported as wrong).
+        at_first_row = row_count == 0 or (self.itemDelegate() is not None
+                                           and self.itemDelegate()._hovered_row <= 0)
+        if (key in (Qt.Key.Key_Tab, Qt.Key.Key_Backtab)
+                or (key == Qt.Key.Key_Up and at_first_row)):
+            tab_bar = self._owning_tab_bar()
+            if tab_bar is not None:
+                tab_bar.setFocus(Qt.FocusReason.TabFocusReason)
+            event.accept()
+            return
+        if key in (Qt.Key.Key_Up, Qt.Key.Key_Down) and row_count:
+            delegate = self.itemDelegate()
+            current = delegate._hovered_row if delegate is not None else -1
+            if current < 0:
+                # Entering with no row highlighted at all (shouldn't normally happen — see
+                # _enter_from_tab_bar, which always seeds row 0 before focus lands here — but
+                # guard it the same way anyway): land on the first/last row rather than
+                # stepping past the list's edge.
+                new_row = 0 if key == Qt.Key.Key_Down else row_count - 1
+            else:
+                new_row = current + (1 if key == Qt.Key.Key_Down else -1)
+            new_row = max(0, min(row_count - 1, new_row))
+            self._enter_kbdnav_hover_mode()
+            if delegate is not None and new_row != current:
+                delegate.set_hovered_row(new_row)
+                self.viewport().update()
+            self.scrollTo(model.index(new_row, 0), QAbstractItemView.ScrollHint.EnsureVisible)
+            event.accept()
+            return
+        if key in (Qt.Key.Key_PageUp, Qt.Key.Key_PageDown, Qt.Key.Key_Home,
+                   Qt.Key.Key_End) and row_count:
+            delegate = self.itemDelegate()
+            current = delegate._hovered_row if delegate is not None else 0
+            current = max(0, current)
+            if key == Qt.Key.Key_Home:
+                new_row = 0
+            elif key == Qt.Key.Key_End:
+                new_row = row_count - 1
+            else:
+                # A page is however many whole rows currently fit in the viewport — same
+                # "visible extent" a real scrollbar page-step already uses, so PgUp/PgDn move
+                # by the same amount a click in the scrollbar's track would scroll.
+                row_h = max(1, self.sizeHintForRow(0))
+                page = max(1, self.viewport().height() // row_h)
+                new_row = current + (page if key == Qt.Key.Key_PageDown else -page)
+            new_row = max(0, min(row_count - 1, new_row))
+            self._enter_kbdnav_hover_mode()
+            if delegate is not None and new_row != current:
+                delegate.set_hovered_row(new_row)
+                self.viewport().update()
+            self.scrollTo(model.index(new_row, 0), QAbstractItemView.ScrollHint.EnsureVisible)
+            event.accept()
+            return
+        # Enter/Space/Alt+Enter/Shift+Enter all open the highlighted row's book detail —
+        # explicit live design call (2026-09-09), same single action every combination maps
+        # to (mirrors mousePressEvent's own left-click-or-right-click-both-open-detail shape,
+        # just for the keyboard). Deliberately does NOT special-case Alt/Shift as "different"
+        # actions the way Library does (Alt+Enter there is specifically distinguished FROM a
+        # bare Enter, which does something else) — Stats has only one action per row, so all
+        # four keys converge on it.
+        if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space):
+            delegate = self.itemDelegate()
+            row = delegate._hovered_row if delegate is not None else -1
+            if 0 <= row < row_count:
+                row_data = model.index(row, 0).data(ROLE_ROW_DATA)
+                if row_data is not None:
+                    self.row_clicked.emit(row_data)
+            event.accept()
+            return
+        # Left/Right must propagate up to StatsPanel.keyPressEvent, which already owns
+        # period-cycling (_NAV_METHODS) for the current tab — NOT delegated to super(): a
+        # direct synthetic-event test confirmed QAbstractItemView's own default keyPressEvent
+        # silently CONSUMES Key_Left (presumably native horizontal-scroll/focus-chain handling,
+        # even under NoSelection mode) rather than ignoring it, so routing through super() here
+        # would swallow Left before it ever reached the parent. Explicitly ignore() instead —
+        # confirmed via the same test that this correctly lets Qt's own propagation carry the
+        # event up the parent chain unmodified, exactly like any other unhandled key on a plain
+        # QWidget. Every OTHER key this method doesn't recognize (there are none expected in
+        # practice, since the eventFilter this runs under only forwards keys _handle_stats_
+        # arrows and this method between them already claim) also falls through to ignore()
+        # rather than super(), for the same reason.
+        event.ignore()
+
+    def _enter_from_tab_bar(self) -> None:
+        """Called when Down/Tab moves real keyboard focus from the tab bar onto this list
+        (see MainWindow._handle_stats_arrows). Seeds `_hovered_row` to whatever the mouse is
+        CURRENTLY resting on (matching mouse hover exactly, per the live design call — "down
+        arrow goes to the first row, highlights using the current mouse hover"), or row 0 if
+        the mouse isn't over any row (e.g. it's outside the panel, or resting on the header/
+        scrollbar) — never leaves the list with nothing highlighted, since Up/Down would then
+        have no current position to step from."""
+        pos = self.viewport().mapFromGlobal(QCursor.pos())
+        index = self.indexAt(pos) if self.viewport().rect().contains(pos) else QModelIndex()
+        delegate = self.itemDelegate()
+        model = self.model()
+        if delegate is None or model is None:
+            return
+        row = index.row() if index.isValid() else (0 if model.rowCount() else -1)
+        if row >= 0:
+            # Entering keyboard-hover mode HERE, not just in keyPressEvent's Up/Down/etc.
+            # branches, matters: the very first subsequent Up/Down press reads
+            # delegate._hovered_row (set below) as `current` and calls _enter_kbdnav_hover_mode
+            # again anyway, but between THIS seed and that first press, mouse movement should
+            # already be treated as "the keyboard cursor was just placed here" rather than free
+            # to silently reclaim before the user has pressed anything — i.e. the SAME cursor
+            # position used to seed this row must be the anchor, not a stale one from whenever
+            # keyboard mode last exited.
+            self._enter_kbdnav_hover_mode()
+            delegate.set_hovered_row(row)
+            self.viewport().update()
+            self.scrollTo(model.index(row, 0), QAbstractItemView.ScrollHint.EnsureVisible)
 
     def wheelEvent(self, event):
         # Every row is a fixed, uniform _STATS_ROW_HEIGHT (StatsRowDelegate.sizeHint), so the
@@ -1642,7 +1957,7 @@ class HourlyHeatmap(QWidget):
         # Total-minutes footer — rotated -90°, below the grid, fades in/out on column hover
         if self._footer_date and self._footer_alpha > 0 and self._col_totals.get(self._footer_date, 0) > 0:
             col_i = self._dates.index(self._footer_date)
-            total_min = int(self._col_totals[self._footer_date] / 60)
+            total_min = round(self._col_totals[self._footer_date] / 60)
             label = f"{total_min}m"
             cx = self.HOUR_LABEL_W + col_i * (self.CELL + self.GAP) + self.CELL // 2
             footer_font = QFont()
@@ -1691,7 +2006,7 @@ class HourlyHeatmap(QWidget):
                 friendly_date = f"{d.strftime('%b')} {d.day}"
             except ValueError:
                 friendly_date = hit[0]
-            total_min = round(c['seconds'] / 60)
+            total_min = max(1, round(c['seconds'] / 60)) if c['seconds'] > 0 else 0
             header = f"{friendly_date} {hit[1]:02d}:00 · {total_min} min"
             
             limit = 9
@@ -3015,6 +3330,99 @@ class TasselOverlay(QWidget):
             cb()
 
 
+class _ThemedSpinBox(QSpinBox):
+    """Draws its own up/down triangles instead of relying on QSpinBox::up-button/::down-button
+    QSS. Same root cause and same fix shape as library.py's `_ThemedComboBox` (see that class's
+    own docstring): on this app's target desktop (KDE/Plasma, Wayland, Fusion style), the native
+    style paints its own arrow glyph into these sub-controls regardless of QSS — the buttons
+    rendered as plain solid-color rectangles with no arrow indicating direction at all (live-
+    reported 2026-09-09, day_start_spin — the app's only QSpinBox; confirmed live across 10+
+    themes with the fix below, not just the one theme first tested). Paints the base control
+    (background/border/text/buttons) normally via the style — only the two arrow glyphs are
+    added on top, so the working parts of the native paint (button hover/press feedback) are
+    untouched, same as _ThemedComboBox leaves its own base paint alone.
+
+    The control's top-right/bottom-right corners (QSS `border-radius: 4px` on QSpinBox itself)
+    are NOT drawn by the native style at all — confirmed live (2026-09-09) as PRE-EXISTING,
+    present even with the triangle painting below fully removed, so it is not something this
+    class's own paint caused (an earlier version here also tried an inset fillRect matching
+    _ThemedComboBox's corner_clearance trick, on the theory that IT was squaring the corners
+    off — that theory was live-tested and disproven, so that fillRect was removed rather than
+    kept as a no-op). QSpinBox::up-button/::down-button's QSS has no border-radius of its own
+    and the native style paints their background as a flat rectangle spanning the CONTROL's
+    full rounded corner, covering where the curve should be. Fixed by explicitly re-drawing
+    the missing curve: after the native paint, redraw the whole control's rounded-rect BORDER
+    on top, which paints over the flat-rectangle edge with the correct curve and leaves
+    everything else (backgrounds, text, the buttons' own fill) untouched."""
+
+    def __init__(self, panel: "StatsPanel", parent=None):
+        super().__init__(parent)
+        self._panel = panel
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        accent = self._panel._accent_color
+        opt = QStyleOptionSpinBox()
+        self.initStyleOption(opt)
+        up_rect = self.style().subControlRect(
+            QStyle.ComplexControl.CC_SpinBox, opt, QStyle.SubControl.SC_SpinBoxUp, self)
+        down_rect = self.style().subControlRect(
+            QStyle.ComplexControl.CC_SpinBox, opt, QStyle.SubControl.SC_SpinBoxDown, self)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        # Redraw the control's own rounded border on top of whatever the native buttons just
+        # flat-painted over its top-right/bottom-right corners — see the class docstring for
+        # why this, not a fillRect inset, is the actual fix. border_color/radius match the
+        # QSpinBox QSS rule's own `border: 1px solid {accent}` / `border-radius: 4px` exactly,
+        # so this reads as a continuation of that border, not a second, different-looking one.
+        painter.setPen(QPen(accent, 1))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        border_rect = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+        painter.drawRoundedRect(border_rect, 4, 4)
+        painter.setPen(Qt.PenStyle.NoPen)
+        # Live-reported 2026-09-09: an accent-colored triangle washed out to near-invisible on
+        # HOVER, since the button's own hover background (QSpinBox::up-button:hover, themes.py)
+        # is ALSO accent — same color as the triangle, painted on top of itself. Needs a color
+        # that stays visibly darker than both the resting (accent_dark) and hover (accent)
+        # button backgrounds, not tied to either — see on_theme_changed's own comment for why
+        # this reads _spinbox_arrow_color instead of `accent`.
+        painter.setBrush(self._panel._spinbox_arrow_color)
+        # Centered on each button's own rect BY CENTROID, not by a naive cy±half-height offset
+        # around rect.center(): a triangle's centroid sits 1/3 of the way from its base to its
+        # apex, not at the midpoint of its bounding box, so cy±h alone leaves the visible shape
+        # off-center by (base_to_apex_span)/3 - h — confirmed by the live report ("not centered
+        # horizontally and vertically"). Half-width/half-height define the triangle's own SIZE;
+        # the vertical placement is then solved so the three vertices' average y lands exactly
+        # on cy, for both orientations.
+        tri_half_w, tri_half_h = 3, 2
+        h_total = 2 * tri_half_h
+        # Centroid sits h_total/3 from the base toward the apex — placing the base at
+        # cy + h_total/3 (up) or cy - h_total/3 (down) makes the CENTROID land exactly on cy.
+        base_offset = h_total / 3
+        # Live-measured nudge (2026-09-09): the centroid math above is geometrically correct
+        # but the RESULT still read as off-center against the actual rendered button — Pryme's
+        # own eyes, not re-derived. +1 right for both; the up/down arrows need DIFFERENT y
+        # nudges (settled at +2/+0) since the two buttons are not symmetric around their shared
+        # boundary — tuned in several live rounds, not derived.
+        nudge_x = 1
+        nudge_y_up, nudge_y_down = 2, 0
+        for rect, is_up in ((up_rect, True), (down_rect, False)):
+            cx = rect.center().x() + nudge_x
+            cy = rect.center().y() + (nudge_y_up if is_up else nudge_y_down)
+            if is_up:
+                base_y = cy + base_offset
+                points = [QPoint(cx - tri_half_w, round(base_y)),
+                          QPoint(cx + tri_half_w, round(base_y)),
+                          QPoint(cx, round(base_y - h_total))]
+            else:
+                base_y = cy - base_offset
+                points = [QPoint(cx - tri_half_w, round(base_y)),
+                          QPoint(cx + tri_half_w, round(base_y)),
+                          QPoint(cx, round(base_y + h_total))]
+            painter.drawPolygon(QPolygon(points))
+        painter.end()
+
+
 def _next_streak_rollover(day_start_hour: int) -> datetime:
     """Wall-clock instant at which the adjusted streak-grid day next advances."""
     from datetime import timedelta
@@ -3032,6 +3440,7 @@ class StatsPanel(QWidget):
         self.setObjectName("stats_panel")
         self.setAttribute(Qt.WA_StyledBackground, True)
         self._accent_color = QColor("#9B59B6")
+        self._spinbox_arrow_color = QColor("#1A1A1A")
         self._tassel_body_color = QColor("#9B59B6")
         self._tassel_icon_color = QColor("#000000")
         self._tassel_cord_color = QColor("#000000")
@@ -3119,6 +3528,23 @@ class StatsPanel(QWidget):
         # attribute wheelEvent-assignment convention (see _day_wheel/_week_wheel/
         # _month_wheel).
         scroll.wheelEvent = lambda event: event.ignore()
+        # QScrollArea's Qt DEFAULT focus policy is StrongFocus (unlike a plain QWidget's
+        # NoFocus) — a click anywhere in the body (Overall's stat grid/labels, none of which
+        # are themselves focusable) was granting real Qt focus to THIS container, silently,
+        # since nothing here overrode it. This was always true but never mattered before Stats
+        # joined the keyboard-focus-ownership system (2026-09-08/09) — nothing cared where
+        # focus landed in Stats until then. Now it has two real consequences, both live-
+        # reported 2026-09-09: (1) a click stealing focus off the tab bar broke arrow-key tab
+        # cycling entirely (_handle_stats_arrows only acts when `focus is tab_bar`), and (2)
+        # QAbstractScrollArea's native "keep the focused widget visible" auto-scroll could
+        # nudge the few px of forced-off overflow into view on click/drag with no scrollbar
+        # ever shown — read as "the panel can be nudged as if there was a scrollbar" even
+        # though the scrollbar itself was correctly hidden and wheel-inert. This container is
+        # a structural wrapper, never meant to be a real keyboard stop (see panels.py's
+        # panel_tab_widgets, which already excludes every QScrollArea in Stats from the Tab
+        # cycle for the identical reason) — NoFocus here closes the gap that exclusion alone
+        # didn't, since Tab-cycle membership and raw click-to-focus are two different things.
+        scroll.setFocusPolicy(Qt.FocusPolicy.NoFocus)
 
         scroll_content = QWidget()
         scroll_layout = QVBoxLayout(scroll_content)
@@ -3184,6 +3610,11 @@ class StatsPanel(QWidget):
         from ..themes import _resolve_theme
         theme = _resolve_theme(theme)
         self._accent_color = QColor(theme.get("accent", "#9B59B6"))
+        # day_start_spin's up/down arrow triangles (_ThemedSpinBox) — must stay visible
+        # against BOTH the button's resting background (accent_dark) and its hover background
+        # (accent), so it can't be tied to either; live design call 2026-09-09: try bg_main
+        # first (the app's own dark background tone, not derived from accent at all).
+        self._spinbox_arrow_color = QColor(theme.get("bg_main", "#1A1A1A"))
         # bookmark_body/bookmark_icon are independently overridable; their
         # fallbacks reproduce the original derivations exactly.
         accent_light = theme.get("accent_light", "#9B59B6")
@@ -3356,21 +3787,6 @@ class StatsPanel(QWidget):
         layout.setContentsMargins(10, 0, 10, 10)
         layout.setSpacing(6)
 
-        pref_row = QHBoxLayout()
-        day_label = QLabel("Day starts at")
-        day_label.setObjectName("settings_header")
-        pref_row.addWidget(day_label)
-        self.day_start_spin = QSpinBox()
-        self.day_start_spin.setContextMenuPolicy(Qt.ContextMenuPolicy.NoContextMenu)
-        self.day_start_spin.setRange(0, 23)
-        self.day_start_spin.setValue(self.config.get_day_start_hour())
-        self.day_start_spin.valueChanged.connect(self.config.set_day_start_hour)
-        self.day_start_spin.valueChanged.connect(self._on_day_start_hour_changed)
-        self.day_start_spin.setFixedWidth(56)
-        pref_row.addWidget(self.day_start_spin)
-        pref_row.addStretch()
-        layout.addLayout(pref_row)
-
         accel_header = QLabel("Period scroll acceleration")
         accel_header.setObjectName("settings_header")
         layout.addWidget(accel_header)
@@ -3418,6 +3834,29 @@ class StatsPanel(QWidget):
         tassel_row.addStretch()
         layout.addLayout(tassel_row)
         self._update_show_tassel_buttons()
+
+        # Moved to LAST of the settings rows 2026-09-08 (was first) — Pryme's call: it's the
+        # hardest control on this tab to give a clear keyboard-cursor indicator to (a fill
+        # highlight wouldn't read as "here" the way it does on a button, since moving keyboard
+        # focus into a QSpinBox already highlights its own text natively — see
+        # PanelManager.stats_tab_button_rows's docstring for the arrow-nav row this becomes).
+        # Header on its own line, matching every other setting on this tab (was inline with the
+        # spinbox in one QHBoxLayout — the odd one out until this pass).
+        day_header = QLabel("Day starts at")
+        day_header.setObjectName("settings_header")
+        layout.addWidget(day_header)
+
+        pref_row = QHBoxLayout()
+        self.day_start_spin = _ThemedSpinBox(self)
+        self.day_start_spin.setContextMenuPolicy(Qt.ContextMenuPolicy.NoContextMenu)
+        self.day_start_spin.setRange(0, 23)
+        self.day_start_spin.setValue(self.config.get_day_start_hour())
+        self.day_start_spin.valueChanged.connect(self.config.set_day_start_hour)
+        self.day_start_spin.valueChanged.connect(self._on_day_start_hour_changed)
+        self.day_start_spin.setFixedWidth(56)
+        pref_row.addWidget(self.day_start_spin)
+        pref_row.addStretch()
+        layout.addLayout(pref_row)
 
         layout.addStretch()
 
@@ -4255,6 +4694,23 @@ class StatsPanel(QWidget):
 
     def _on_tab_changed(self, index: int):
         self._invalidate_period_cache()
+        # Qt's own QStackedWidget hands real keyboard focus to the newly-current page widget
+        # on every tab switch — including a MOUSE click on the tab itself, not just a keyboard
+        # Left/Right (which never triggers this: QTabBar.keyPressEvent handles Left/Right
+        # natively and keeps focus on the tab bar the whole time — see the _NAV_METHODS comment
+        # block below). Every Stats tab page (stats_time_tab et al.) is a plain, NoFocus
+        # QWidget, so focus lands there anyway even though nothing can navigate TO or FROM it —
+        # QWidget.setFocus() succeeds unconditionally when called directly by Qt internals, it
+        # only refuses external focus-chain entry (Tab/click) into a NoFocus widget. Confirmed
+        # live 2026-09-08 via [STATS-FOCUS-TRACE]: clicking a tab (not typing) left
+        # QApplication.focusWidget() permanently on the page container, and every subsequent
+        # arrow press was silently dropped by _handle_stats_arrows (focus matched neither the
+        # tab bar nor any button row, so `pos is None` -> return False) with nothing left to
+        # recover it except Tab. Reclaiming the tab bar here — unconditionally, since a tab
+        # switch is the ONE moment we know for certain no row/spinbox/list-view content inside
+        # the new tab has been deliberately focused yet — closes the gap at its source instead
+        # of adding a global safety net.
+        self.tabs.tabBar().setFocus(Qt.FocusReason.OtherFocusReason)
         # Switching INTO the opaque Timeline tab makes the blurred transport
         # region invisible; switching OUT of it makes it visible again. Tell the
         # overlay so it can drop / rebuild its cached frame instead of either
@@ -4300,12 +4756,22 @@ class StatsPanel(QWidget):
                 self._tag_manager.refresh()
 
     # ── Day/Week/Month keyboard nav ───────────────────────────────────────────
-    # StatsPanel itself is granted real Qt focus on open (PanelManager._claim_panel_focus —
-    # it isn't in panel_tab_widgets, so the panel root is the claim target), so this is the
-    # widget that actually owns keyboard focus while Stats is open, per the focus-ownership
-    # invariant — the same shape as ChapterList's own keyPressEvent, not the app-level
-    # eventFilter (Tab/Escape lane), since this only needs to react while ITS tab is active
-    # and doesn't need to intercept anything before a more-specific widget sees it.
+    # CORRECTED 2026-09-08: this docstring previously said StatsPanel itself is granted real
+    # Qt focus on open because it "isn't in panel_tab_widgets" — that stopped being true the
+    # same day, once Stats joined the tab-bar-navigable panel set (see
+    # PanelManager._start_stats_entry's panel_key="stats" and panel_tab_widgets("stats")).
+    # Initial focus now lands on the Stats tab bar, not the panel root.
+    #
+    # This override still only fires as a QWidget.keyPressEvent bubble-up — i.e. only when a
+    # focused CHILD widget doesn't consume Left/Right itself and Qt's normal propagation walks
+    # it up to StatsPanel. Confirmed still safe for the new tab-bar-focused case: QTabBar's own
+    # native keyPressEvent consumes Left/Right to switch tabs (see panels.py's
+    # _ThemesTabBarInterceptor docstring — "keyboard — Left/Right, handled natively by
+    # QTabBar.keyPressEvent"), so it never propagates up to here while the tab bar holds focus.
+    # This method therefore still only ever fires for the case it was built for: focus resting
+    # somewhere INSIDE a Day/Week/Month tab (currently nothing does, since those tabs have no
+    # keyboard-focusable content yet — Day/Week/Month's own row-list keyboard nav is a later,
+    # separate pass) with no more specific widget claiming the key first.
     _NAV_METHODS = {
         "Day":   ("_day_prev", "_day_next"),
         "Week":  ("_week_prev", "_week_next"),
@@ -4366,6 +4832,26 @@ class StatsPanel(QWidget):
         super().hideEvent(event)
 
     def eventFilter(self, obj, event):
+        # ANY key other than Space/Enter/Return while "Reset all stats" is armed must cancel
+        # JUST the confirmation (and swallow that press — pure dismiss, not also whatever the
+        # key would otherwise do), not fall through to MainWindow._handle_tab_escape ->
+        # PanelManager.escape_active_panel() -> _close_stats_flow() (would close the whole
+        # panel), and not fall through to _handle_stats_arrows' Delete branch either (which,
+        # before this fix, unconditionally called reset_btn.click() again — RE-ARMING/
+        # restarting the 7s timer instead of dismissing, live-reported 2026-09-09 as part of
+        # the same "confirmations need to behave consistently" ask that produced this rule).
+        # Originally only checked Key_Escape; generalized 2026-09-09 to match Tags'
+        # delete-tag confirm (tag_manager.py's _handle_tag_detail_keys), the one pre-existing
+        # site in this app that already swallows-and-dismisses on any non-confirm key — see
+        # that method's own comment for why swallowing (not also performing the key's normal
+        # action) was the live design call, app-wide, for this exact situation. Checked BEFORE
+        # the existing click-outside branch below (both cancel the same confirm; order between
+        # them doesn't matter).
+        if (event.type() == QEvent.Type.KeyPress
+                and event.key() not in (Qt.Key.Key_Space, Qt.Key.Key_Return, Qt.Key.Key_Enter)
+                and self._reset_confirm_label.isVisible()):
+            self._cancel_reset_stats()
+            return True
         if (
             event.type() == QEvent.Type.MouseButtonPress
             and self._reset_confirm_label.isVisible()

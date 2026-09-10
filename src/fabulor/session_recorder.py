@@ -241,19 +241,48 @@ class SessionRecorder(QObject):
         if not self._checkpoint_path.exists():
             return
         try:
+            # The checkpoint file is rewritten every 30s (_write_checkpoint)
+            # for as long as the session stays open, so its own mtime is the
+            # best available estimate of when the session actually stopped
+            # (crash/kill) — NOT datetime.now() at recovery time, which can be
+            # hours or days later if the app wasn't relaunched immediately and
+            # would otherwise stamp session_end at the wrong adjusted-date
+            # (corrupting the streak grid) and smear listened_seconds across
+            # every clock-hour in between (corrupting the hourly heatmap).
+            # Read before any parse/unlink touches the file. Floored at
+            # session_start so clock skew can never produce session_end <
+            # session_start.
+            checkpoint_mtime = datetime.fromtimestamp(self._checkpoint_path.stat().st_mtime)
             data = json.loads(self._checkpoint_path.read_text(encoding="utf-8"))
             listened = float(data.get("listened_seconds", 0))
             if listened < 60:
                 self._checkpoint_path.unlink(missing_ok=True)
                 return
             session_start = datetime.fromisoformat(data["session_start"])
-            session_end = datetime.now()
+            session_end = max(checkpoint_mtime, session_start)
             position_start = float(data.get("position_start") or 0)
             furthest = data.get("furthest_position")
             if furthest is not None:
                 furthest = float(furthest)
 
             day_start_hour = self._get_day_start_hour()
+
+            # Unlink BEFORE spawning the write thread, not in its finally. The
+            # write is dispatched to a daemon thread so a slow DB call can't
+            # delay startup, but that means a second restart arriving before
+            # the thread finishes (an entr-style kill/relaunch loop, which
+            # ungracefully kills the process on every save and never runs
+            # closeEvent/clear_checkpoint — the same class of gap CLAUDE.md's
+            # close()/clear_checkpoint ordering rule documents) would still see
+            # this exact checkpoint on disk and recover it AGAIN as a
+            # duplicate, repeatedly, until the write thread happened to win the
+            # race. Deleting the file synchronously here — this call already
+            # has everything it needs (data/session_start/session_end/listened
+            # captured above) — makes a second recovery of the SAME checkpoint
+            # structurally impossible regardless of write-thread timing. Found
+            # live 2026-08-22: dozens of duplicate rows since 2026-06-19 from
+            # exactly this race under the entr dev loop — see NOTES.md.
+            self._checkpoint_path.unlink(missing_ok=True)
 
             def _write():
                 try:
@@ -279,8 +308,6 @@ class SessionRecorder(QObject):
                         self._db.set_started_at(data["book_id"], session_start)
                 except Exception:
                     pass
-                finally:
-                    self._checkpoint_path.unlink(missing_ok=True)
 
             threading.Thread(target=_write, daemon=True).start()
         except Exception:

@@ -5,11 +5,12 @@ import os
 import pstats
 import time
 from PySide6.QtWidgets import QWidget, QLabel, QPushButton, QHBoxLayout, QVBoxLayout, QGridLayout
-from PySide6.QtWidgets import QLineEdit, QApplication
+from PySide6.QtWidgets import QLineEdit, QApplication, QListWidget, QAbstractSpinBox, QScrollArea
 from PySide6.QtCore import QPoint, QRect, QPropertyAnimation, QAbstractAnimation, QTimer, Qt, QObject, QEvent
 from PySide6.QtGui import QCursor
 from .title_bar import ThemeItem
 from .transport_bar_blur import TransportBarBlurOverlay, panel_rect_in_common_space
+from .stats_panel import StatsRowListView
 
 logger = logging.getLogger(__name__)
 
@@ -82,20 +83,51 @@ _SIDEBAR_IDLE_POLL_MS = 500
 # _fade_in_flight check, which the ordinary no-hover dismiss skips entirely.
 _SNAPBACK_SETTLE_GAP_MS = 150
 
+# Settings tabs wired for arrow navigation — covered by settings_tab_button_rows() +
+# MainWindow._handle_settings_arrows. Membership is the ONE switch for turning it on for a tab:
+# both the row extraction and the arrow handler are generic over rows, so a tab whose controls
+# are QHBoxLayout rows and/or single full-width widgets needs nothing else. Audio qualifies
+# because its balance slider and Reset button become one-item rows (see settings_tab_button_rows).
+#
+# Library qualifies too: its Manage-folders QListWidget is a one-item row like Audio's slider,
+# and _handle_settings_arrows hands Up/Down back to the widget except at its first/last item, so
+# the box owns its own path selection while the row grid owns entering and leaving it.
+#
+# Themes joined 2026-09-06. It does NOT reuse settings_tab_button_rows()'s generic per-row
+# walk — its button rows (mode, bulk, interval) sit nested inside pool_container, a single
+# opaque QWidget item in themes_tab's own top-level layout, so the generic walk (which only
+# ever looks at themes_tab's OWN layout items) can't see inside it; and its swatch grid is a
+# bin-packed, variable-width-per-row layout with its own preview-on-arrival/select semantics
+# that don't fit "a row of clickable buttons" at all. PanelManager.themes_tab_rows() is a
+# second, Themes-specific row source; MainWindow._handle_settings_arrows dispatches to it
+# instead of settings_tab_button_rows() specifically for this tab. The swatch grid itself is
+# a single opaque stop in that row list (like folder_list_widget is in Library's), entered
+# and internally navigated by MainWindow._handle_themes_swatch_arrows — see that method and
+# panel_tab_widgets's ThemeItem exclusion (the swatch grid deliberately never becomes a Tab
+# stop or a traveling-marker target; a real hover-style highlight is the sole affordance).
+_ARROW_NAV_TABS = frozenset(("Look", "Controls", "Audio", "Library", "Themes"))
+
 
 class _ThemesTabBarInterceptor(QObject):
     """Event filter installed on Settings' tab bar (`mw.tabs.tabBar()`) — intercepts a
-    click on a DIFFERENT tab while the theme has not genuinely settled onto the
+    switch to a DIFFERENT tab while the theme has not genuinely settled onto the
     committed value, and defers the actual switch until it has
-    (2026-08-05, tab-switch snapback interception).
+    (2026-08-05, tab-switch snapback interception; extended to the keyboard path 2026-09-03).
+
+    Covers BOTH input paths, because both switch the tab before `currentChanged` can
+    veto anything:
+      * mouse — the switch happens inside `QTabBar.mousePressEvent`, on PRESS (not release)
+      * keyboard — Left/Right, handled natively by `QTabBar.keyPressEvent`
 
     WHY an event filter and not `currentChanged`: `QTabWidget.currentChanged` fires
     AFTER the tab has already switched — there is no Qt "veto this change" signal.
-    The switch itself happens inside `QTabBar.mousePressEvent`, on PRESS (not
-    release), so this filter must intercept `QEvent.Type.MouseButtonPress` and
-    return `True` to consume it before that handler ever runs — anything later
-    (release, `currentChanged`) is too late and would show the new tab's
-    stale-colored content for at least one frame before a correction could catch up.
+    So this filter must intercept the originating `MouseButtonPress`/`KeyPress` and
+    return `True` to consume it before Qt's own handler runs — anything later
+    (release, `currentChanged`) is too late. Reverting from `currentChanged` was tried
+    for the keyboard path (2026-09-03) and, while functionally correct, played the
+    ~200ms snapback fade over the tab the user had just landed on rather than the one
+    they were leaving; deferring the switch instead is what makes the revert read as
+    "finish, then move."
 
     WHY `_theme_genuinely_settled_on_committed()`, not `_is_hover_active` alone
     (CORRECTED 2026-08-05, live-reported by Pryme: "Doesn't work for the Change now
@@ -144,7 +176,7 @@ class _ThemesTabBarInterceptor(QObject):
         self._pm = panel_manager
 
     def eventFilter(self, obj, event):
-        if event.type() != QEvent.Type.MouseButtonPress:
+        if event.type() not in (QEvent.Type.MouseButtonPress, QEvent.Type.KeyPress):
             return False
         mw = self._pm.main_window
         tabs = getattr(mw, 'tabs', None)
@@ -154,9 +186,9 @@ class _ThemesTabBarInterceptor(QObject):
         tab_bar = tabs.tabBar()
         if obj is not tab_bar:
             return False
-        clicked_index = tab_bar.tabAt(event.position().toPoint())
-        if clicked_index < 0 or clicked_index == tabs.currentIndex():
-            return False  # not a tab, or re-clicking the already-active tab
+        target_index = self._target_index_for(event, tabs, tab_bar)
+        if target_index is None or target_index == tabs.currentIndex():
+            return False  # not a tab-switching event, or already on that tab
         # THE COMMON CASE — theme already genuinely settled on the committed value
         # (covers both "nothing was ever previewed/changed" and "a previous
         # preview/selection already fully settled"). Let the event pass through
@@ -166,13 +198,38 @@ class _ThemesTabBarInterceptor(QObject):
             return False
         # Either a hover preview is genuinely the last-painted state, OR a genuine
         # selection's own fade (e.g. "Change now") is still visually in flight.
-        # Consume the click (Qt never sees it, so the tab does not switch yet),
+        # Consume the event (Qt never sees it, so the tab does not switch yet),
         # revert any hover via the exact mechanism the dismiss fix already
         # verified (a no-op for the selection case — see class docstring), then
         # switch once settled.
         tm._on_theme_unhovered()
-        tm.call_when_theme_settled(lambda idx=clicked_index: tabs.setCurrentIndex(idx))
+        tm.call_when_theme_settled(lambda idx=target_index: tabs.setCurrentIndex(idx))
         return True
+
+    @staticmethod
+    def _target_index_for(event, tabs, tab_bar):
+        """Which tab index this event is about to switch to, or None if it isn't a tab switch.
+
+        Mouse: the tab under the cursor (None when the press missed every tab).
+
+        Keyboard: QTabBar switches on Left/Right ONLY, and does NOT wrap — measured directly
+        against a real QTabBar (2026-09-03): Up/Down leave currentIndex untouched and come back
+        `accepted=False`, Left at index 0 stays at 0, Right at the last index stays there. So the
+        target is a plain +/-1 step, and returning an out-of-range step as None makes the
+        boundary cases fall through untouched rather than being consumed for a switch that
+        would never have happened."""
+        if event.type() == QEvent.Type.MouseButtonPress:
+            idx = tab_bar.tabAt(event.position().toPoint())
+            return idx if idx >= 0 else None
+        key = event.key()
+        if key == Qt.Key.Key_Left:
+            step = -1
+        elif key == Qt.Key.Key_Right:
+            step = 1
+        else:
+            return None
+        idx = tabs.currentIndex() + step
+        return idx if 0 <= idx < tabs.count() else None
 
 
 class PanelManager:
@@ -214,6 +271,20 @@ class PanelManager:
         # no-underlay cases stay explicit rather than silently falling through
         # generic panel handling.
         self._book_detail_underlay: str | None = None
+        # The widget that held real Qt focus at the moment Book Detail opened, so closing it
+        # (Esc/close button) can hand focus back to the EXACT control the user was on — added
+        # 2026-09-09 for Stats' Day/Week/Month row lists (live report: Esc from Book Detail
+        # landed on the tab bar instead of the book's own row). Was previously a known,
+        # explicitly-flagged gap (see _on_book_detail_hidden's own old comment, now replaced):
+        # focus was released but never handed back to the underlay at all, leaving Qt's own
+        # focus-fallback behavior to land wherever it pleased — consistent with the tab-bar
+        # symptom, since the tab bar is the underlay's own first StrongFocus candidate. A widget
+        # reference (not a row index) so it works for ANY future underlay's focus target, not
+        # just Stats' row lists specifically. Consuming read, same shape as _book_detail_underlay
+        # — a stale reference (the widget's own panel closed/rebuilt meanwhile) must never
+        # survive into the next Book Detail open, and a deleted-widget guard is required at the
+        # consuming site since Qt C++ objects can be destroyed between the two events.
+        self._book_detail_return_focus_widget = None
         # Set by reclip_visual_area_for_layout_change when the layout reflows
         # underneath an open panel; consumed once by
         # _resume_blur_after_book_detail to decide whether the visual_area blur
@@ -343,7 +414,17 @@ class PanelManager:
         """Suppress the transport-bar frost on the Themes tab specifically —
         see the connection site's own comment (PanelManager.__init__) for why.
         Only reachable while Settings is the visible panel (mw.tabs lives
-        inside settings_panel; nothing else drives its currentChanged)."""
+        inside settings_panel; nothing else drives its currentChanged).
+
+        Deliberately does NOT revert a live theme hover preview. An earlier version of this
+        method did, to cover arrow-key tab switching (which _ThemesTabBarInterceptor could not
+        see while it filtered MouseButtonPress only). That worked but looked wrong: currentChanged
+        fires AFTER Qt has already switched, so the ~200ms snapback fade played over the tab the
+        user had just arrived on, instead of finishing on the tab they were leaving.
+        _ThemesTabBarInterceptor now handles the keyboard path too, deferring the switch until
+        the revert has settled — so reverting here as well would both double-fire and reintroduce
+        the exact after-the-switch timing this was moved away from (its own deferred
+        setCurrentIndex re-enters this handler)."""
         if not self.settings_panel.isVisible():
             return
         self._sync_transport_bar_blur_for_settings_tab()
@@ -1444,10 +1525,28 @@ class PanelManager:
         else:
             mw._apply_pending_cover_theme()
 
+    def _clear_focus_marker_for_close(self) -> None:
+        """Hide the traveling focus marker immediately, before a panel's slide-out animation
+        starts — not after. Without this, the marker keeps patrolling whatever control it was
+        tracking for the ENTIRE close animation, and since that control is still a live,
+        positioned widget until the panel's own `.hide()` runs at animation-finished, the
+        marker visibly travels off-screen WITH the sliding panel — reads as "the marker spilled
+        into the main window" (reported live 2026-09-07, Sleep panel; Settings never showed
+        this because `_close_settings_flow` already clears the marker at its own entry, for
+        exactly this reason — see that method's comment, which this helper factors out so
+        Speed/Sleep/Sprint's own close flows get the identical fix instead of three copies of
+        the same fix arriving independently, or at different times, the way it almost did.
+        Idempotent (marker.clear() is a safe no-op if already clear); safe no-op before the
+        marker exists at all."""
+        marker = getattr(self.main_window, 'focus_marker', None)
+        if marker is not None:
+            marker.clear()
+
     def _close_speed_flow(self):
         """Slides the speed panel back out."""
         if self.speed_panel_animation.state() == QAbstractAnimation.State.Running:
             return
+        self._clear_focus_marker_for_close()
         panel_w = self.speed_panel.width()
         sidebar_y = 56
         self.speed_panel_animation.setStartValue(QPoint(0, sidebar_y))
@@ -1496,7 +1595,12 @@ class PanelManager:
         self.stats_panel.show()
         self.stats_panel.refresh_current_tab()
         self.stats_panel.raise_()
-        self._claim_panel_focus(self.stats_panel)
+        # panel_key="stats" (2026-09-08, first keyboard-nav pass): lands initial focus on
+        # Stats' own tab bar (via panel_tab_widgets("stats")'s first entry) instead of the
+        # panel root — same shape as Settings. Without this, _claim_panel_focus's default
+        # fallback grants the panel ROOT StrongFocus, which is what StatsPanel.keyPressEvent's
+        # own docstring documents as today's (pre-this-pass) behavior.
+        self._claim_panel_focus(self.stats_panel, panel_key="stats")
 
         self.stats_panel_animation.setStartValue(QPoint(-panel_w, sidebar_y))
         self.stats_panel_animation.setEndValue(QPoint(0, sidebar_y))
@@ -1572,6 +1676,7 @@ class PanelManager:
         """Slides the sleep panel back out."""
         if self.sleep_panel_animation.state() == QAbstractAnimation.State.Running:
             return
+        self._clear_focus_marker_for_close()
         panel_w = self.sleep_panel.width()
         sidebar_y = 56
         self.sleep_panel_animation.setStartValue(QPoint(0, sidebar_y))
@@ -1641,6 +1746,7 @@ class PanelManager:
         """Slides the sprint panel back out. Mirrors _close_sleep_flow exactly."""
         if self.sprint_panel_animation.state() == QAbstractAnimation.State.Running:
             return
+        self._clear_focus_marker_for_close()
         self.sprint_panel._cancel_reset_sprint_data()
         panel_w = self.sprint_panel.width()
         sidebar_y = 56
@@ -1669,6 +1775,12 @@ class PanelManager:
     def _close_stats_flow(self):
         if self.stats_panel_animation.state() == QAbstractAnimation.State.Running:
             return
+        # Stats never had this call — same regression Sleep/Speed/Sprint already had fixed
+        # (2026-09-07, see _clear_focus_marker_for_close's own docstring): without it, the
+        # marker keeps patrolling the last-focused Stats control for the whole slide-out
+        # animation and visibly spills onto the main window with it. Reported live 2026-09-08
+        # against Stats specifically, the first panel to add keyboard nav after that fix landed.
+        self._clear_focus_marker_for_close()
         self.stats_panel._cancel_reset_stats()
         panel_w = self.stats_panel.width()
         sidebar_y = 56
@@ -1728,7 +1840,14 @@ class PanelManager:
         self.tags_panel.show()
         self.tags_panel.refresh()
         self.tags_panel.raise_()
-        self._claim_panel_focus(self.tags_panel)
+        # Claims focus on _tag_scroll directly (2026-09-08, tag-list keyboard nav),
+        # not the panel root — refresh() always lands on the list view, and the
+        # list's own arrow-key handling (TagManagerWidget.eventFilter) is gated on
+        # `obj is self._tag_scroll`, so real focus has to land there for a key
+        # press to ever reach it. _claim_panel_focus's own fallback (grant
+        # StrongFocus + setFocus) applies unchanged; _tag_scroll already has
+        # StrongFocus by Qt's QAbstractScrollArea default.
+        self._claim_panel_focus(self.tags_panel.tag_scroll_widget())
         self.tags_panel_animation.setStartValue(QPoint(-panel_w, sidebar_y))
         self.tags_panel_animation.setEndValue(QPoint(0, sidebar_y))
 
@@ -1787,6 +1906,7 @@ class PanelManager:
         # clobber a live value. active_full_panel() already excludes mid-close panels
         # via _is_closing, which is exactly the state we must not "restore" blur to.
         self._book_detail_underlay = self.active_full_panel()
+        self._book_detail_return_focus_widget = QApplication.focusWidget()
         self._complete_main_fade()
         # Snapshot of the library's current search text, so tag chips (library context only)
         # can tell whether a given tag is already the active filter and render inert. A
@@ -1892,9 +2012,19 @@ class PanelManager:
             pass
         self.book_detail_panel.hide()
         self._release_panel_focus(self.book_detail_panel)
-        # NOTE: focus is released but never handed back to the still-open underlay,
-        # leaving that panel with no focus owner. Known, deliberately out of scope for
-        # this blur change — recorded in DEBT_INVENTORY.md for the Stats keyboard-nav pass.
+        # Hand focus back to whatever specifically held it when Book Detail opened —
+        # 2026-09-09, closing the gap this comment used to flag as known/deferred (see
+        # _book_detail_return_focus_widget's own docstring in __init__ for the full history).
+        # Consuming read; a deleted C++ widget (its panel closed or rebuilt while Book Detail
+        # was open) raises RuntimeError on ANY method call, not just a specific one, so the
+        # guard is a broad try/except rather than an isinstance/None check alone.
+        widget, self._book_detail_return_focus_widget = self._book_detail_return_focus_widget, None
+        if widget is not None:
+            try:
+                if widget.isVisible():
+                    widget.setFocus(Qt.FocusReason.OtherFocusReason)
+            except RuntimeError:
+                pass  # underlying C++ object was destroyed — nothing to restore focus to
         self._resume_blur_after_book_detail()
         self._notify_panel_closed()
 
@@ -1942,6 +2072,16 @@ class PanelManager:
         this guard. The guard is a plain no-op on re-entry, not a queue: the one
         in-flight close is already going to finish and hide the panel; a second
         request while it's pending adds nothing."""
+        # Hide the traveling focus marker immediately — before the snapback-settle wait and
+        # slide-out below, not after (see _on_settings_hidden, which used to own this and left
+        # the marker visibly patrolling the tab border throughout the whole close animation).
+        # Mirrors a tab switch's own _update_focus_marker() clear: the marker disappears the
+        # instant the widget it was tracking is going away, not once the transition finishes.
+        # Factored into _clear_focus_marker_for_close 2026-09-07 so Speed/Sleep/Sprint's own
+        # close flows share this exact fix rather than reimplementing it — see that method's
+        # docstring for the live report that found the gap on Sleep. Idempotent, so safe to
+        # call again on the re-entrancy early-return path below.
+        self._clear_focus_marker_for_close()
         if getattr(self, '_settings_close_pending', False):
             logger.warning("[CLOSE-SETTINGS-TRACE] _close_settings_flow: EARLY-RETURN, "
                             "already pending (re-entrancy guard)")
@@ -2406,7 +2546,15 @@ class PanelManager:
         findChildren order (== creation == visual order for these, confirmed). Settings is
         scoped to the active tab; on the Themes tab the N generated theme swatches (ThemeItem —
         mode/bulk buttons are plain QPushButton) are excluded, since swatch-grid keyboard nav is
-        deferred to a later arrows+space design."""
+        deferred to a later arrows+space design.
+
+        For settings/stats, the tab bar itself is prepended as the first Tab stop (it lives on
+        the QTabWidget, not inside currentWidget(), so findChildren under the active tab would
+        miss it): Tab then cycles tab-bar -> the active tab's controls -> back to the tab bar,
+        and the traveling focus marker (ui/focus_marker.py) can trace the tab-header shape too.
+        Stats added 2026-09-08 (first pass): it has its OWN QTabWidget instance
+        (`self.stats_panel.tabs`, separate from `self.main_window.tabs`), so it gets the same
+        tab-bar-as-first-stop treatment as settings, scoped to Stats' own tab bar."""
         if panel == "settings":
             root = self.main_window.tabs.currentWidget()
         elif panel == "speed":
@@ -2415,20 +2563,424 @@ class PanelManager:
             root = self.sleep_panel
         elif panel == "sprint":
             root = self.sprint_panel
+        elif panel == "stats":
+            stats_panel = getattr(self.main_window, 'stats_panel', None)
+            root = stats_panel.tabs.currentWidget() if stats_panel is not None else None
         else:
             return []
         if root is None:
             return []
+        if panel in ("speed", "sleep", "sprint"):
+            # Delegate to flat_panel_rows' own layout-order walk instead of findChildren
+            # below — found live 2026-09-10 (Speed's Tab order: grid -> Step -> Undo ->
+            # Skip -> Smart rewind -> Default speed -> wraps to grid, skipping Default
+            # speed's real visual position right after the grid). Root cause: Speed's
+            # Default speed row is DELETED AND RECREATED on every panel open
+            # (_rebuild_def_speed_row, called from _start_speed_entry) so its buttons
+            # become the NEWEST entries in Qt's internal child-object list — findChildren
+            # order reflects recreation order, not visual/layout order, the moment any
+            # widget in the panel gets rebuilt after construction. flat_panel_rows'
+            # _walk reads the actual QVBoxLayout/QHBoxLayout/QGridLayout structure
+            # directly (lay.itemAt(i) in real layout order), so it's immune to this by
+            # construction — it already gets Speed's arrow-key navigation right; Tab was
+            # the only consumer still using the fragile findChildren walk. Flattening its
+            # row-of-rows shape (one row per grid row's grouping doesn't apply here — a
+            # grid row IS one opaque list of every navigable cell already, so flattening
+            # is just concatenation, no cell reordering) gives Tab the same order arrows
+            # already use.
+            return [w for row in self.flat_panel_rows(panel) for w in row]
         result = []
+        if panel == "settings":
+            tab_bar = self.main_window.tabs.tabBar()
+            if tab_bar.isVisible() and (tab_bar.focusPolicy() & Qt.FocusPolicy.TabFocus):
+                result.append(tab_bar)
+        elif panel == "stats":
+            tab_bar = self.main_window.stats_panel.tabs.tabBar()
+            if tab_bar.isVisible() and (tab_bar.focusPolicy() & Qt.FocusPolicy.TabFocus):
+                result.append(tab_bar)
         for w in root.findChildren(QWidget):
             if isinstance(w, ThemeItem):
                 continue  # deferred: theme swatches get their own arrows+space nav later
+            if panel == "stats" and isinstance(w, QScrollArea):
+                # Overall's stat-grid QScrollArea (and any other purely structural scroll
+                # container in Stats) is excluded 2026-09-09 — live-reported root cause of
+                # "tab twice from Overall reaches the cover-art carousel": these containers are
+                # real StrongFocus-eligible widgets with no visible focus indicator of their own
+                # (no highlight, nothing painted), so landing on one via Tab was invisible —
+                # and once real Qt focus was ON one, a SECOND Tab press did not reliably route
+                # back through this hand-rolled cycle the way a plain QWidget/QPushButton does,
+                # instead falling through to Qt's own native Tab-order chain, which reached a
+                # completely unrelated MainWindow-level widget (the carousel). No QScrollArea in
+                # Stats is ever meant to be a real keyboard stop — Day/Week/Month's actual
+                # content lives in StatsRowListView (excluded just below for its own, related
+                # reason), not the scroll container itself.
+                continue
+            if isinstance(w, StatsRowListView):
+                # Day/Week/Month's row list is deliberately OUT of the generic Tab-cycle,
+                # 2026-09-09 — same shape as LibraryPanel's own QListView, which was removed
+                # from ITS Tab cycle for the identical reason (2026-07-10, see that method's
+                # own comment): before this exclusion, Tab from the row list picked up
+                # whatever OTHER real widget findChildren happened to find next in the tab
+                # (a QScrollArea, or worse — live-reported 2026-09-09 landing on the main
+                # window's cover-art carousel entirely), none of which is a sensible "next
+                # stop" for a list that already owns Up/Down internally. The row list is
+                # reachable only via Down from the tab bar (MainWindow._handle_stats_arrows)
+                # and left only via Up/Shift+Tab back to the tab bar (StatsRowListView's own
+                # keyPressEvent) — never via this generic cycle in either direction.
+                continue
+            if w.objectName() == "stats_nav_btn":
+                # The Day/Week/Month period ‹/› buttons (_day_prev_btn/_day_next_btn etc.) —
+                # excluded from the Tab cycle 2026-09-09, live design call: Left/Right always
+                # cycle the period directly (StatsPanel.keyPressEvent's own _NAV_METHODS), so
+                # these buttons must never become a keyboard stop at all — no highlight, no
+                # Tab target, matching how the row list itself is excluded just above for the
+                # analogous "this has its own dedicated keyboard path, stay out of the generic
+                # cycle" reason. Matched by objectName rather than a class check since these
+                # are plain QPushButtons with no dedicated subclass.
+                continue
+            if isinstance(w.parentWidget(), QAbstractSpinBox):
+                # A QSpinBox's internal QLineEdit (its text-entry sub-widget) is itself
+                # TabFocus-eligible (Qt.FocusPolicy.WheelFocus, which includes TabFocus),
+                # findChildren(QWidget) walks INTO the spin box and picks it up as a SEPARATE
+                # Tab stop from the spin box itself — duplicating one control into two entries.
+                # Reported live 2026-09-08 (Stats' day_start_spin, the app's only QSpinBox):
+                # Tab appeared to be a no-op, actually landing on this invisible-from-the-
+                # spinbox-itself internal child instead of advancing to the next real control.
+                # The QSpinBox itself is the real, single Tab stop; its internal line-edit is
+                # never a separate one.
+                continue
             if not w.isVisibleTo(root):
+                continue
+            if not w.isEnabled():
+                # Qt's own Tab order skips disabled widgets; this cycle is hand-rolled, so it
+                # has to skip them explicitly or Tab would land on something unusable (Library's
+                # Remove/Rescan while no folders are configured). Keeps Tab and arrow navigation
+                # agreeing — settings_tab_button_rows applies the same rule.
                 continue
             if not (w.focusPolicy() & Qt.FocusPolicy.TabFocus):
                 continue
             result.append(w)
         return result
+
+    def settings_tab_button_rows(self) -> list:
+        """The active settings tab's controls grouped into VISUAL rows, for arrow-key navigation
+        (see MainWindow._handle_settings_arrows). Each entry is a list of widgets on one line,
+        left-to-right; rows are top-to-bottom. Empty list on a tab not yet wired for arrow
+        navigation (see _ARROW_NAV_TABS).
+
+        Derived LIVE from the layout rather than from mw's per-group dicts (fade_buttons,
+        blur_buttons, digit_mode_buttons, ...) or any build-time snapshot, for two reasons:
+          * Controls are hidden and shown at runtime — Look's Chapter-notches line hides its
+            Animation pair when notches are Off, and Audio's "Reset to defaults" is hidden
+            whenever every audio setting is already at its default (AudioSettingsTab.
+            update_visuals). A fixed structure would offer a keyboard stop on something that is
+            not on screen, so visibility has to be re-read per keypress.
+          * Row membership then follows whatever the builder actually lays out — add or reorder
+            a row and this keeps working with no second place to update.
+
+        TWO ROW SHAPES, because the tabs genuinely have two:
+          * a QHBoxLayout of controls — the common case. Two logical groups sharing ONE layout
+            are deliberately ONE row, matching what the user sees: Look's notches line
+            (notches + Animation) and Controls' digit line (By name/By index + Auto-play/Jump
+            only) are both this shape.
+          * a single widget added straight to the tab's QVBoxLayout via addWidget — Audio's L/R
+            balance slider and its full-width "Reset to defaults" button. These become one-item
+            rows, so Up/Down reach them like any other row and Left/Right have something
+            meaningful to do (the arrow handler steps a slider's value rather than moving focus).
+
+        Membership is by focus policy, not by class: any widget that accepts focus counts, which
+        is what lets a ClickSlider and a non-#pattern_button QPushButton participate without
+        being special-cased here. Non-focusable decoration (header QLabels, the trailing
+        stretch) is skipped for free.
+
+        Two Library list boxes are deliberately NOT in `rows` at all, even though both are fully
+        arrow-navigable: `folder_list_widget` (a real member of `lib_layout`, but handled entirely
+        by `_handle_settings_arrows`'s own `isinstance(focus, QListWidget)` branch once focus
+        reaches it — Up/Down inside it must never be treated as a row-to-row grid move) and
+        `excluded_books_popup` (not even in `lib_layout` — it's an absolutely-positioned overlay
+        parented to `library_tab` — with its own self-contained `keyPressEvent`, entered via a
+        special-cased Down/Right from Persist search filter's row in `_handle_settings_arrows`).
+        Both are still real Tab stops via `panel_tab_widgets`'s separate `findChildren` walk.
+
+        Themes is NOT handled by the generic walk below — it delegates to `themes_tab_rows()`
+        instead (see that method's docstring for why the generic shape doesn't fit it). Every
+        caller of this method (the arrow handler, the marker hand-back check) gets Themes' real
+        rows this way with no second call site to remember."""
+        tabs = getattr(self.main_window, 'tabs', None)
+        if tabs is None or tabs.tabText(tabs.currentIndex()) not in _ARROW_NAV_TABS:
+            return []
+        if tabs.tabText(tabs.currentIndex()) == "Themes":
+            return self.themes_tab_rows()
+        root = tabs.currentWidget()
+        if root is None:
+            return []
+        layout = root.layout()
+        if layout is None:
+            return []
+
+        def _navigable(w) -> bool:
+            # isEnabled matters as much as visibility: Library disables Remove/Rescan while no
+            # folders are configured (app.py's _update_folder_list_widget), and Qt already skips
+            # disabled widgets in Tab order — arrow navigation has to agree, or the marker would
+            # stop on a dimmed control that cannot be activated.
+            if (w is None
+                    or not w.isVisibleTo(root)
+                    or not w.isEnabled()
+                    or not (w.focusPolicy() & Qt.FocusPolicy.TabFocus)):
+                return False
+            # An EMPTY list box is not worth stopping on — there is nothing in it to select, so
+            # the keyboard should pass straight over it (Library's Manage folders with no
+            # folders added). It becomes a stop again the moment it has content.
+            if isinstance(w, QListWidget) and w.count() == 0:
+                return False
+            return True
+
+        rows = []
+        for i in range(layout.count()):
+            item = layout.itemAt(i)
+            sub = item.layout()
+            if sub is not None:
+                row = [w for j in range(sub.count())
+                       if _navigable(w := sub.itemAt(j).widget())]
+                if row:
+                    rows.append(row)
+                continue
+            # A widget sitting directly in the tab's own column (no inner QHBoxLayout) is its
+            # own single-item row — Audio's balance slider and Reset button.
+            w = item.widget()
+            if _navigable(w):
+                rows.append([w])
+        return rows
+
+    def themes_tab_rows(self) -> list:
+        """Themes-tab-specific row source (see settings_tab_button_rows's docstring for why
+        that generic walk delegates here instead of handling Themes itself). Returns rows in
+        the same shape settings_tab_button_rows produces — a list of left-to-right widget
+        lists, top-to-bottom — so MainWindow._handle_settings_arrows's row-stepping (Up/Down
+        to the next/previous row's first widget, Left/Right native-within-row) works
+        unmodified for everything EXCEPT the swatch grid, which is deliberately represented
+        as a single ONE-ITEM row holding `swatch_box` itself — mirroring exactly how
+        `folder_list_widget` is a one-item row that then owns its own internal Up/Down/Left/
+        Right once focus reaches it (see _handle_settings_arrows's QListWidget branch and,
+        here, MainWindow._handle_themes_swatch_arrows).
+
+        Row order top-to-bottom, matching what's on screen:
+          1. the cover-art mode row (Off / With pool / Exclusive) — always present.
+          2. `swatch_box` as a single opaque stop — only when `pool_container` is visible
+             (hidden entirely in Exclusive mode, along with everything below it).
+          3. the bulk-action row (Add all / Remove all / Change now) — same visibility gate.
+          4. the interval row, as one item per QLabel (they act as buttons via a
+             mousePressEvent monkeypatch, not real QPushButtons, but are keyboard-navigable
+             once given TabFocus — see main_window_builders.build_themes_tab) — same gate.
+
+        `swatch_box` itself needs `Qt.FocusPolicy.StrongFocus` for this to work as a stop;
+        the individual ThemeItem swatches inside it deliberately do NOT participate in Tab
+        order or this row list (see panel_tab_widgets's ThemeItem exclusion) — the grid is
+        entered as one unit and navigated internally, never as N separate stops."""
+        mw = self.main_window
+        tm = mw.theme_manager
+        rows = []
+        mode_row = [btn for btn in tm.cover_art_mode_widgets.values()
+                    if btn.isVisibleTo(mw) and btn.isEnabled()]
+        if mode_row:
+            rows.append(mode_row)
+        if tm.pool_container is not None and tm.pool_container.isVisible():
+            if tm.swatch_box is not None and tm.swatch_box.isVisibleTo(mw):
+                rows.append([tm.swatch_box])
+            bulk_row = [btn for btn in (mw.add_all_btn, mw.remove_all_btn, mw.change_now_btn)
+                        if btn is not None and btn.isVisibleTo(mw) and btn.isEnabled()]
+            if bulk_row:
+                rows.append(bulk_row)
+            interval_row = [lbl for lbl in tm.interval_widgets.values()
+                            if lbl.isVisibleTo(mw) and lbl.isEnabled()]
+            if interval_row:
+                rows.append(interval_row)
+        return rows
+
+    def stats_tab_button_rows(self) -> list:
+        """Stats' own equivalent of settings_tab_button_rows, scoped ONLY to the Settings ("⚙")
+        tab — first pass (2026-09-08), Overall/Timeline/Day/Week/Month have no arrow-navigable
+        button rows yet (Day/Week/Month's row-list keyboard nav is deferred to its own pass; see
+        TODO.md). Not folded into settings_tab_button_rows itself because that method reads
+        `self.main_window.tabs` specifically (Settings' own QTabWidget) and has Themes-specific
+        branching that doesn't apply here — Stats has a SEPARATE QTabWidget instance
+        (`self.stats_panel.tabs`) with no swatch-grid-shaped tab to special-case.
+
+        Same generic walk shape as settings_tab_button_rows (a QHBoxLayout of controls is one
+        row; a bare widget added straight to the tab's QVBoxLayout is its own one-item row;
+        membership is by focus policy, not by class), derived live from the layout for the same
+        reason: Stats' Settings tab hides/shows nothing dynamically today, but deriving from the
+        live layout costs nothing and keeps this correct if that ever changes.
+
+        `self.day_start_spin` (the day-start-hour QSpinBox) is the tab's LAST row as of this
+        pass (moved from first — see build_options_tab in stats_panel.py) — Pryme's call: it's
+        the hardest control here to give a clear keyboard-cursor indicator to, so it goes last
+        rather than being the first thing arrow navigation encounters."""
+        stats_panel = getattr(self.main_window, 'stats_panel', None)
+        if stats_panel is None:
+            return []
+        tabs = getattr(stats_panel, 'tabs', None)
+        if tabs is None or tabs.tabText(tabs.currentIndex()) != "⚙":
+            return []
+        root = tabs.currentWidget()
+        if root is None:
+            return []
+        layout = root.layout()
+        if layout is None:
+            return []
+
+        def _navigable(w) -> bool:
+            return (w is not None
+                    and w.isVisibleTo(root)
+                    and w.isEnabled()
+                    and bool(w.focusPolicy() & Qt.FocusPolicy.TabFocus))
+
+        rows = []
+        for i in range(layout.count()):
+            item = layout.itemAt(i)
+            sub = item.layout()
+            if sub is not None:
+                row = [w for j in range(sub.count())
+                       if _navigable(w := sub.itemAt(j).widget())]
+                if row:
+                    rows.append(row)
+                continue
+            w = item.widget()
+            if _navigable(w):
+                rows.append([w])
+        return rows
+
+    def flat_panel_rows(self, panel_key: str) -> list:
+        """Row source for Speed/Sleep/Sprint arrow navigation (added 2026-09-07) — the
+        equivalent of settings_tab_button_rows()/themes_tab_rows() for a panel with no tabs at
+        all, just one flat QVBoxLayout. Same generic-per-row-shape approach and the same reason
+        for it (controls hide/show at runtime — e.g. Sleep's disable button, Sprint's grace-
+        period submenu rows — so membership is re-read live on every keypress, never cached).
+
+        THREE row shapes here, one more than settings_tab_button_rows' two, because these
+        panels' preset grids are a genuine QGridLayout (Speed's 12 speed buttons, Sleep's 14
+        duration presets + End of chapter, Sprint's 10 duration presets + End of chapter) —
+        unlike anything on a Settings tab:
+          * a QHBoxLayout of controls — the common case (Sleep's custom-time-input row, its
+            Fade-out row; Sprint's backward-compensation/grace-mode rows).
+          * a single widget added straight to the panel's own QVBoxLayout — Sleep's/Sprint's
+            disable button, Sprint's Reset-all-sprint-data button, any conflict-confirm label
+            currently shown.
+          * a QGridLayout — represented as a SINGLE opaque row (one list containing every
+            navigable cell in the grid, in `itemAt` order) rather than one row per grid ROW.
+            `MainWindow._handle_panel_grid_arrows` owns the real 2-D movement once focus
+            reaches the grid, reading the live QGridLayout structure directly (row/column
+            counts, `itemAtPosition`, and cell spans — End of chapter spans 2 columns) rather
+            than trying to flatten it into `flat_panel_rows`' own row-of-rows shape, which has
+            no way to represent a span. Same architecture as Themes' swatch_box: one opaque
+            stop in the row list, its own internal navigation once entered.
+
+        Grid cell membership within the opaque row is still filtered by `_navigable` below —
+        an item without a widget (an empty grid cell — Sleep's grid has two: End of chapter's
+        span leaves (3,0) and (3,1) real slots, occupied; no empty cells today, but a future
+        grid might) is skipped the same way a hidden button is."""
+        mw = self.main_window
+        panel = {"speed": getattr(mw, "speed_panel", None),
+                 "sleep": getattr(mw, "sleep_panel", None),
+                 "sprint": getattr(mw, "sprint_panel", None)}.get(panel_key)
+        if panel is None:
+            return []
+        layout = panel.layout()
+        if layout is None:
+            return []
+
+        def _navigable(w) -> bool:
+            return (w is not None and w.isVisibleTo(panel) and w.isEnabled()
+                    and bool(w.focusPolicy() & Qt.FocusPolicy.TabFocus))
+
+        def _walk(lay, out: list) -> None:
+            for i in range(lay.count()):
+                item = lay.itemAt(i)
+                sub = item.layout()
+                if isinstance(sub, QGridLayout):
+                    grid_row = [w for j in range(sub.count())
+                                if _navigable(w := sub.itemAt(j).widget())]
+                    if grid_row:
+                        out.append(grid_row)
+                    continue
+                if sub is not None:
+                    row = [w for j in range(sub.count())
+                           if _navigable(w := sub.itemAt(j).widget())]
+                    if row:
+                        out.append(row)
+                    continue
+                w = item.widget()
+                if w is None:
+                    continue
+                # A bare CONTAINER widget with its OWN internal layout (e.g. Sprint's
+                # _grace_submenu, added via addWidget rather than addLayout — a QWidget
+                # wrapper used purely to give a group of rows one shared show/hide toggle) is
+                # recursed into rather than treated as a single navigable leaf — added
+                # 2026-09-07 after this exact case (the grace-period percentage/fixed/custom
+                # sub-rows) was silently skipped in full: `_navigable(w)` on the wrapper itself
+                # is always False (a plain QWidget has no TabFocus), so nothing inside it was
+                # ever reachable at all, live-reported as "skips the second row... and moves to
+                # Reset all sprint data" — it wasn't skipping ONE row, the whole submenu was
+                # invisible to this walk. Only recurses into a VISIBLE wrapper — an entirely
+                # hidden submenu (grace mode not "custom"/"percentage"/"fixed") must stay fully
+                # absent from the rows list, same as any other hidden control.
+                if not w.isVisibleTo(panel):
+                    continue
+                inner = w.layout()
+                if isinstance(inner, QHBoxLayout) and inner.count() > 0:
+                    # The wrapper exists ONLY to hold a single row's worth of buttons side by
+                    # side (e.g. _grace_pct_row/_grace_fixed_row) — its contents are ONE row,
+                    # not N one-item rows. Collect them directly rather than recursing, which
+                    # would otherwise split each button into its own separate row (confirmed
+                    # live 2026-09-07: recursing unconditionally here produced one row PER
+                    # PERCENTAGE BUTTON instead of one row of six).
+                    row = [iw for k in range(inner.count())
+                           if _navigable(iw := inner.itemAt(k).widget())]
+                    if row:
+                        out.append(row)
+                    continue
+                if inner is not None and inner.count() > 0:
+                    # A QVBoxLayout (or anything else stacking sub-rows vertically) — e.g.
+                    # _grace_submenu's own submenu_layout, which holds THREE further row
+                    # wrappers, one per grace-mode sub-option. Recurse so each of those
+                    # becomes its own row in turn.
+                    _walk(inner, out)
+                    continue
+                if _navigable(w):
+                    out.append([w])
+
+        rows = []
+        _walk(layout, rows)
+        return rows
+
+    def grid_layout_for(self, panel_key: str, widget) -> "QGridLayout | None":
+        """The real QGridLayout `widget` sits in, if it's one of `panel_key`'s preset grids —
+        used by MainWindow._handle_panel_grid_arrows once flat_panel_rows has identified that
+        focus is inside a grid-shaped row and real 2-D navigation needs the grid ITSELF, not
+        just its flattened widget list.
+
+        Walks the panel's own top-level layout the same way flat_panel_rows does (matching
+        detection logic — a QGridLayout item, found via `item.layout()`) rather than asking
+        `widget.parentWidget().layout()`: that looks like it should work but does NOT — a
+        QWidget has only ONE top-level `.layout()`, which for these panels is always the outer
+        QVBoxLayout, never a sub-layout added via `addLayout()` (confirmed live 2026-09-07,
+        caught before shipping: `panel.layout() is grid` is False even for a widget added
+        directly into that grid). This is the correct way to recover a sub-layout a widget
+        belongs to; there is no Qt API that goes the other direction from a plain widget."""
+        mw = self.main_window
+        panel = {"speed": getattr(mw, "speed_panel", None),
+                 "sleep": getattr(mw, "sleep_panel", None),
+                 "sprint": getattr(mw, "sprint_panel", None)}.get(panel_key)
+        if panel is None:
+            return None
+        layout = panel.layout()
+        if layout is None:
+            return None
+        for i in range(layout.count()):
+            sub = layout.itemAt(i).layout()
+            if isinstance(sub, QGridLayout) and sub.indexOf(widget) >= 0:
+                return sub
+        return None
 
     # ── Panel-local keyboard focus ownership ─────────────────────────────────
     # Enforces the invariant that MainWindow.keyPressEvent's _focus_allows_global_shortcuts

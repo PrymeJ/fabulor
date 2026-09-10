@@ -8,6 +8,7 @@ from ..themes import preset_ramp_rgb
 from ..player import _CHAPTER_WALK_TOLERANCE
 from mpv import ShutdownError
 from .line_edit_dragfix import DragSafeLineEdit
+from .ramp_highlight_fade import RampHighlightFade
 
 logger = logging.getLogger(__name__)
 
@@ -152,6 +153,9 @@ class SprintPanel(QWidget):
         grid.setSpacing(8)
         presets_minutes = [5, 10, 15, 20, 25, 30, 45, 60, 90, 120]
         self._sprint_presets_buttons = []
+        # Animated highlight fade for the ramp buttons — see ramp_highlight_fade.py
+        # and SpeedControlsPanel's identical wiring for the full explanation.
+        self._ramp_highlight_fade = RampHighlightFade()
         for i, val in enumerate(presets_minutes):
             btn = QPushButton(f"{val} min")
             btn.setFixedSize(57, 30)
@@ -160,10 +164,16 @@ class SprintPanel(QWidget):
             self._sprint_presets_buttons.append(btn)
         # 10 presets fill cells (0,0)-(2,1); (2,2)-(2,3) are otherwise empty —
         # End of chapter spans them rather than adding a new row. No
-        # setObjectName here — matches SleepTimerPanel.end_chap_btn exactly,
-        # which is also a plain unnamed QPushButton (styled by the same
-        # ramp/default QSS as the duration presets, NOT "pattern_button").
+        # Styled by the same ramp/default QSS as the duration presets, NOT "pattern_button" —
+        # matches SleepTimerPanel.end_chap_btn's resting/hover appearance exactly. Given the
+        # SAME objectName as that button (2026-09-07) so the keyboard-focus QSS rule
+        # (get_sprint_stylesheet) can target this ONE grid cell specifically, instead of a bare
+        # QPushButton type selector — that was tried first and wrongly matched every other
+        # plain button in the panel, including #stats_reset_btn (reported live: it silently
+        # gained the same fill it was explicitly supposed to be excluded from, since it had no
+        # :focus rule of its own to out-rank the generic one).
         self._eoc_btn = QPushButton("End of chapter")
+        self._eoc_btn.setObjectName("panel_grid_eoc_btn")
         self._eoc_btn.setFixedHeight(30)
         # Grid column-width negotiation for a 2-column span left this 1px short
         # of flush with the preset buttons above it (57+8+57=122) — reported
@@ -487,6 +497,15 @@ class SprintPanel(QWidget):
         self._conflict_confirm_label.hide()
         self._conflict_on_confirm = None
 
+    def _cancel_conflict_confirm(self):
+        """Explicit cancel — as opposed to _on_conflict_confirm_timeout, which is the timer's
+        OWN fire and therefore has nothing left to stop. Used by Escape (keyPressEvent) so
+        dismissing the prompt early doesn't leave the 7s timer running to fire a redundant,
+        harmless-but-pointless _on_conflict_confirm_timeout after the label is already hidden."""
+        self._conflict_confirm_timer.stop()
+        self._conflict_confirm_label.hide()
+        self._conflict_on_confirm = None
+
     def _on_reset_sprint_data_clicked(self):
         # Button is NOT touched — matches StatsPanel._on_reset_stats exactly,
         # which only ever calls setVisible(True) on the confirm label.
@@ -501,18 +520,6 @@ class SprintPanel(QWidget):
         self._cancel_reset_sprint_data()
         self.reset_sprint_stats_requested.emit()
 
-    def keyPressEvent(self, event):
-        # Minimal, single-purpose override — NOT a full eventFilter priority
-        # chain like BookDetailPanel's (that exists to arbitrate FOUR
-        # concurrent confirm/edit states across a much larger panel; this
-        # panel has exactly one Escape-cancellable state today). Reuses the
-        # same _cancel_reset_sprint_data the 7s timer and the click-outside
-        # eventFilter below both already call.
-        if event.key() == Qt.Key.Key_Escape and self._reset_sprint_confirm_label.isVisible():
-            self._cancel_reset_sprint_data()
-            return
-        super().keyPressEvent(event)
-
     def showEvent(self, event):
         super().showEvent(event)
         QApplication.instance().installEventFilter(self)
@@ -526,6 +533,44 @@ class SprintPanel(QWidget):
         # (same shape, same install/remove lifecycle) — reported live,
         # 2026-08-12, that the confirm should behave identically to Stats'
         # "Reset all listening stats" for visual/behavioral consistency.
+        #
+        # CORRECTION (2026-09-08): Escape handling for both confirms used to live in a
+        # keyPressEvent override on this panel — REMOVED, because it never actually fired.
+        # MainWindow installs its OWN QApplication-wide filter at __init__ time (app.py,
+        # _handle_tab_escape), and per QObject::installEventFilter's documented LIFO order
+        # (confirmed directly, not assumed — a small synthetic test), the MOST RECENTLY
+        # installed filter runs FIRST. This panel's own filter (installed here, in showEvent,
+        # i.e. AFTER MainWindow's __init__-time install) therefore already runs before
+        # MainWindow's and is the only place Escape can be reliably intercepted before
+        # _handle_tab_escape closes the whole panel — keyPressEvent on the panel WIDGET only
+        # fires if real Qt focus happens to be on the panel itself, which _claim_panel_focus
+        # never grants here (it targets a child button via panel_tab_widgets), so the override
+        # was silently dead code. Live-reported 2026-09-08: "Esc on Reset all sprint data
+        # closes the panel" / "Esc on Sprint — conflict-confirm overlay closes the panel" —
+        # BOTH confirms, including the one that supposedly already worked before this
+        # session's changes, which means the pre-existing keyPressEvent-based check never
+        # actually worked either; nobody had tested Escape against it specifically until now.
+        # _conflict_confirm_label checked first, same ordering the old code used (the two
+        # states are mutually exclusive in practice — see show_conflict_confirm's own
+        # docstring — so order between them doesn't matter, but keeping it stable/predictable).
+        #
+        # Generalized 2026-09-09 from Key_Escape specifically to ANY key other than
+        # Space/Enter/Return — live design ask, app-wide: any key that isn't the confirm
+        # action should dismiss an armed confirmation, swallowing that press (pure dismiss,
+        # not also whatever the key would otherwise do), matching Tags' delete-tag confirm
+        # (tag_manager.py's _handle_tag_detail_keys), the one pre-existing site that already
+        # did this. Concretely closes a real bug this same day's Delete-key work introduced:
+        # Delete on "Reset all sprint data" while ALREADY armed used to fall through to
+        # _handle_flat_panel_arrows (app.py), which unconditionally called reset_btn.click()
+        # again — RE-ARMING/restarting the 7s timer instead of dismissing.
+        if (event.type() == QEvent.Type.KeyPress
+                and event.key() not in (Qt.Key.Key_Space, Qt.Key.Key_Return, Qt.Key.Key_Enter)):
+            if self._conflict_confirm_label.isVisible():
+                self._cancel_conflict_confirm()
+                return True
+            if self._reset_sprint_confirm_label.isVisible():
+                self._cancel_reset_sprint_data()
+                return True
         if (
             event.type() == QEvent.Type.MouseButtonPress
             and self._reset_sprint_confirm_label.isVisible()
@@ -957,12 +1002,52 @@ class SprintPanel(QWidget):
                          preset_ramp_rgb(t, i, len(self._sprint_presets_buttons)).split(',')))
             hover_c = c.lighter(130)
             pressed_c = c.darker(130)
+            # Cached on the button itself so begin_ramp_highlight_fade (called from
+            # MainWindow when the traveling marker starts fading) doesn't need to
+            # re-derive the ramp index/theme math — see ramp_highlight_fade.py.
+            btn._ramp_hover_color = QColor(hover_c)
+            btn._ramp_base_color = QColor(c)
             btn.setStyleSheet(
                 f"QPushButton {{ background-color: rgb({c.red()}, {c.green()}, {c.blue()}); "
                 f"color: {btn_text}; border: none; }}"
                 f"QPushButton:hover {{ background-color: rgb({hover_c.red()}, {hover_c.green()}, {hover_c.blue()}); }}"
                 f"QPushButton:pressed {{ background-color: rgb({pressed_c.red()}, {pressed_c.green()}, {pressed_c.blue()}); }}"
+                # Keyboard focus + keyboard-mode hover suppression — mirrors
+                # SleepTimerPanel._apply_preset_ramp_colors exactly (2026-09-07 fix; see that
+                # method's comments for the full reasoning). Reported live: this grid showed
+                # the marker with no hover-style highlight underneath it, unlike Sleep's.
+                # Focus rule SCOPED to [kbdnav="true"][kbdnav_marker_active="true"] (was bare
+                # :focus until 2026-09-08, then just [kbdnav="true"]) — see
+                # SleepTimerPanel._apply_preset_ramp_colors's comment for the full reasoning
+                # on why [kbdnav="true"] alone (which stays true through the marker's own
+                # idle self-fade) wasn't enough and left the highlight lit indefinitely.
+                f"QWidget#sprint_panel[kbdnav=\"true\"][kbdnav_marker_active=\"true\"] QPushButton:focus {{ "
+                f"background-color: rgb({hover_c.red()}, {hover_c.green()}, {hover_c.blue()}); }}"
+                f"QWidget#sprint_panel[kbdnav=\"true\"] QPushButton:hover {{ "
+                f"background-color: rgb({c.red()}, {c.green()}, {c.blue()}); }}"
+                f"QWidget#sprint_panel[kbdnav=\"true\"] QPushButton:focus:hover {{ "
+                f"background-color: rgb({hover_c.red()}, {hover_c.green()}, {hover_c.blue()}); }}"
             )
+
+    def begin_ramp_highlight_fade(self, btn) -> None:
+        """Called by MainWindow when the traveling marker starts fading on `btn` —
+        see SpeedControlsPanel.begin_ramp_highlight_fade for the full explanation
+        (identical contract, mirrored here for the sprint-duration ramp)."""
+        if btn not in self._sprint_presets_buttons:
+            return
+        hover_color = getattr(btn, '_ramp_hover_color', None)
+        base_color = getattr(btn, '_ramp_base_color', None)
+        if hover_color is None or base_color is None:
+            return
+        self._ramp_highlight_fade.begin(
+            btn, hover_color, base_color,
+            'QWidget#sprint_panel[kbdnav="true"][kbdnav_marker_active="true"] QPushButton:focus'
+        )
+
+    def cancel_ramp_highlight_fade(self) -> None:
+        """Called by MainWindow whenever the marker resumes patrol — see
+        SpeedControlsPanel.cancel_ramp_highlight_fade."""
+        self._ramp_highlight_fade.cancel()
 
     def update_panel_styling(self):
         """Full sync: the ramp (see _apply_preset_ramp_colors) plus the grace mode

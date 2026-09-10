@@ -37,9 +37,27 @@ class LibraryController(QObject):
         self.ui.update_folders(locs)
 
     def _on_remove_folder_clicked(self):
-        """Removes all selected folders from the database and updates UI."""
-        self.scanner.stop()
-        paths = self.browser.get_selected_folders()
+        """Removes all SELECTED folders (Remove button / Ctrl+click / Space-toggled rows) from
+        the database and updates UI."""
+        self._remove_folders(self.browser.get_selected_folders())
+
+    def _remove_folder_at_cursor(self):
+        """Removes only the CURRENT-ROW folder (Del key on folder_list_widget), regardless of
+        selection — deliberately independent of Remove's selection-based path so Del can act
+        immediately on whatever path the keyboard cursor is on without requiring the user to
+        Space-select it first (reported live 2026-09-05: "it should delete the highlighted path
+        without requiring the user to select it with Space first"). Must NOT read or mutate
+        selectedItems() — a path could be highlighted while OTHER rows are separately selected,
+        and Del should only ever act on the one under the cursor, not on that unrelated
+        selection."""
+        path = self.browser.get_current_folder()
+        if path is None:
+            return
+        self._remove_folders([path])
+
+    def _remove_folders(self, paths):
+        """Shared removal core for both the selection-based Remove button and the cursor-based
+        Del key — see the two callers above for why they pass different path lists."""
         if not paths:
             return
         self.scanner.stop()

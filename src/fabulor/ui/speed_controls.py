@@ -2,6 +2,7 @@ from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushBu
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor
 from ..themes import THEMES, preset_ramp_rgb
+from .ramp_highlight_fade import RampHighlightFade
 from mpv import ShutdownError
 
 # Canonical presets shown in the "Default speed" row. When a non-preset default
@@ -47,6 +48,11 @@ class SpeedControlsPanel(QWidget):
             3.25, 3.50, 4.00
         ]
         self._speed_grid_buttons = []
+        # Animated highlight fade for the ramp buttons — see ramp_highlight_fade.py.
+        # One instance per panel; MainWindow._on_focus_marker_fade_begin (app.py)
+        # calls begin_ramp_highlight_fade below whenever the traveling marker starts
+        # its own fade on a widget belonging to this panel.
+        self._ramp_highlight_fade = RampHighlightFade()
         self.def_speed_buttons = {}
         self.step_buttons = {}
         self.undo_buttons = {}
@@ -301,12 +307,71 @@ class SpeedControlsPanel(QWidget):
             # time-preset ramp, see sleep_timer.py's update_panel_styling).
             hover_c = c.lighter(130)
             pressed_c = c.darker(130)
+            # Cached on the button itself so begin_ramp_highlight_fade (called from
+            # MainWindow when the traveling marker starts fading) doesn't need to
+            # re-derive the ramp index/theme math — see ramp_highlight_fade.py.
+            btn._ramp_hover_color = QColor(hover_c)
+            btn._ramp_base_color = QColor(c)
             btn.setStyleSheet(
                 f"QPushButton {{ background-color: rgb({c.red()}, {c.green()}, {c.blue()}); "
                 f"color: {btn_text}; border: none; }}"
                 f"QPushButton:hover {{ background-color: rgb({hover_c.red()}, {hover_c.green()}, {hover_c.blue()}); }}"
                 f"QPushButton:pressed {{ background-color: rgb({pressed_c.red()}, {pressed_c.green()}, {pressed_c.blue()}); }}"
+                # Keyboard-navigation's look for the grid's current cell — SCOPED to
+                # [kbdnav="true"][kbdnav_marker_active="true"] (was a bare QPushButton:focus
+                # rule until 2026-09-08, then just [kbdnav="true"]). These buttons are
+                # ordinary QPushButtons that receive real Qt focus when MainWindow.
+                # _handle_panel_grid_arrows moves the cursor onto them, and — by design (see
+                # _set_keyboard_nav_active/_update_focus_marker in app.py) — KEEP that real
+                # focus even after the traveling marker itself stops being drawn, so a later
+                # Tab/keyboard nav can resume from where it left off. [kbdnav="true"] alone
+                # answers "is keyboard mode active" — it stays true through the marker's OWN
+                # idle self-fade (patrol -> slow -> wait -> fade -> dormant), which is a
+                # DIFFERENT question from "is the marker actually visible right now". Without
+                # the second property, the highlight outlived the fade: reported live
+                # 2026-09-08, "the marker disappears after inactivity, but the highlight
+                # lingers until I hover with mouse somewhere or press arrows or Tab."
+                # kbdnav_marker_active is set by MainWindow._on_focus_marker_dormant_changed,
+                # called directly from TravelingFocusMarker whenever it goes dormant (idle
+                # fade finishing, or clear() for any reason [kbdnav] itself didn't already
+                # cover) or resumes (a fresh Tab/arrow-press starting patrol again).
+                f"QWidget#speed_panel[kbdnav=\"true\"][kbdnav_marker_active=\"true\"] QPushButton:focus {{ "
+                f"background-color: rgb({hover_c.red()}, {hover_c.green()}, {hover_c.blue()}); }}"
+                # Keyboard-mode hover suppression — the mouse-hovered button, if different from
+                # the keyboard-focused one, must not also light up. Same ancestor-scoped-
+                # selector-inside-a-per-instance-stylesheet trick sleep_timer.py's version uses
+                # (confirmed there that Qt's cascade resolves this normally regardless of where
+                # the rule was declared).
+                f"QWidget#speed_panel[kbdnav=\"true\"] QPushButton:hover {{ "
+                f"background-color: rgb({c.red()}, {c.green()}, {c.blue()}); }}"
+                f"QWidget#speed_panel[kbdnav=\"true\"] QPushButton:focus:hover {{ "
+                f"background-color: rgb({hover_c.red()}, {hover_c.green()}, {hover_c.blue()}); }}"
             )
+
+    def begin_ramp_highlight_fade(self, btn) -> None:
+        """Called by MainWindow when the traveling marker starts fading on `btn`
+        (see app.py's _on_focus_marker_fade_begin) — starts the SAME fade on this
+        button's own highlight, synced to the marker's timing. No-op for a button
+        that isn't one of this panel's ramp buttons (defensive; MainWindow already
+        checks panel membership before calling, but a stale/late call after a
+        rebuild should never crash)."""
+        if btn not in self._speed_grid_buttons:
+            return
+        hover_color = getattr(btn, '_ramp_hover_color', None)
+        base_color = getattr(btn, '_ramp_base_color', None)
+        if hover_color is None or base_color is None:
+            return
+        self._ramp_highlight_fade.begin(
+            btn, hover_color, base_color,
+            'QWidget#speed_panel[kbdnav="true"][kbdnav_marker_active="true"] QPushButton:focus'
+        )
+
+    def cancel_ramp_highlight_fade(self) -> None:
+        """Called by MainWindow whenever the marker resumes patrol (a fresh
+        arrow-press or Tab) — an in-flight fade, if any, must stop immediately
+        rather than keep dimming a button that is (or is about to be) freshly
+        highlighted again."""
+        self._ramp_highlight_fade.cancel()
 
     def update_visuals(self, theme_name=None):
         """Full sync: the ramp (see _apply_preset_ramp_colors) plus every

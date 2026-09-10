@@ -5,6 +5,83 @@ list scannable. Kept, not deleted, per the project's normal practice of not thro
 that isn't fully duplicated in NOTES.md/SESSION.md/a commit message. Order is the same relative
 order these entries had in TODO.md before the split (2026-07-30).
 
+- **[2026-09-10] CLOSED: Settings/Stats "⚙" tab Right-arrow inconsistency at a row's last
+  button.** Reported live 2026-09-09 as "Right arrow is mostly no-op, from Look and Controls it
+  goes to the tab" and initially scoped as needing a live `QApplication.focusWidget()` trace to
+  diagnose why Qt's native sibling-focus-chain stepping resolved differently per tab. Root cause
+  turned out not to need that trace at all, once reframed as a design question rather than a
+  diagnosis: `_handle_settings_arrows`/`_handle_stats_arrows` never had a DELIBERATE Right/Left
+  model at a row's edge — both deferred to Qt's own native chain (construction order, not the
+  visual row model), which is exactly the mechanism `_handle_flat_panel_arrows`'s own comment
+  already named as "never actually safe, just lucky" after it caused a REAL escape-to-an-
+  unrelated-row bug on Speed/Sleep/Sprint (fixed 2026-09-07). Both methods now use the same
+  full reading-order wrap Speed/Sleep/Sprint already had: Right past a row's last item continues
+  to the next row's first item, past the LAST row's last item wraps to the tab bar; Left mirrors
+  this backward; Down at the last row now wraps to the tab bar (was a swallow); Up from the tab
+  bar now lands on the last row (only Down-from-tab-bar existed before). No native-chain
+  dependency remains in either method. `7fdd882`.
+
+- **[2026-09-10] INVESTIGATED, NOT RESOLVED: Sleep/Sprint Disable-Cancel button blinks
+  highlight→dark→highlight before disappearing.** Root cause fully traced (a live paint-event
+  logger, not guesswork): Qt's own `QAbstractButton::mouseReleaseEvent` repaints the button back
+  to enabled/hover-visible as part of its internal `isDown()` transition, and only AFTER that
+  repaint does it emit `clicked()` — so nothing reachable from the `clicked` slot can suppress it.
+  Three fix attempts, each tried live and each failed for a distinct, verified reason: disabling
+  on press (kills `clicked()` outright, button gets stuck), disabling in the `clicked` slot or
+  fading the hide (too late to help, and the fade version introduced a real focus-jump
+  regression), and an opaque click-through scrim overlay (visually worked, but gets permanently
+  stuck if the mouse is pressed then dragged off the button before release — a real, natively-
+  supported gesture the design never accounted for). Full trace-by-trace writeup, including the
+  exact timestamps and synthetic-test evidence for each failure: NOTES.md, 2026-09-10. Left as a
+  known, low-priority cosmetic issue — both `sprint_panel.py` and `sleep_timer.py` are back to
+  their pre-investigation committed state, no code changes kept.
+
+- **[2026-09-10] CLOSED: Book-detail keyboard shortcut (Alt+Enter/Shift+Enter) consistency across
+  panels.** Originally opened 2026-09-08 with two explicit follow-ups after Tags' thumbnail grid
+  gained both modifiers as synonyms: (1) give Library's own keyboard nav a matching Shift+Enter
+  (it only accepted Alt+Enter); (2) give Speed/Sleep/Sprint's Shift-modifier "other click"
+  convention a matching Alt+Enter (it only accepted Shift). Both were deferred to the next session
+  pending a decision on whether Alt even made sense outside Tags/Library, discussed and settled:
+  Alt+Enter is a real external convention ("get info about the selected thing," e.g. Windows
+  Explorer/classic media players' Properties binding) that already matches what Library/Tags use
+  it for; Shift+Enter has no comparable external convention, but since it already shipped on
+  Speed/Sleep/Sprint and costs nothing to also honor elsewhere, both modifiers are now accepted
+  as full synonyms everywhere either existed alone — Library's `_list_key` (`ui/library.py`) and
+  `_handle_flat_panel_arrows`/`_handle_panel_grid_arrows` (`app.py`) each OR both modifier checks
+  together now, matching Tags' `_handle_thumb_grid_keys` shape exactly.
+
+- **[2026-09-09] CLOSED: confirmation-dialog Escape behavior is inconsistent app-wide.** Originally
+  scoped as "not yet started, no sites enumerated" — a full audit (background research agent) found
+  nine armed-confirmation sites total: Book Detail's four (remove/exclude book, mark
+  finished/unfinished, delete all listening history, per-row delete-session), Tag Manager's
+  delete-a-tag, Stats' reset-all-stats, Sprint's reset-all-sprint-data plus a generic
+  conflict-confirm overlay, Sleep's own conflict-confirm overlay. Six already handled Escape
+  correctly; three did not (Stats' reset, both panels' conflict-confirm overlay) — fixed by moving
+  Sprint's/Sleep's Escape handling from a silently-unreachable `keyPressEvent` override into a
+  proper `showEvent`-installed `eventFilter` (matching Stats' own already-correct pattern; neither
+  panel's widget ever holds real Qt focus, so `keyPressEvent` on the panel itself was dead code).
+  The scope then grew past the original ask, per follow-on live requests in the same session: Delete
+  now arms three of these confirmations from anywhere on the relevant surface (Stats' reset, Sprint's
+  reset, Book Detail's "Delete listening history"); and the whole set was generalized to "any key
+  other than Space/Enter dismisses the confirmation and swallows that press," closing a further Tab-
+  specific gap that recurred at three Book Detail confirmations (Tab is dispatched inside
+  `BookDetailPanel.eventFilter`, which runs before `keyPressEvent`, so a swallow check placed there
+  could never see it) and, independently, at Tags' delete-tag confirm (Tab checked ahead of its own
+  swallow block). A related, pre-existing subtle bug (`_history_selected_index` could silently point
+  at a `'confirming'`-state row without its visual updating) was traced afterward and found already
+  closed as a side effect of the swallow-and-dismiss fix — no separate patch needed. Full narrative:
+  SESSION.md, 2026-09-09 Session 1. Live-check list: TESTING.md's "Confirmation-dialog keyboard
+  consistency" section. Commits `dd3b0e6`, `fc29062`, `9eeddbc`, `ca9036f`, `cab02e4`.
+
+- **[2026-09-08] CLOSED, verified fixed: fill-highlight marker style's selected+focused+hovered
+  pattern_button case.** Flagged as unchecked in the same session the `kbdnav_style` fix landed —
+  a theme swatch (`#pattern_button[selected="true"]`, ID + attribute selector, higher specificity
+  than a bare `:focus`/`:focus:hover`) that is simultaneously the active selection AND keyboard-
+  focused AND mouse-hovered was suspected of the same specificity problem plain hover had before
+  that fix. Confirmed live-checked (Pryme, next session) and already covered: the `kbdnav_style`
+  fix's `[selected="true"]:hover` variant of the `:focus:hover` pairing handles this case too — no
+  further work needed.
+
 - **[2026-07-29] CLOSED, not a Fabulor bug: sidebar/theme-swatch right-click dispatch loss.** See
   NOTES.md ("CLOSED, cause is outside Fabulor: right-click loss reproduces on the bare X11 desktop
   with no app involved") for the full account. Right-click misses were independently confirmed to

@@ -25,6 +25,7 @@ class SettingsController:
         main.chapter_digit_autoplay_changed.connect(self._update_chapter_digit_autoplay)
         main.chapter_list_source_changed.connect(self._update_chapter_list_source)
         main.sidebar_hotspot_enabled_changed.connect(self._update_sidebar_hotspot_enabled)
+        main.keyboard_marker_style_changed.connect(self._update_keyboard_marker_style)
         main._refresh_panel_visuals = self.sync_all_settings_visuals
         main._validate_smart_rewind_settings = self._validate_smart_rewind_settings
 
@@ -85,6 +86,37 @@ class SettingsController:
 
     def _update_sidebar_hotspot_visuals(self):
         self.visuals.set_sidebar_hotspot_selection(self.config.get_sidebar_hotspot_enabled())
+
+    def _update_keyboard_marker_style(self, style):
+        self.config.set_keyboard_marker_style(style)
+        self._update_keyboard_marker_style_visuals()
+        # Correction (2026-09-08 live report): switching to "fill_highlight" while the
+        # traveling marker is CURRENTLY visible (very likely — the toggle lives on the Controls
+        # tab, which the marker may be actively patrolling at that exact moment) left it
+        # showing, since _update_focus_marker only stops calling show_for/clear on marker
+        # instances going forward and _keep_marker_awake's various call sites could still
+        # resurrect it from its now-stale _target (see that method's own updated docstring).
+        # Explicitly tear it down here on switching TO fill_highlight, rather than leaving it
+        # to whatever unrelated event happens to touch it next.
+        if style == "fill_highlight":
+            self.ui_callbacks.clear_focus_marker()
+        else:
+            # Symmetric fix, live-reported 2026-09-09: switching TO traveling left a STALE
+            # kbdnav_fill_active="true" stuck on whichever panel was open during an earlier
+            # fill_highlight session, painting the fill on top of the real traveling marker
+            # there — see MainWindow.clear_all_kbdnav_fill_active's own docstring for the full
+            # mechanism. Clears all four panels, not just the currently active one, since the
+            # stale property could be sitting on a panel that isn't open right now.
+            self.ui_callbacks.clear_all_kbdnav_fill_active()
+        # kbdnav_style must also be re-stamped right now, not left to the next unrelated
+        # keyboard-nav transition — see MainWindow.refresh_kbdnav_style_property's own docstring
+        # for the live regression this fixes (the QSS hover-suppression-vs-fill gate read a
+        # stale style value if the toggle itself was clicked while keyboard nav was already
+        # active on the Controls tab).
+        self.ui_callbacks.refresh_kbdnav_style_property()
+
+    def _update_keyboard_marker_style_visuals(self):
+        self.visuals.set_keyboard_marker_style_selection(self.config.get_keyboard_marker_style())
 
     def _update_undo_mode(self, val):
         self.config.set_undo_duration(val)
@@ -182,6 +214,7 @@ class SettingsController:
         self._update_digit_autoplay_visuals()
         self._update_chapter_source_visuals()
         self._update_sidebar_hotspot_visuals()
+        self._update_keyboard_marker_style_visuals()
         self.panels.update_speed_panel_visuals(theme_name)
         self.panels.update_sleep_panel_visuals()
         self.panels.update_sprint_panel_visuals()

@@ -123,7 +123,8 @@ class _FakeBookDetailPanel(BookDetailPanel):
                  confirming_finished=False, confirming_remove=False,
                  history_rows=None, history_selected_index=-1,
                  confirming_history_row=None, cover_has_selection=True,
-                 editing=False):
+                 editing=False, delete_history_btn_visible=True,
+                 delete_history_confirming=False):
         QWidget.__init__(self)   # bypass BookDetailPanel.__init__ (needs db/config)
         self.tabs = _FakeTabs(active_tab)
         self._meta_action_btn = _FakeMetaBtn(meta_btn_visible)
@@ -135,6 +136,10 @@ class _FakeBookDetailPanel(BookDetailPanel):
         self._history_scroll = _FakeHistoryScroll()
         self._cover_panel = _FakeCoverPanel(has_selection=cover_has_selection)
         self._editing = editing
+        # Delete-key support for "Delete listening history" with no row selected, added
+        # 2026-09-09 — see _history_key_event's own comment for the design.
+        self._delete_history_btn = _FakeVisibilityWidget(delete_history_btn_visible)
+        self._delete_history_confirm_label = _FakeVisibilityWidget(delete_history_confirming)
         self.calls = []
 
     def _on_finished_clicked(self):
@@ -152,6 +157,9 @@ class _FakeBookDetailPanel(BookDetailPanel):
     def _on_meta_action_clicked(self):
         self.calls.append("on_meta_action_clicked")
 
+    def _on_delete_book_stats(self):
+        self.calls.append("on_delete_book_stats")
+
     def _on_history_tab(self):
         return self.tabs.tabText(self.tabs.currentIndex()) == "History"
 
@@ -165,6 +173,28 @@ class _FakeMetaBtn:
 
     def isVisible(self):
         return self._visible
+
+
+class _FakeVisibilityWidget:
+    """Stands in for _delete_history_btn / _delete_history_confirm_label. Needs hide/
+    setEnabled/setCursor too (not just isVisible) since the real _cancel_delete_history()
+    calls all three on the real widgets — added 2026-09-09 when the swallow-and-dismiss
+    tests started exercising that real method instead of just checking state."""
+
+    def __init__(self, visible):
+        self._visible = visible
+
+    def isVisible(self):
+        return self._visible
+
+    def hide(self):
+        self._visible = False
+
+    def setEnabled(self, enabled):
+        pass
+
+    def setCursor(self, cursor):
+        pass
 
 
 def _press(obj, key, mods=Qt.KeyboardModifier.NoModifier):
@@ -195,6 +225,10 @@ class _EditingHarness(BookDetailPanel):
         self.tabs = _FakeTabs("History")   # would claim Up/Down for row-nav if editing didn't win
         self._history_rows = [_FakeHistoryRow("row0")]
         self._history_selected_index = -1
+        # Added 2026-09-09: keyPressEvent's new top-level swallow-and-dismiss check (checked
+        # BEFORE the _editing branch) reads these two unconditionally on every press.
+        self._confirming_finished = False
+        self._confirming_remove = False
         self.cycle_calls = []
 
     # Spy on the real dispatch target rather than asserting QApplication.focusWidget()
@@ -330,11 +364,14 @@ def test_space_enter_del_are_noops_with_nothing_armed_on_tags_tab(qapp):
 
 # ── History tab: Up/Down/Del/Space/Enter ─────────────────────────────────────────
 
-def _history_fake(selected_index=-1, n=3, confirming_row=None):
+def _history_fake(selected_index=-1, n=3, confirming_row=None,
+                   delete_history_btn_visible=True, delete_history_confirming=False):
     rows = [_FakeHistoryRow(f"row{i}") for i in range(n)]
     return _FakeBookDetailPanel(
         active_tab="History", history_rows=rows,
         history_selected_index=selected_index, confirming_history_row=confirming_row,
+        delete_history_btn_visible=delete_history_btn_visible,
+        delete_history_confirming=delete_history_confirming,
     ), rows
 
 
@@ -368,10 +405,17 @@ def test_history_down_clamps_at_last_row_no_wrap(qapp):
     assert fake._history_selected_index == 2   # unchanged — clamped, no wrap
 
 
-def test_history_up_clamps_at_first_row_no_wrap(qapp):
+def test_history_up_at_first_row_deselects_instead_of_clamping(qapp):
+    # Changed 2026-09-09 (live design ask): Up at row 0 used to clamp in place (this test's
+    # old name/assertion) — now it deselects back to -1 instead, which is what makes
+    # "Delete listening history" reachable by keyboard at all (see the Delete-key tests
+    # below). Down at the LAST row is UNCHANGED — still clamps, see
+    # test_history_down_clamps_at_last_row_no_wrap below — this asymmetry is deliberate,
+    # not an oversight; see _move_history_selection's own docstring for why.
     fake, rows = _history_fake(selected_index=0, n=3)
     _press(fake, Qt.Key.Key_Up)
-    assert fake._history_selected_index == 0   # unchanged — clamped, no wrap
+    assert fake._history_selected_index == -1
+    assert rows[0].kbd_selected_calls == [False]
 
 
 def test_history_up_down_noop_with_zero_rows(qapp):
@@ -389,10 +433,32 @@ def test_history_del_arms_the_selected_rows_own_trash_click(qapp):
     assert rows[2].calls == []
 
 
-def test_history_del_noop_with_nothing_selected(qapp):
+def test_history_del_arms_delete_all_history_with_nothing_selected(qapp):
+    # Changed 2026-09-09 (live design ask): Delete with no row selected used to be a pure
+    # no-op (this test's old name/assertion) — it now arms "Delete listening history" (the
+    # same action the button's own click performs), since Up-at-row-0 deselecting (see the
+    # test above) makes this the only state that was otherwise unreachable by keyboard.
     fake, rows = _history_fake(selected_index=-1)
     _press(fake, Qt.Key.Key_Delete)
-    assert all(r.calls == [] for r in rows)
+    assert all(r.calls == [] for r in rows)   # no per-row action — this is the tab-level one
+    assert fake.calls == ["on_delete_book_stats"]
+
+
+def test_history_del_noop_with_nothing_selected_and_no_history_to_delete(qapp):
+    # The button-visibility guard: with no listening history at all (button hidden, per
+    # _populate_history's has_history gate), Delete must stay a no-op — mirrors the button
+    # itself being unclickable in that state.
+    fake, rows = _history_fake(selected_index=-1, delete_history_btn_visible=False)
+    _press(fake, Qt.Key.Key_Delete)
+    assert fake.calls == []
+
+
+def test_history_del_noop_with_nothing_selected_while_already_confirming(qapp):
+    # A stray Delete while "Delete listening history" is already armed must not re-trigger
+    # _on_delete_book_stats (which would needlessly re-run _position_delete_history_confirm).
+    fake, rows = _history_fake(selected_index=-1, delete_history_confirming=True)
+    _press(fake, Qt.Key.Key_Delete)
+    assert fake.calls == []
 
 
 def test_history_space_confirms_the_armed_row(qapp):

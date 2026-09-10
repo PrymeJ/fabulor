@@ -154,6 +154,19 @@ class ThemeManager(QObject):
         self.swatch_box = None # QWidget — the sole hover-active region; read by _check_swatch_still_hovered
         self._packed_themes_cache = None
         self._packed_themes_limit = None
+        # Keyboard-cursor position inside the swatch grid (see swatch_grid_rows,
+        # MainWindow._handle_themes_swatch_arrows). None means "not currently navigating
+        # the grid" — distinct from (0, 0), which is a real position on the cover-pool row.
+        # Cleared on every EXIT from the grid (up/left/tab-away) so re-entering always
+        # starts fresh at (0, 0), matching folder_list_widget's own "no memory across
+        # exits" behaviour there is no live design call for the grid to remember a
+        # mid-list position across a full exit-and-reenter.
+        self._kbdnav_swatch_pos: tuple[int, int] | None = None
+        # The one ThemeItem currently wearing the synthetic keyboard-hover look (see
+        # _set_kbdnav_swatch_hover) — tracked separately from _kbdnav_swatch_pos so the
+        # PREVIOUS widget can always be found and un-hovered even after the position has
+        # already moved on.
+        self._kbdnav_hovered_widget_ref = None
         self._active_display_theme_internal = self._current_theme_name
 
         # Cover-art derived theme (dict or None)
@@ -694,6 +707,51 @@ class ThemeManager(QObject):
             rows.append(row)
 
         self._packed_themes_cache = rows
+        return rows
+
+    def swatch_grid_rows(self) -> list:
+        """The swatch grid's widgets grouped into the SAME visual rows `build_themes_tab`
+        actually laid out, for MainWindow._handle_themes_swatch_arrows's Left/Right/Up/Down.
+        Row 0 is always `[cover_pool_btn]` alone (a real one-item row, same shape the cover
+        art entry has always had); every row after that mirrors get_packed_themes()'s bin-
+        packed rows, name-for-name, via `theme_widgets` — reconstructed from theme_manager
+        state rather than by walking swatch_box_layout, since get_packed_themes() is already
+        the single source of truth for "which themes share a visual row" (its own cache) and
+        `theme_widgets[name]` is populated in exactly that row-then-column order at build
+        time (main_window_builders.build_themes_tab) — confirmed same order, not assumed.
+
+        Reads `_packed_themes_cache` DIRECTLY rather than calling `get_packed_themes(limit=...)`
+        with a freshly recomputed limit — this was a real, live-reproduced bug (2026-09-06):
+        `build_themes_tab` calls `get_packed_themes(limit=max(230, settings_panel.width()-20))`
+        exactly ONCE, at construction time, when `settings_panel` has not yet been laid out to
+        its real final width (measured 270px pre-show vs. its genuine displayed width) — so the
+        actual on-screen `QHBoxLayout` rows were built against THAT narrower limit and never
+        rebuilt afterward. Recomputing the limit here from the panel's CURRENT (wider,
+        post-show) width silently invalidated `get_packed_themes`'s own limit-keyed cache and
+        returned a DIFFERENT, differently-packed set of rows — internally consistent, but
+        disagreeing with what was actually painted on screen, which is what made Right/Left
+        inside a row jump to the wrong swatch (confirmed live: from Goldfinch, Right landed on
+        Sunspear because that pairing is real, just on a DIFFERENT limit's row than the one
+        the user was actually looking at). Falls back to a fresh call only if the cache
+        genuinely doesn't exist yet (defensive — build_themes_tab always populates it before
+        this can be reached in practice).
+
+        Rows can have DIFFERENT lengths (this is a bin-packed layout, not a fixed grid) — a
+        short row's trailing columns simply don't exist; callers must clamp a carried-over
+        column index against the LANDING row's own length, not assume every row is the same
+        width. Skips any theme name the cache lists but `theme_widgets` doesn't yet have
+        (can't happen in practice — both are populated together at build time — but a cache
+        readable before the widgets exist would otherwise KeyError here)."""
+        rows = [[self.cover_pool_btn]] if self.cover_pool_btn is not None else []
+        packed = self._packed_themes_cache
+        if packed is None:
+            limit = max(230, self.main_window.settings_panel.width() - 20)
+            packed = self.get_packed_themes(limit=limit)
+        for packed_row in packed:
+            row = [self.theme_widgets[item['name']] for item in packed_row
+                   if item['name'] in self.theme_widgets]
+            if row:
+                rows.append(row)
         return rows
 
     def _rotate_theme(self):
@@ -2266,6 +2324,106 @@ class ThemeManager(QObject):
             btn.style().unpolish(btn)
             btn.style().polish(btn)
 
+    def _set_kbdnav_swatch_hover(self, widget) -> None:
+        """Give `widget` the same visual look a mouse hover would, and take it away from
+        whichever swatch had it before — the visual half of keyboard navigation inside the
+        swatch grid (see MainWindow._handle_themes_swatch_arrows). No traveling-marker
+        involvement here at all (a live design call, 2026-09-06): the grid's own hover-style
+        look is judged sufficient on its own as "where the keyboard cursor is."
+
+        Drives a real QSS PROPERTY (`kbdnav_hover`), not `Qt.WA_UnderMouse` — that attribute
+        was tried first, on the theory that it's what Qt's style engine consults for `:hover`
+        matching and so could be set directly to fake one. Confirmed WRONG by direct offscreen
+        pixel comparison (2026-09-06): setting it plus unpolish()/polish() — and separately,
+        dispatching a real `QEnterEvent` via `sendEvent()` — both produced byte-identical
+        output to the unhovered state; neither actually painted `:hover`'s background. A
+        property is the mechanism already proven to work in this exact file for the same shape
+        of "look hovered/selected without a real event," via `update_theme_list_visuals`'s
+        `selected`/`active_display` properties — `unpolish`/`polish` reliably repaints THOSE,
+        so `kbdnav_hover` reuses that same working path instead of the broken one."""
+        prev = self._kbdnav_hovered_widget_ref
+        if prev is not None and prev is not widget:
+            prev.setProperty("kbdnav_hover", False)
+            prev.style().unpolish(prev)
+            prev.style().polish(prev)
+        if widget is not None:
+            widget.setProperty("kbdnav_hover", True)
+            widget.style().unpolish(widget)
+            widget.style().polish(widget)
+        self._kbdnav_hovered_widget_ref = widget
+
+    def kbdnav_enter_swatch(self, widget) -> None:
+        """Arrival at `widget` via keyboard navigation inside the swatch grid — applies the
+        synthetic hover look (_set_kbdnav_swatch_hover) AND feeds the SAME debounced-preview
+        pipeline a real mouse hover uses, so the two hover triggers stay a single mechanism
+        rather than two independently-tuned ones. `widget` is either a real theme ThemeItem
+        (routes to _on_theme_hovered, keyed by theme_name) or `cover_pool_btn` (routes to
+        _on_cover_pool_btn_hovered, which no-ops the preview half when there's no cover theme
+        to show but still cancels any stale queued hover — exactly what the mouse path does).
+
+        Sets the synthetic hover look AFTER dispatching, not before: `_on_cover_pool_btn_
+        hovered` applies its preview SYNCHRONOUSLY (no debounce, unlike a real theme swatch),
+        and that apply's settings_panel.setStyleSheet() repolish would otherwise clobber an
+        attribute set moments earlier in the same call stack — confirmed live 2026-09-06, the
+        same underlying mechanism _fire_pending_hover's own re-assert exists for (see its
+        comment). `_on_theme_hovered` only ever QUEUES a debounced preview here — it never
+        applies synchronously — so setting the look before or after it makes no difference for
+        a real theme swatch today, but ordering it after keeps both branches identical and
+        correct regardless."""
+        if widget is self.cover_pool_btn:
+            self._on_cover_pool_btn_hovered()
+        else:
+            self._on_theme_hovered(widget.theme_name)
+        self._set_kbdnav_swatch_hover(widget)
+
+    def kbdnav_exit_swatch_grid(self) -> None:
+        """Leaving the swatch grid entirely via keyboard (Up from row 0, Left from the
+        cover-pool row, Tab/Down out the bottom) — reverts the preview, same as a real mouse
+        leaveEvent does. Clears the synthetic hover look first so no swatch is left visually
+        stuck hovered.
+
+        Calls `_on_theme_unhovered()` DIRECTLY rather than going through
+        `_on_themes_tab_left` (swatch_box's real leaveEvent handler) — that was the first
+        version of this method and it was a real, live-reproduced bug (2026-09-06, "neither
+        arrow nor tab exits work... the previewed theme not reverting"). `_on_themes_tab_left`
+        exists to answer "was this REAL mouse leaveEvent genuine, or a blur-grab artifact /
+        stationary-cursor jitter?" — its whole mechanism is built around comparing the actual
+        mouse's CURRENT position against where it last genuinely entered the box
+        (`_last_swatch_pos`). A keyboard-driven exit has nothing to do with where the mouse
+        physically is: if the user hovered the box with the mouse at some point this session
+        and then switched to arrow keys without moving it since, the real cursor sits well
+        within `_MOUSE_JITTER_PX` of `_last_swatch_pos` forever, and every keyboard exit was
+        silently swallowed by that guard as if it were a stationary-cursor artifact — the
+        keyboard action was correct throughout, the reused mouse-leave heuristic was not.
+        Unlike a real leaveEvent, a keyboard exit is unambiguous on its own (no jitter, no
+        blur-grab race is possible for it), so it doesn't need — and must not go through —
+        any of that disambiguation."""
+        self._set_kbdnav_swatch_hover(None)
+        self._on_theme_unhovered()
+
+    def kbdnav_toggle_swatch(self, widget) -> None:
+        """Space on a swatch — the keyboard equivalent of a LEFT click (toggle pool
+        membership). Split from Enter (kbdnav_select_swatch, the right-click equivalent) per a
+        live design correction 2026-09-06: both keys originally did this same action, which
+        the user caught as a design gap after the rest of the tab's keyboard nav was already
+        confirmed working — mouse left/right-click are two clearly different actions here, so
+        the two keys should be too. Routes to the same slot the click signal already uses
+        (`_on_cover_pool_btn_clicked`) rather than duplicating its logic."""
+        if widget is self.cover_pool_btn:
+            self._on_cover_pool_btn_clicked()
+        else:
+            self.toggle_theme_selection(widget.theme_name)
+
+    def kbdnav_select_swatch(self, widget) -> None:
+        """Enter on a swatch — the keyboard equivalent of a RIGHT click (select this theme AND
+        activate it now), never Space's toggle-membership action. See kbdnav_toggle_swatch's
+        docstring for why these were split. Routes to the same slots the right-click signals
+        already use (`_on_cover_pool_btn_right_clicked`, `_on_theme_right_clicked`)."""
+        if widget is self.cover_pool_btn:
+            self._on_cover_pool_btn_right_clicked()
+        else:
+            self._on_theme_right_clicked(widget.theme_name)
+
     def _on_theme_hovered(self, theme_name):
         """Queue a debounced theme preview. Sweeping across several names only
         restyles for the one the cursor settles on (see _fire_pending_hover)."""
@@ -2291,6 +2449,18 @@ class ThemeManager(QObject):
             )
         fade = int(self.config.get_theme_fade_duration() * 0.5)
         self._on_theme_changed(theme_name, save=False, fade_ms=fade, hover=True)
+        # Re-assert the synthetic keyboard-hover look AFTER the real apply above, not before
+        # — settings_panel.setStyleSheet() inside _apply_stylesheets repolishes the whole
+        # subtree unconditionally on every hover preview (see that method's own "FAST PATH"
+        # comment), and a full repolish makes Qt's style engine re-evaluate `:hover` against
+        # its OWN internal mouse-tracking state, which has no idea a WA_UnderMouse was set
+        # by hand — it silently clears back to "not hovered" the instant this fires. Reported
+        # live 2026-09-06 ("sometimes it starts working... then it goes away") and confirmed
+        # to land exactly on this debounce boundary — a synthetic hover applied only at
+        # arrival time cannot survive the very next preview restyle, so it has to be
+        # reasserted every time one lands, not just once per keyboard move.
+        if self._kbdnav_swatch_pos is not None:
+            self._set_kbdnav_swatch_hover(self._kbdnav_hovered_widget_ref)
 
     def _theme_genuinely_settled_on_committed(self):
         """True only when the last thing that actually painted was the COMMITTED
@@ -2632,8 +2802,21 @@ class ThemeManager(QObject):
 
         The same containment check as the hidden-widget branch's SWATCH-LEAVE-SUSPECT
         probe above (tab_widget.mapFromGlobal / rect().contains) — reused here instead of
-        duplicated, since both ask the identical question."""
+        duplicated, since both ask the identical question.
+
+        Skips entirely while keyboard navigation owns the grid (`_kbdnav_swatch_pos is not
+        None`, 2026-09-06) — this backstop's whole premise is "the mouse is the thing that
+        determines hover, so ask where it physically is," which stops being true the moment
+        arrow keys are driving the preview instead. Without this guard, arrowing through
+        swatches while the real mouse cursor happens to rest anywhere outside `swatch_box`
+        (the ordinary case — the cursor has no reason to be inside it during keyboard nav)
+        fired this exact tick's `_on_theme_unhovered()` within half a second of the preview
+        landing, snapping straight back to the committed theme regardless of which swatch
+        the keyboard cursor was actually on. Reported live 2026-09-06 ("If the mouse is
+        outside the swatch, it triggers the snapback")."""
         _tick_t0 = time.perf_counter()
+        if self._kbdnav_swatch_pos is not None:
+            return
         swatch_box = getattr(self, 'swatch_box', None)
         if swatch_box is None:
             return
@@ -2694,6 +2877,7 @@ class ThemeManager(QObject):
                 btn.style().unpolish(btn)
                 btn.style().polish(btn)
         self._update_cover_pool_btn()
+        self._update_theme_pool_buttons_enabled()
 
     # ── Cover-art theme ─────────────────────────────────────────────────────
 
@@ -2738,6 +2922,7 @@ class ThemeManager(QObject):
         self._on_theme_changed(theme_dict, save=False, user_initiated=user_initiated,
                                 bypass_panel_open_guard=user_initiated)
         self._update_cover_pool_btn()
+        self._update_theme_pool_buttons_enabled()
         logger.debug(f"[STUTTER-TRACE] t={time.perf_counter():.6f} apply_cover_theme: EXIT (applied)")
 
     def clear_cover_theme(self, bypass_panel_open_guard=False):
@@ -2755,6 +2940,7 @@ class ThemeManager(QObject):
         self._on_theme_changed(self._current_theme_name, save=False,
                                 bypass_panel_open_guard=bypass_panel_open_guard)
         self._update_cover_pool_btn()
+        self._update_theme_pool_buttons_enabled()
 
     def set_cover_art_mode(self, mode: str):
         """Switch cover art mode ('off', 'with_pool', 'exclusive') and reapply."""
@@ -2783,6 +2969,7 @@ class ThemeManager(QObject):
         if self.pool_container is not None:
             self.pool_container.setVisible(current != "exclusive")
         self._update_cover_pool_btn()
+        self._update_theme_pool_buttons_enabled()
 
     def _update_cover_pool_btn(self):
         # Same fix, same reasoning as update_theme_list_visuals() above (the
@@ -2809,6 +2996,38 @@ class ThemeManager(QObject):
         if changed:
             btn.style().unpolish(btn)
             btn.style().polish(btn)
+
+    def _update_theme_pool_buttons_enabled(self):
+        """Dim Add all/Remove all/Change now when they'd be a no-op — same idiom as
+        MainWindow._update_remove_folder_btn_enabled (Library tab's Remove button, only
+        clickable with a path selected). Reported live 2026-09-09: all three stayed clickable
+        even when clicking them would do nothing (all themes already in the pool; only one
+        theme left in the pool; rotating with only one candidate) — Pryme's call was to match
+        the Library precedent's dim-when-no-op treatment rather than leave them always-enabled.
+
+        Called from every site that already calls _update_cover_pool_btn() (pool mutation via
+        update_theme_list_visuals, and every cover-art-mode/cover-theme state change) — those
+        are exactly the state changes this method's own conditions depend on too, so no new
+        call sites are needed.
+
+        Change now's no-op condition mirrors _do_rotate's own `len(candidates) > 1` gate
+        EXACTLY (candidates = selected_themes, plus a virtual entry when "with_pool" mode has
+        an active cover theme) — see _do_rotate for why a single named theme is NOT a no-op
+        when with_pool + a cover theme are both active (that combination gives _do_rotate two
+        real candidates: the named theme and the cover-derived one)."""
+        add_btn = getattr(self.main_window, 'add_all_btn', None)
+        remove_btn = getattr(self.main_window, 'remove_all_btn', None)
+        change_btn = getattr(self.main_window, 'change_now_btn', None)
+        if add_btn is not None:
+            add_btn.setEnabled(len(self.selected_themes) < len(THEMES))
+        if remove_btn is not None:
+            remove_btn.setEnabled(len(self.selected_themes) > 1)
+        if change_btn is not None:
+            mode = self.config.get_cover_art_theme_mode()
+            candidates = len(self.selected_themes)
+            if mode == "with_pool" and self._cover_theme:
+                candidates += 1
+            change_btn.setEnabled(candidates > 1)
 
     def _on_cover_pool_btn_clicked(self):
         mode = self.config.get_cover_art_theme_mode()
@@ -2840,6 +3059,7 @@ class ThemeManager(QObject):
         self._cover_theme_active = True
         self._on_theme_changed(self._cover_theme, save=False, bypass_panel_open_guard=True)
         self._update_cover_pool_btn()
+        self._update_theme_pool_buttons_enabled()
 
     def _on_cover_pool_btn_hovered(self):
         # Moving from a theme name onto the cover-pool button: drop any queued

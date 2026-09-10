@@ -14,10 +14,10 @@ import os
 
 from PySide6.QtWidgets import (
     QWidget, QLabel, QPushButton, QHBoxLayout, QVBoxLayout, QStackedWidget,
-    QSizePolicy, QGraphicsOpacityEffect, QTabWidget, QListWidget,
+    QSizePolicy, QGraphicsOpacityEffect, QTabWidget, QListWidget, QStyledItemDelegate,
 )
-from PySide6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, QSize, QObject, QEvent
-from PySide6.QtGui import QPixmap, QFont, QFontMetrics
+from PySide6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, QSize, QObject, QEvent, QPointF
+from PySide6.QtGui import QPixmap, QFont, QFontMetrics, QColor, QPainter
 
 from .title_bar import TitleBar, RightClickButton, ThemeItem
 from .controls import ClickSlider, ScrollingLabel, HoverButton, FreezableLabel, ShimmerButton, RevertButton
@@ -31,6 +31,56 @@ from .excluded_books import ExcludedBooksSection
 from .ui_helpers import COVER_AREA_HEIGHT, _load_svg_icon
 
 
+class _FolderListItemDelegate(QStyledItemDelegate):
+    """Paints a small keyboard-cursor dot on the folder list's current row, independent of
+    selection.
+
+    Selection (accent fill, ::item:selected in QSS) and cursor position (currentRow()) are
+    genuinely different things here and can disagree by design: a 2026-09-05 live design pass
+    settled on arrow keys moving ONLY the cursor, never touching selection (on entry, mid-list,
+    or exit) — Space/Enter is the sole way selection ever changes. A prior version of this tried
+    showing the current row as a distinct FILL shade instead of a dot; live use of that surfaced
+    exactly the ambiguity a single fill-based affordance can't resolve: once several rows were
+    selected, arrowing among them left no way to see where the cursor currently was, since the
+    selected-fill and cursor-fill looked confusable in practice. A DOT is deliberately not a
+    background fill (it can never be mistaken for a selection state) and paints on top of
+    whatever else the row is doing — selected or not — via a single delegate pass. (There is
+    also no `::item:focus` QSS pseudo-state for a plain fill to hook into in the first
+    place — `:focus` applies to the whole WIDGET, not a row — confirmed live 2026-09-05: set to
+    solid white on a theme, zero visual change.)
+
+    Gated on the list ACTUALLY having Qt focus (not just currentRow() >= 0, which can be a stale
+    leftover position from before focus moved on) and on `mw._keyboard_nav_active` (so a mouse
+    click that merely leaves the box focused doesn't also draw a dot the user never arrowed to)."""
+
+    _DOT_RADIUS = 3.0
+    _DOT_MARGIN = 6.0
+
+    def __init__(self, mw, parent=None):
+        super().__init__(parent)
+        self._mw = mw
+
+    def paint(self, painter, option, index):
+        super().paint(painter, option, index)
+        list_widget = self.parent()
+        is_current_row = (list_widget is not None
+                           and list_widget.hasFocus()
+                           and index.row() == list_widget.currentRow())
+        if is_current_row and getattr(self._mw, "_keyboard_nav_active", False):
+            from ..themes import _resolve_theme
+            theme = _resolve_theme(self._mw.theme_manager.get_committed_theme())
+            color = theme.get("focus_folder_list_dot", theme.get("accent_light", "#ffffff"))
+            r = option.rect
+            cx = r.right() - self._DOT_MARGIN - self._DOT_RADIUS
+            cy = r.center().y()
+            painter.save()
+            painter.setRenderHint(QPainter.Antialiasing, True)
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QColor(color))
+            painter.drawEllipse(QPointF(cx, cy), self._DOT_RADIUS, self._DOT_RADIUS)
+            painter.restore()
+
+
 class _PathListEventFilter(QObject):
     def __init__(self, list_widget):
         super().__init__(list_widget)
@@ -41,6 +91,23 @@ class _PathListEventFilter(QObject):
             index = self.list_widget.indexAt(event.pos())
             if not index.isValid():
                 self.list_widget.clearSelection()
+                return super().eventFilter(obj, event)
+            # A plain (no-modifier) left-click on the row that is ALREADY the sole selection
+            # should deselect it — Qt's own default ExtendedSelection click handling never does
+            # this: a bare click always does ClearAndSelect regardless of prior state, so
+            # clicking an already-selected lone row just reselects the same row instead of
+            # toggling it off. Ctrl+click already does the real Toggle command and is untouched
+            # (this only intercepts the plain, no-modifier case). Reported live 2026-09-05: no
+            # way to deselect the last/only path with a single click, which matters because an
+            # empty selection changes what Rescan does (rescans every configured path instead of
+            # just the selected one).
+            if (event.button() == Qt.MouseButton.LeftButton
+                    and event.modifiers() == Qt.KeyboardModifier.NoModifier):
+                selected = self.list_widget.selectedIndexes()
+                if len(selected) == 1 and selected[0].row() == index.row():
+                    self.list_widget.clearSelection()
+                    self.list_widget.setCurrentRow(-1)
+                    return True  # consume — do not let Qt's own press handling re-select it
         return super().eventFilter(obj, event)
 
 
@@ -726,12 +793,20 @@ def build_themes_tab(mw):
     swatch_box_layout = QVBoxLayout(swatch_box)
     swatch_box_layout.setContentsMargins(0, 0, 0, 0)
     swatch_box_layout.setSpacing(0)
+    # The grid is entered and left as ONE keyboard stop (mirrors folder_list_widget) — see
+    # panels.themes_tab_rows and MainWindow._handle_themes_swatch_arrows. The individual
+    # ThemeItem swatches inside it deliberately stay Qt.FocusPolicy.NoFocus (their default is
+    # StrongFocus from QPushButton) so they never become separate Tab stops or traveling-
+    # marker targets — panel_tab_widgets already excludes them by class for the same reason;
+    # this is what makes that exclusion actually correct rather than just convenient.
+    swatch_box.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
     # Cover art based theme entry — always present, state reflects mode and cover availability
     cover_pool_row = QHBoxLayout()
     cover_pool_row.setContentsMargins(0, 0, 0, 0)
     cover_pool_row.setSpacing(0)
     cover_pool_btn = ThemeItem("Cover art based theme")
+    cover_pool_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
     cover_pool_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
     cover_pool_btn.clicked.connect(lambda: mw.theme_manager._on_cover_pool_btn_clicked())
     cover_pool_btn.rightClicked.connect(lambda: mw.theme_manager._on_cover_pool_btn_right_clicked())
@@ -749,6 +824,7 @@ def build_themes_tab(mw):
 
         for item in row_items:
             btn = ThemeItem(item['name'])
+            btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
             btn.setMinimumWidth(item['width'])
             btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
             btn.clicked.connect(lambda _, n=item['name']: mw.theme_manager.toggle_theme_selection(n))
@@ -799,20 +875,38 @@ def build_themes_tab(mw):
 
     # Interval Selection
     interval_row = QHBoxLayout()
-    interval_row.setSpacing(10)
+    # Uniform layout spacing (was 10) made the VISIBLE glyph-to-glyph gap uneven, not just the
+    # box-to-box gap: each label's box is fixed to its own tight glyph width (see below), so a
+    # narrow label ("2", "5") has near-zero internal padding while a wide one ("120") does too —
+    # but font hinting/antialiasing at 12px bold paints slightly differently per glyph shape,
+    # so a uniform 10px box-gap did not read as a uniform visual gap (live-reported 2026-09-09:
+    # ~11px between "2"/"5", ~15px between "60"/"120"). Making every label a uniform max-width
+    # box was considered and rejected — it needs ~50px more total row width than this row has to
+    # spare (the panel is a fixed-height, no-scroll surface — see CLAUDE.md's settings-tab-width
+    # rule). Fixed instead via explicit per-gap addSpacing() below, hand-tuned live against the
+    # actual rendered gaps rather than derived from font-metric arithmetic (per CLAUDE.md's own
+    # rule that Pryme's eyes are ground truth on pixel spacing, not a script's measurement).
+    interval_row.setSpacing(0)
     interval_row.setContentsMargins(0, 10, 0, 0)
 
-    interval_label = QLabel("Interval (min)")
+    interval_label = QLabel("Rotate (min)")
     interval_label.setObjectName("theme_hint")
     interval_row.addWidget(interval_label)
-    interval_row.addSpacing(13)
+    interval_row.addSpacing(25)
 
     intervals = [(2, "2"), (5, "5"), (10, "10"), (20, "20"), (30, "30"), (60, "60"), (120, "120"), (0, "Off")]
-    for mins, text in intervals:
+    # Per-gap spacing between consecutive interval labels — index i is the gap AFTER
+    # intervals[i]. Starting point only; tune these live against the real rendered gaps.
+    gap_after = [11, 10, 10, 10, 10, 8, 9]
+    for i, (mins, text) in enumerate(intervals):
         lbl = QLabel(text)
         lbl.setObjectName("theme_interval_label")
         lbl.setCursor(Qt.PointingHandCursor)
         lbl.setAlignment(Qt.AlignCenter)
+        # QLabel defaults to NoFocus; this one acts as a button (see the mousePressEvent
+        # monkeypatch below) and needs to be a real keyboard stop for themes_tab_rows'
+        # interval row (arrow nav + Enter/Space activation, see _handle_settings_arrows).
+        lbl.setFocusPolicy(Qt.FocusPolicy.TabFocus)
         # Fixed at the BOLD variant's width (always >= regular width) so the
         # selected/unselected toggle (font-weight change) never reflows siblings.
         # font-size must match the QSS rule (theme_interval_label, 12px) since the
@@ -820,10 +914,20 @@ def build_themes_tab(mw):
         bold_font = QFont(lbl.font())
         bold_font.setPixelSize(12)
         bold_font.setBold(True)
-        lbl.setFixedWidth(QFontMetrics(bold_font).horizontalAdvance(text))
+        # horizontalAdvance() measures the logical cursor-to-cursor advance, not the glyphs'
+        # actual ink extent — bold hinting/antialiasing can paint slightly past that advance
+        # (confirmed live 2026-09-06: "Off" clipped 1-2px at its bold width specifically).
+        # boundingRect() reports the real painted extent, so use its width instead; it is
+        # always >= horizontalAdvance()'s, never smaller, so this can only add room, never
+        # remove any that was already sufficient for the other labels.
+        bold_metrics = QFontMetrics(bold_font)
+        lbl_width = max(bold_metrics.horizontalAdvance(text), bold_metrics.boundingRect(text).width())
+        lbl.setFixedWidth(lbl_width)
         lbl.mousePressEvent = lambda _, m=mins: mw.theme_manager.set_rotation_interval(m)
         mw.theme_manager.interval_widgets[mins] = lbl
         interval_row.addWidget(lbl)
+        if i < len(gap_after):
+            interval_row.addSpacing(gap_after[i])
     interval_row.addStretch()
     pool_layout.addLayout(interval_row)
 
@@ -876,20 +980,27 @@ def build_appearance_tab(mw):
     blur_row.addStretch()
     app_layout.addLayout(blur_row)
 
-    scroll_header = QLabel("Chapter scroll")
-    scroll_header.setObjectName("settings_header")
-    app_layout.addWidget(scroll_header)
+    # Keyboard-nav highlight style (2026-09-08, moved here from the end of this tab 2026-09-09 —
+    # Pryme's requested order: Theme hover, Panel background, Keyboard highlight, Library hover
+    # trail, Chapter hints, Chapter scroll, Chapter notches). See config.get_keyboard_marker_style
+    # / MainWindow._update_focus_marker. "Traveling" is the existing animated border marker;
+    # "Fill highlight" tints the focused control's own background with a lighter/desaturated
+    # accent instead (added after the ramp buttons' focus color was found to be a flat
+    # theme-dict color by mistake — see SESSION.md 2026-09-08).
+    marker_style_header = QLabel("Keyboard highlight")
+    marker_style_header.setObjectName("settings_header")
+    app_layout.addWidget(marker_style_header)
 
-    scroll_row = QHBoxLayout()
-    mw.scroll_buttons = {}
-    for mode in ["Slow", "Normal", "Off"]:
-        btn = QPushButton(mode)
-        btn.setObjectName("pattern_button") # Re-use styling for consistency
-        btn.clicked.connect(lambda _, m=mode: mw.scroll_mode_changed.emit(m))
-        scroll_row.addWidget(btn)
-        mw.scroll_buttons[mode] = btn
-    scroll_row.addStretch()
-    app_layout.addLayout(scroll_row)
+    marker_style_row = QHBoxLayout()
+    mw.keyboard_marker_style_buttons = {}
+    for value, label in [("traveling", "Traveling marker"), ("fill_highlight", "Fill highlight")]:
+        btn = QPushButton(label)
+        btn.setObjectName("pattern_button")
+        btn.clicked.connect(lambda _, v=value: mw.keyboard_marker_style_changed.emit(v))
+        marker_style_row.addWidget(btn)
+        mw.keyboard_marker_style_buttons[value] = btn
+    marker_style_row.addStretch()
+    app_layout.addLayout(marker_style_row)
 
     hover_fade_header = QLabel("Library hover trail")
     hover_fade_header.setObjectName("settings_header")
@@ -920,6 +1031,21 @@ def build_appearance_tab(mw):
         mw.hints_buttons[mode] = btn
     hints_row.addStretch()
     app_layout.addLayout(hints_row)
+
+    scroll_header = QLabel("Chapter scroll")
+    scroll_header.setObjectName("settings_header")
+    app_layout.addWidget(scroll_header)
+
+    scroll_row = QHBoxLayout()
+    mw.scroll_buttons = {}
+    for mode in ["Slow", "Normal", "Off"]:
+        btn = QPushButton(mode)
+        btn.setObjectName("pattern_button") # Re-use styling for consistency
+        btn.clicked.connect(lambda _, m=mode: mw.scroll_mode_changed.emit(m))
+        scroll_row.addWidget(btn)
+        mw.scroll_buttons[mode] = btn
+    scroll_row.addStretch()
+    app_layout.addLayout(scroll_row)
 
     notches_header_row = QHBoxLayout()
     notches_label = QLabel("Chapter notches")
@@ -982,6 +1108,8 @@ def build_library_tab(mw):
     mw.folder_list_widget.setTextElideMode(Qt.TextElideMode.ElideRight)
     mw._path_list_ef = _PathListEventFilter(mw.folder_list_widget)
     mw.folder_list_widget.viewport().installEventFilter(mw._path_list_ef)
+    mw._folder_list_delegate = _FolderListItemDelegate(mw, mw.folder_list_widget)
+    mw.folder_list_widget.setItemDelegate(mw._folder_list_delegate)
     lib_layout.addWidget(mw.folder_list_widget)
 
     folder_btns_layout = QHBoxLayout()
@@ -1095,6 +1223,26 @@ def build_controls_tab(mw):
     short_layout.setContentsMargins(10, 0, 10, 10)
     short_layout.setSpacing(6)
 
+    # Corner-hotspot sidebar trigger (review/Plan_260809_corner_hotspot_sidebar_trigger.md).
+    # Moved to the top of this tab 2026-09-09 (was below Chapter number keys) — Pryme's
+    # requested order. The indicator tier (None/Square visual marker) was tried and
+    # removed 2026-08-09 — the hotspot is permanently invisible now, so only its own
+    # enable/disable toggle remains; see SESSION.md for why.
+    hotspot_header = QLabel("Sidebar hotspot")
+    hotspot_header.setObjectName("settings_header")
+    short_layout.addWidget(hotspot_header)
+
+    hotspot_row = QHBoxLayout()
+    mw.hotspot_enabled_buttons = {}
+    for mode in ["On", "Off"]:
+        btn = QPushButton(mode)
+        btn.setObjectName("pattern_button")
+        btn.clicked.connect(lambda _, m=mode: mw.sidebar_hotspot_enabled_changed.emit(m == "On"))
+        hotspot_row.addWidget(btn)
+        mw.hotspot_enabled_buttons[mode] = btn
+    hotspot_row.addStretch()
+    short_layout.addLayout(hotspot_row)
+
     digit_header = QLabel("Chapter number keys")
     digit_header.setObjectName("settings_header")
     short_layout.addWidget(digit_header)
@@ -1116,26 +1264,6 @@ def build_controls_tab(mw):
         digit_row.addWidget(btn)
         mw.digit_autoplay_buttons[val] = btn
     short_layout.addLayout(digit_row)
-
-    # Corner-hotspot sidebar trigger (review/Plan_260809_corner_hotspot_sidebar_trigger.md).
-    # Placement here is explicitly temporary — likely to move once more of the settings
-    # surface is finalized. The indicator tier (None/Square visual marker) was tried and
-    # removed 2026-08-09 — the hotspot is permanently invisible now, so only its own
-    # enable/disable toggle remains; see SESSION.md for why.
-    hotspot_header = QLabel("Sidebar hotspot")
-    hotspot_header.setObjectName("settings_header")
-    short_layout.addWidget(hotspot_header)
-
-    hotspot_row = QHBoxLayout()
-    mw.hotspot_enabled_buttons = {}
-    for mode in ["On", "Off"]:
-        btn = QPushButton(mode)
-        btn.setObjectName("pattern_button")
-        btn.clicked.connect(lambda _, m=mode: mw.sidebar_hotspot_enabled_changed.emit(m == "On"))
-        hotspot_row.addWidget(btn)
-        mw.hotspot_enabled_buttons[mode] = btn
-    hotspot_row.addStretch()
-    short_layout.addLayout(hotspot_row)
 
     short_layout.addStretch()
     mw.tabs.addTab(shortcuts_tab, "Controls")

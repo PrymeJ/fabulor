@@ -1,3 +1,4 @@
+import logging
 import os
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
@@ -14,6 +15,8 @@ from .text_context_menu import ContextIconMenu
 from .line_edit_dragfix import DragSafeLineEdit
 from .hover_tracker import ScrollHoverTracker
 from . import scrollbar_jump
+
+logger = logging.getLogger(__name__)
 
 MAX_TAG_LENGTH = 20
 
@@ -75,6 +78,13 @@ _TAG_SCROLLBAR_EDGE_GAP = 5
 # that is ~8 flicks end to end.
 _TAG_SCROLL_ROWS = 6
 
+# Thumbnail row pitch for _TagBookGrid (the tag-detail panel's book grid) —
+# _TagBookThumb is a fixed 47x47 (see its setFixedSize call) and the grid's
+# own QGridLayout uses a uniform 3px spacing (self._grid.setSpacing(3)), so
+# every row after the first sits exactly 50px further down. Used by
+# _TagBookGrid.wheelEvent to correct scroll drift — see that method.
+_TAG_GRID_ROW_PITCH = 50
+
 
 def _tag_list_height(rows: int) -> int:
     """Exact pixel height of `rows` tag rows — N rows, N-1 gaps."""
@@ -124,6 +134,79 @@ TAG_COLORS = {
 }
 
 
+class _ThumbFocusRing(QWidget):
+    """A border overlay marking the keyboard-selected thumbnail — see
+    _TagBookThumb.set_keyboard_focused for why this is a separate sibling widget
+    rather than a paintEvent override on the thumbnail itself. Overlaps the SAME
+    rect the no-cover placeholder's own border occupies
+    (render_logo_placeholder_bordered's `pm.rect().adjusted(0, 0, -1, -1)`, 47×47
+    here), by explicit design: a real cover has no border of its own to clash
+    with, and a placeholder's border is simply covered/replaced by this one when
+    both are showing, rather than the two competing visually. Pen width 2 (was
+    1) — a 1px border was reported live as "barely visible and clashes with
+    the placeholder [border]"; 2px reads as a clearly distinct focus indicator
+    rather than looking like the placeholder's own outline."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self._color = QColor("#ffffff")
+
+    def set_color(self, color_hex: str) -> None:
+        self._color = QColor(color_hex)
+        self.update()
+
+    def paintEvent(self, event):
+        # Filled-frame technique (outer rect minus inner rect, via fillRect)
+        # rather than a stroked drawRect — a stroked rect was reported live
+        # as missing its top-left and bottom-left corner pixels (the
+        # thumbnail showing through). A non-antialiased QPainter stroke on a
+        # closed rect draws its four edges as separate segments and can drop
+        # a corner pixel where two perpendicular 2px-wide segments should
+        # overlap; filling four solid border bands has no such seam — each
+        # band is a plain opaque rect, and the four together always cover
+        # every corner completely regardless of pen/join-style quirks.
+        painter = QPainter(self)
+        thickness = 2
+        r = self.rect()
+        painter.fillRect(r.x(), r.y(), r.width(), thickness, self._color)  # top
+        painter.fillRect(r.x(), r.bottom() - thickness + 1, r.width(), thickness, self._color)  # bottom
+        painter.fillRect(r.x(), r.y(), thickness, r.height(), self._color)  # left
+        painter.fillRect(r.right() - thickness + 1, r.y(), thickness, r.height(), self._color)  # right
+        painter.end()
+
+
+class _DotFocusRing(QWidget):
+    """Same idea as _ThumbFocusRing, but a ring (not a square) for the color-
+    picker dots — sized/positioned as a sibling overlay over each QLabel "●"
+    glyph, same reason (Qt paints a parent before its children, so a ring drawn
+    on the QLabel itself would sit BEHIND the glyph text)."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self._color = QColor("#ffffff")
+
+    def set_color(self, color_hex: str) -> None:
+        self._color = QColor(color_hex)
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        pen = painter.pen()
+        pen.setColor(self._color)
+        pen.setWidth(2)
+        painter.setPen(pen)
+        # Same symmetric-inset fix as _ThumbFocusRing above, for the same
+        # reason: adjusted(1,1,-2,-2) insets the bottom/right 1px more than
+        # the top/left for a 2px pen, which reads as the ring sitting
+        # slightly toward the top-left of where it should be centered —
+        # reported live as "not sharp enough, and it is in the wrong place."
+        painter.drawEllipse(self.rect().adjusted(1, 1, -1, -1))
+        painter.end()
+
+
 class _TagBookThumb(QWidget):
     remove_requested = Signal(str)   # book_path
     detail_requested = Signal(str)   # book_path
@@ -168,6 +251,29 @@ class _TagBookThumb(QWidget):
 
         layout.addWidget(self._cover)
 
+        # Keyboard-cursor indicator (2026-09-08) — a SIBLING overlay, not a paintEvent
+        # override on this widget or on _cover: Qt paints a parent's own paintEvent
+        # BEFORE its children, never after, so a border drawn in _TagBookThumb's own
+        # paintEvent would be painted first and then covered by _cover's pixmap —
+        # invisible regardless of z-order calls. A separate, raised, mouse-transparent
+        # widget sized to match is the only way to guarantee the border paints on TOP
+        # of the cover/placeholder, real or not — same rect the placeholder's own
+        # border already occupies (_render_svg_placeholder_bordered's
+        # pm.rect().adjusted(0,0,-1,-1)), by design: "a hollow square with 1px border
+        # ... to exactly overlap and cover the placeholder's outline."
+        self._focus_ring = _ThumbFocusRing(self)
+        self._focus_ring.setGeometry(0, 0, 47, 47)
+        self._focus_ring.hide()
+
+    def set_keyboard_focused(self, focused: bool, color: str | None = None) -> None:
+        """Show/hide the keyboard-cursor border overlay. `color` is only read when
+        `focused` is True (typically the panel's live theme accent)."""
+        if color is not None:
+            self._focus_ring.set_color(color)
+        self._focus_ring.setVisible(focused)
+        if focused:
+            self._focus_ring.raise_()
+
     def _on_cover_loaded(self, book_id, image):
         if image.isNull():
             return
@@ -206,6 +312,14 @@ class _TagBookGrid(QScrollArea):
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setFrameShape(QScrollArea.Shape.NoFrame)
+        # Real Qt focus (2026-09-08, keyboard nav) — entry point for the whole
+        # tag-detail sub-panel; TagManagerWidget._claim_panel_focus-equivalent
+        # targets this widget directly, same reasoning as _tag_scroll for the
+        # list view (KeyPress events need to land HERE for eventFilter to see
+        # them). QScrollArea's own default is already StrongFocus, but set
+        # explicitly rather than relied on, matching the Speed/Sleep/Sprint
+        # grids' own convention of never assuming a Qt default silently holds.
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
         self._container = QWidget()
         self._container.setStyleSheet("background: transparent;")
@@ -219,6 +333,27 @@ class _TagBookGrid(QScrollArea):
         self._cols = 5
         self._locked: bool = False
         self._grid.setColumnStretch(self._cols, 1)
+        # Keyboard cursor — (row, col) into the REAL thumbnail grid, i.e.
+        # `self._cols` columns, never grid.columnCount() (which is _cols + 1,
+        # counting the trailing stretch column above — a real gotcha here that
+        # doesn't apply to Speed/Sleep/Sprint's grids, which have no such
+        # column). None means no keyboard cursor active, matching the
+        # "no memory across a rebuild/exit" convention every other kbdnav
+        # region on this branch already follows.
+        self._kbdnav_pos: tuple[int, int] | None = None
+        self._kbdnav_color = "#ffffff"
+
+        # Right-click-to-jump (ui/scrollbar_jump.py) lands on a pixel-exact
+        # position by default — would clip a thumbnail row here, same reason
+        # this was needed for Library/Stats and the tag LIST view before
+        # their own row-snap fixes (see _TAG_ROW_PITCH's own registration,
+        # above). _TAG_GRID_ROW_PITCH is a fixed, uniform stride (every
+        # thumbnail is 47x47 with 3px grid spacing), so the snap is a plain
+        # floor-to-multiple.
+        scrollbar_jump.register_snap(
+            self.verticalScrollBar(),
+            lambda v: (v // _TAG_GRID_ROW_PITCH) * _TAG_GRID_ROW_PITCH
+        )
 
     def set_placeholder_color(self, color: str):
         if self._placeholder_color != color:
@@ -251,6 +386,74 @@ class _TagBookGrid(QScrollArea):
         # Push content to the top
         self._grid.setRowStretch(self._grid.rowCount(), 1)
 
+        # Every thumbnail was just deleted and recreated — a keyboard cursor from
+        # before this rebuild points at a widget that no longer exists. Re-derive
+        # (clamped to the new, possibly-shorter book count) and reapply the visual
+        # to the corresponding NEW widget at the same (row, col), rather than
+        # dropping the cursor outright — a book removal via Enter/Space should
+        # leave the cursor sensibly positioned for the next removal, not force a
+        # fresh Down/Up before the grid is navigable again.
+        if self._kbdnav_pos is not None:
+            row, col = self._kbdnav_pos
+            n = len(self._books)
+            if n == 0:
+                self._kbdnav_pos = None
+            else:
+                last_row = (n - 1) // self._cols
+                row = min(row, last_row)
+                cols_in_row = min(self._cols, n - row * self._cols)
+                col = min(col, cols_in_row - 1)
+                self._kbdnav_pos = (row, col)
+                self._apply_kbdnav_visual()
+
+    def _apply_kbdnav_visual(self) -> None:
+        """Show the focus ring on exactly the thumbnail at self._kbdnav_pos (or
+        none showing if that's None) — the single place that touches
+        set_keyboard_focused, so cursor state and visual state can never drift
+        apart across a rebuild/move."""
+        for r in range(self._grid.rowCount()):
+            for c in range(self._cols):
+                item = self._grid.itemAtPosition(r, c)
+                w = item.widget() if item is not None else None
+                if isinstance(w, _TagBookThumb):
+                    w.set_keyboard_focused((r, c) == self._kbdnav_pos, self._kbdnav_color)
+
+    def set_kbdnav_color(self, color_hex: str) -> None:
+        self._kbdnav_color = color_hex
+        if self._kbdnav_pos is not None:
+            self._apply_kbdnav_visual()
+
+    def kbdnav_pos(self):
+        return self._kbdnav_pos
+
+    def set_kbdnav_pos(self, pos: tuple[int, int] | None) -> None:
+        self._kbdnav_pos = pos
+        self._apply_kbdnav_visual()
+        if pos is not None:
+            item = self._grid.itemAtPosition(*pos)
+            w = item.widget() if item is not None else None
+            if w is not None:
+                self.ensureWidgetVisible(w, 0, 0)
+
+    def kbdnav_grid_shape(self) -> tuple[int, int]:
+        """(row_count, cols) for the REAL thumbnail grid — cols is always
+        self._cols, never self._grid.columnCount() (see __init__'s comment on
+        the trailing stretch column). The last row may be short."""
+        n = len(self._books)
+        if n == 0:
+            return (0, self._cols)
+        return ((n - 1) // self._cols + 1, self._cols)
+
+    def kbdnav_row_length(self, row: int) -> int:
+        n = len(self._books)
+        return max(0, min(self._cols, n - row * self._cols))
+
+    def kbdnav_current_path(self) -> str | None:
+        if self._kbdnav_pos is None:
+            return None
+        item = self._grid.itemAtPosition(*self._kbdnav_pos)
+        w = item.widget() if item is not None else None
+        return w._path if isinstance(w, _TagBookThumb) else None
 
     def set_locked(self, locked: bool):
         self._locked = locked
@@ -274,6 +477,47 @@ class _TagBookGrid(QScrollArea):
     def parent_remove(self, path: str):
         pass
 
+    def wheelEvent(self, event):
+        # Every thumbnail row sits on a fixed, uniform _TAG_GRID_ROW_PITCH
+        # stride, so the scrollbar should always rest on a multiple of it —
+        # but Qt's native wheel handling (this method does NOT override the
+        # per-notch amount/direction — super() runs it unchanged) only ever
+        # applies a relative delta with no knowledge of that pitch, so
+        # repeated scrolling drifts a row's cut line further off the pitch
+        # over time. Live-reported as "the mouse step was tuned to scroll
+        # without causing drifts, but they drift" once the grid held enough
+        # thumbnails (100+) to actually scroll multiple pages — this grid
+        # never had the fix its sibling lists already got (Library/Stats
+        # 2026-08-12, the tag LIST view earlier this same 2026-09-08 branch).
+        # Same idiom as StatsRowListView.wheelEvent (stats_panel.py): let
+        # native scroll apply its unchanged delta first, then round the
+        # RESULT to the nearest row boundary on the next event-loop tick
+        # (the corrected value isn't available yet inside this call, since
+        # eventFilter/override callbacks run BEFORE QAbstractItemView/
+        # QScrollArea applies its own scroll).
+        super().wheelEvent(event)
+        bar = self.verticalScrollBar()
+
+        def _snap_after_native_scroll():
+            v = bar.value()
+            snapped = round(v / _TAG_GRID_ROW_PITCH) * _TAG_GRID_ROW_PITCH
+            # bar.maximum() is the true scroll-max needed to fully reveal the
+            # LAST row — it is only a multiple of the pitch by coincidence
+            # (the last row rarely divides the viewport height evenly).
+            # Rounding to the nearest pitch multiple can land one pitch SHORT
+            # of that true max, clipping the last row permanently (no amount
+            # of further scrolling reaches it, since the snap re-applies on
+            # every wheel tick) — reported live once the "dummy" tag held
+            # 100+ books. If we're within one pitch of the true max, snap
+            # straight to it instead of the nearest multiple.
+            if bar.maximum() - v < _TAG_GRID_ROW_PITCH:
+                snapped = bar.maximum()
+            snapped = max(bar.minimum(), min(bar.maximum(), snapped))
+            if snapped != v:
+                bar.setValue(snapped)
+
+        QTimer.singleShot(0, _snap_after_native_scroll)
+
     def parent_detail(self, path: str):
         pass
 
@@ -296,6 +540,28 @@ class TagManagerWidget(QWidget):
         self._current_tag: str | None = None
         self._tag_name_original: str = ""
         self._confirming_delete: bool = False
+        # Keyboard cursor for the tag LIST (added 2026-09-08) — an index into
+        # _tag_list_rows(), independent of ScrollHoverTracker's mouse-driven
+        # _hovered (that tracker's own suspend() is the coexistence hook, see
+        # hover_tracker.py's docstring: "designed for keyboard selection to
+        # land on top"). None means no keyboard cursor is currently active —
+        # distinct from 0, a real cursor at the first row.
+        self._kbdnav_row_index: int | None = None
+        # Type-ahead letter jump for the tag LIST (added 2026-09-08, TODO.md
+        # item) — same buffer+debounce shape as ChapterList's digit jump
+        # (chapter_list.py, _digit_buffer/_digit_timer): typed letters
+        # accumulate into _typeahead_buffer, re-searched on every keystroke,
+        # cleared 800ms after the last one. Repeated presses of a SINGLE
+        # letter cycle through its matches instead of narrowing to nothing
+        # after the first one (see _handle_tag_list_typeahead) — the
+        # behavior Qt's own native list type-ahead search has, which this
+        # mirrors since tags are short, scannable names meant to be jumped
+        # to by a starting letter, not filtered by a whole typed string.
+        self._typeahead_buffer: str = ""
+        self._typeahead_timer = QTimer(self)
+        self._typeahead_timer.setSingleShot(True)
+        self._typeahead_timer.setInterval(800)
+        self._typeahead_timer.timeout.connect(self._clear_typeahead_buffer)
         self._cancel_timer: QTimer | None = None
         self._rename_revert_timer: QTimer | None = None
         self._current_theme: dict = {}
@@ -354,13 +620,13 @@ class TagManagerWidget(QWidget):
         self._tag_list_layout.addStretch()
         self._tag_scroll.setWidget(self._tag_list_container)
         # Re-resolve the hovered row when the list scrolls under a still cursor —
-        # QSS :hover alone goes stale there. See ui/hover_tracker.py.
+        # QSS :hover alone goes stale there. See ui/hover_tracker.py. Shares
+        # _tag_list_rows() with the keyboard cursor below (added 2026-09-08) so
+        # the two can never disagree about what a "row" is.
         self._row_hover = ScrollHoverTracker(
-            self._tag_scroll,
-            lambda: [self._tag_list_layout.itemAt(i).widget()
-                     for i in range(self._tag_list_layout.count())
-                     if self._tag_list_layout.itemAt(i).widget() is not None],
-            self)
+            self._tag_scroll, self._tag_list_rows, self,
+            on_mouse_reclaim=self._on_mouse_reclaimed_tag_list,
+        )
         # Horizontal Ignored, not Preferred: with Preferred the container claims
         # its own sizeHint and came out 245px wide inside a 242px viewport
         # (measured), overhanging by 3px — so a right margin measured from the
@@ -404,17 +670,15 @@ class TagManagerWidget(QWidget):
             e.accept()
 
         self._tag_scroll.wheelEvent = _tag_rows_wheel
-        # Arrow-key scrolling has no real keyboard-nav implementation in this panel yet — this
-        # is Qt's native QAbstractScrollArea fallback (StrongFocus by default, unclaimed here,
-        # unlike Book Detail's History tab where the same default was a bug to fix — see
-        # book_detail_panel.py's `_history_scroll.setFocusPolicy(Qt.FocusPolicy.NoFocus)`).
-        # bar.setSingleStep(_TAG_ROW_PITCH) above already makes a native arrow press move by
-        # exactly one row, but — same gap as the wheel case — a manually DRAGGED scrollbar can
-        # start off that pitch, and a relative singleStep delta from an off-pitch position never
-        # self-corrects. Added now, ahead of any real keyboard-nav work landing here, so the
-        # deferred-correction idiom (see Library's eventFilter Wheel branch / Stats'
-        # StatsRowListView.wheelEvent, 2026-08-12/13) is already in place and doesn't get
-        # forgotten once real key handling is built. Installed on _tag_scroll itself, not its
+        # Arrow-key handling for the tag LIST is real keyboard-nav as of 2026-09-08 —
+        # see _handle_tag_list_keys/_set_kbdnav_row, wired in eventFilter's KeyPress
+        # branch. `_tag_scroll` needs real focus (StrongFocus, Qt's default for
+        # QAbstractScrollArea, unclaimed here — unlike Book Detail's History tab,
+        # where the same default was a bug to fix, see book_detail_panel.py's
+        # `_history_scroll.setFocusPolicy(Qt.FocusPolicy.NoFocus)`) so KeyPress events
+        # actually land on it for the filter to see. `bar.setSingleStep(_TAG_ROW_PITCH)`
+        # above still matters for the WHEEL/scrollbar-drag path, which never goes
+        # through the keyboard cursor at all. Installed on _tag_scroll itself, not its
         # viewport() — arrow-key KeyPress events target whatever widget holds focus, which is
         # the scroll area itself under Qt's default StrongFocus. The installEventFilter() call
         # itself is deferred to the END of _build_ui (not here) — eventFilter's very first
@@ -490,7 +754,13 @@ class TagManagerWidget(QWidget):
         panel_layout.addSpacing(0)
 
         self._reserved_row = QWidget()
-        self._reserved_row.setFixedHeight(21)
+        # 25, not 21 (live design follow-up, 2026-09-08) — grown to match
+        # the color-picker dots' own 25x25 box (see _add_picker_dot's
+        # comment): the keyboard-cursor ring needed room the old 20px
+        # dot/21px row couldn't give it without being clipped. Pushes the
+        # book-count label and thumbnail grid down further — explicitly
+        # OK'd live.
+        self._reserved_row.setFixedHeight(25)
         reserved_layout = QStackedLayout(self._reserved_row)
         reserved_layout.setContentsMargins(0, 0, 0, 0)
         reserved_layout.setStackingMode(QStackedLayout.StackingMode.StackOne)
@@ -499,23 +769,54 @@ class TagManagerWidget(QWidget):
         picker_layout = QHBoxLayout(self._color_picker_row)
         picker_layout.setContentsMargins(2, 0, 10, 0)
         picker_layout.setSpacing(9)
-        neutral_dot = QLabel("●")
-        neutral_dot.setFixedSize(20, 20)
-        neutral_dot.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        neutral_dot.setObjectName("tag_dot_neutral")
-        neutral_dot.setStyleSheet("font-size: 27px;")
-        neutral_dot.setCursor(Qt.CursorShape.PointingHandCursor)
-        neutral_dot.mousePressEvent = lambda e: self._set_tag_color(None)
-        picker_layout.addWidget(neutral_dot)
-        for color_key, color_hex in TAG_COLORS.items():
+        # Ordered list of (dot widget, color_key, focus ring) — the color ROW's
+        # keyboard-nav cursor is an index into this, built in the SAME
+        # left-to-right order the widgets are actually added, so Left/Right
+        # visually match cursor movement.
+        self._color_picker_dots: list[tuple[QLabel, str | None, "_DotFocusRing"]] = []
+
+        def _add_picker_dot(color_key, color_hex):
             dot = QLabel("●")
-            dot.setFixedSize(20, 20)
+            # 25x25 (was 20x20 originally) — live-tuned across several
+            # rounds, 2026-09-08, alongside the ring's own geometry below
+            # and the font size (28->23px). The ring is a CHILD of this
+            # label (Qt clips a child to its parent's own rect), so both the
+            # box and the ring's own geometry had to be tuned together —
+            # see _reserved_row's construction, above, for the matching
+            # row-height history.
+            dot.setFixedSize(25, 25)
             dot.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            dot.setStyleSheet(f"font-size: 27px; color: {color_hex};")
+            dot.setStyleSheet("font-size: 23px;" if color_hex is None
+                               else f"font-size: 23px; color: {color_hex};")
+            if color_hex is None:
+                dot.setObjectName("tag_dot_neutral")
             dot.setCursor(Qt.CursorShape.PointingHandCursor)
             dot.mousePressEvent = lambda e, k=color_key: self._set_tag_color(k)
             picker_layout.addWidget(dot)
+            ring = _DotFocusRing(dot)
+            # The "●" glyph's visual center does not match this label's
+            # geometric center, and an offscreen pixel measurement of it
+            # proved unreliable for this — see CLAUDE.md's "DO NOT verify a
+            # settings-panel/tab visual layout bug with headless test
+            # scripts alone". This geometry is a bare, live-tuned number
+            # (via a temporary Ctrl+Arrow dev-nudge tool, added and removed
+            # this same session — see git history), not derived from any
+            # measurement. Accepted as "not perfect, but not too bad as a
+            # fallback" — a small remaining sub-pixel roundness imperfection
+            # on the antialiased ellipse stroke, not a position/clipping
+            # problem.
+            ring.setGeometry(4, 6, 17, 17)
+            ring.hide()
+            self._color_picker_dots.append((dot, color_key, ring))
+
+        _add_picker_dot(None, None)
+        for color_key, color_hex in TAG_COLORS.items():
+            _add_picker_dot(color_key, color_hex)
         picker_layout.addStretch()
+        # Keyboard cursor into _color_picker_dots — None means no cursor active.
+        # Reset to None every time the picker opens/closes (_show_reserved), same
+        # "no memory across exit" convention as the tag list and thumbnail grid.
+        self._color_kbdnav_index: int | None = None
 
         self._confirm_delete_label = _ClickableLabel("Confirm to delete the tag")
         self._confirm_delete_label.setObjectName("tag_confirm_delete")
@@ -550,7 +851,34 @@ class TagManagerWidget(QWidget):
         # setup above for why (eventFilter's self._action_btn access needs it to exist first).
         self._tag_scroll.installEventFilter(self)
 
+    def showEvent(self, event):
+        # Mirrors hideEvent below — required because TransportBarBlurOverlay
+        # hides and re-shows the active panel ~5-15x/sec while a book plays
+        # (see transport_bar_blur.py's own docstring), and each of those
+        # synthetic hides fires hideEvent same as a real close. Without this
+        # counterpart, the FIRST blur-grab cycle after _open_tag() strips the
+        # QApplication-wide filter for good (removeEventFilter with no
+        # matching reinstall) — confirmed live 2026-09-07: every detail-panel
+        # key (Backspace/Delete/arrows) went dead within ~200ms of opening a
+        # tag, every time, because hideEvent's remove had already fired
+        # several times over by the time a key was pressed. BookDetailPanel
+        # already gets this for free (it pairs showEvent/hideEvent on itself,
+        # so its own filter self-heals every grab tick) — TagManagerWidget
+        # never had the showEvent half. Reinstall is scoped to the detail
+        # sub-panel actually being the visible one, since the filter must NOT
+        # be active while the tag LIST view is showing (that view's own
+        # eventFilter gate is `obj is self._tag_scroll`, unaffected by this).
+        super().showEvent(event)
+        if self._panel_widget.isVisible():
+            QApplication.instance().installEventFilter(self)
+
     def hideEvent(self, event):
+        # See showEvent above for why this alone is insufficient against the
+        # blur grab. Removing here is still correct and necessary for the
+        # REAL close case: _close_tags_flow hides the whole TagManagerWidget
+        # without ever calling _show_list() first when a tag detail happens
+        # to be open, so this is what stops the filter from leaking past a
+        # genuine panel close.
         QApplication.instance().removeEventFilter(self)
         super().hideEvent(event)
 
@@ -558,11 +886,25 @@ class TagManagerWidget(QWidget):
         if self._current_tag:
             self._open_tag(self._current_tag)
 
+    def tag_scroll_widget(self):
+        """The tag list's QScrollArea — the widget PanelManager._start_tags_entry gives
+        real Qt focus to, so the list's own arrow-key handling (eventFilter, gated on
+        `obj is self._tag_scroll`) actually receives KeyPress events. Exposed as a
+        method rather than reaching into the private `_tag_scroll` attribute directly
+        from panels.py."""
+        return self._tag_scroll
+
     def refresh(self):
         """Reload tag list from DB. Always lands on the list view."""
         self._current_tag = None
         self._panel_widget.hide()
         self._list_widget.show()
+        # Any keyboard cursor belongs to the OLD rows, about to be deleted —
+        # clearing here (not re-deriving after rebuild) matches every other
+        # region's "no memory across a rebuild/exit" convention this branch
+        # established (see ThemeManager._kbdnav_swatch_pos's docstring); the
+        # panel's own claim-focus path re-establishes row 0 on next entry.
+        self._kbdnav_row_index = None
 
         while self._tag_list_layout.count() > 1:
             item = self._tag_list_layout.takeAt(0)
@@ -575,6 +917,450 @@ class TagManagerWidget(QWidget):
             self._tag_list_layout.insertWidget(
                 self._tag_list_layout.count() - 1, row
             )
+
+    def _tag_list_rows(self) -> list:
+        """Tag-list row widgets in visual order, live off the layout — shared by
+        ScrollHoverTracker (mouse) and the keyboard cursor below, so the two
+        mechanisms can never disagree about what a "row" is. Rows are looked up
+        fresh each call (never cached) since refresh() rebuilds them wholesale."""
+        return [w for i in range(self._tag_list_layout.count())
+                if (w := self._tag_list_layout.itemAt(i).widget()) is not None]
+
+    def _on_mouse_reclaimed_tag_list(self) -> None:
+        """Called by ScrollHoverTracker the instant it detects the REAL mouse has
+        genuinely moved while the keyboard cursor was active (most-recent-input-
+        wins — see ScrollHoverTracker._maybe_reclaim_from_mouse). Clears the
+        keyboard cursor's own highlight WITHOUT touching the tracker's suspended
+        state itself — the tracker has already un-suspended and is about to
+        resync to the real cursor position in the same call, so calling back
+        into _set_kbdnav_row(None) here (which would re-invoke suspend(False) a
+        second time) is unnecessary and would just repeat work the tracker is
+        already mid-way through doing."""
+        rows = self._tag_list_rows()
+        idx = self._kbdnav_row_index
+        if idx is not None and 0 <= idx < len(rows):
+            rows[idx].setProperty("hovered", "false")
+            rows[idx].style().unpolish(rows[idx])
+            rows[idx].style().polish(rows[idx])
+        self._kbdnav_row_index = None
+
+    def _set_kbdnav_row(self, index: int | None) -> None:
+        """Move the tag-list keyboard cursor to `index` (or clear it with None),
+        updating the visual highlight and suspending/resuming mouse hover to
+        match — the same coexistence contract hover_tracker.py's docstring
+        describes ("designed for keyboard selection to land on top";
+        ScrollHoverTracker.suspend is the hook). Reuses the exact same
+        `hovered` property + unpolish/polish primitive ScrollHoverTracker
+        itself uses (_set_hovered), rather than a second visual mechanism, so
+        a keyboard-selected row and a mouse-hovered row are pixel-identical —
+        explicit design call: "Mouse hover highlight style to be used to
+        indicate the active row." Scrolls the new row into view."""
+        rows = self._tag_list_rows()
+        prev_index = self._kbdnav_row_index
+        if prev_index is not None and 0 <= prev_index < len(rows):
+            rows[prev_index].setProperty("hovered", "false")
+            rows[prev_index].style().unpolish(rows[prev_index])
+            rows[prev_index].style().polish(rows[prev_index])
+        self._kbdnav_row_index = index
+        if index is None:
+            self._row_hover.suspend(False)
+            return
+        self._row_hover.suspend(True)
+        if 0 <= index < len(rows):
+            row = rows[index]
+            row.setProperty("hovered", "true")
+            row.style().unpolish(row)
+            row.style().polish(row)
+            self._tag_scroll.ensureWidgetVisible(row, 0, 0)
+
+    def _handle_tag_list_keys(self, event) -> bool:
+        """Up/Down/PgUp/PgDown/Home/End move the keyboard cursor; Enter/Space
+        open the tag under it (the same action a left-click on the row
+        performs) — live design call, 2026-09-08: list-view nav ships before
+        the tag-detail sub-panel's own, larger set of interactions. Returns
+        True iff the key was consumed."""
+        key = event.key()
+        rows = self._tag_list_rows()
+        if not rows:
+            return False
+        if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space):
+            if self._kbdnav_row_index is not None and 0 <= self._kbdnav_row_index < len(rows):
+                tag = rows[self._kbdnav_row_index].property("tag_name")
+                if tag:
+                    self._open_tag(tag)
+            return True
+        # Pick up from wherever the MOUSE is currently hovering, when no keyboard
+        # cursor is active yet — live design call, 2026-09-08: "can down arrow be
+        # made to go to the next tag after grimdark [the currently mouse-hovered
+        # row], while still taking away the mouse highlight? This way it would be
+        # made like just one marker." ScrollHoverTracker.hovered_row is exactly
+        # the hook its own docstring names for this ("so a future keyboard cursor
+        # can coordinate with it rather than guess") — read ONLY when there is no
+        # existing keyboard cursor (self._kbdnav_row_index is None), so an
+        # in-progress keyboard session never gets silently reset to wherever the
+        # mouse happens to be resting from an earlier, unrelated hover.
+        if self._kbdnav_row_index is None:
+            hovered = self._row_hover.hovered_row
+            current = rows.index(hovered) if hovered in rows else -1
+        else:
+            current = self._kbdnav_row_index
+        if key == Qt.Key.Key_Down:
+            self._set_kbdnav_row(min(current + 1, len(rows) - 1) if current >= 0 else 0)
+        elif key == Qt.Key.Key_Up:
+            self._set_kbdnav_row(max(current - 1, 0) if current >= 0 else len(rows) - 1)
+        elif key == Qt.Key.Key_PageDown:
+            self._set_kbdnav_row(min(current + _TAG_SCROLL_ROWS, len(rows) - 1) if current >= 0 else 0)
+        elif key == Qt.Key.Key_PageUp:
+            self._set_kbdnav_row(max(current - _TAG_SCROLL_ROWS, 0) if current >= 0 else len(rows) - 1)
+        elif key == Qt.Key.Key_Home:
+            self._set_kbdnav_row(0)
+        elif key == Qt.Key.Key_End:
+            self._set_kbdnav_row(len(rows) - 1)
+        elif event.text() and event.text().isprintable() and not (event.modifiers() & ~Qt.KeyboardModifier.ShiftModifier):
+            # Type-ahead letter jump (TODO.md item) — any printable character
+            # with no modifier besides Shift (so a capital letter still
+            # works). Checked LAST, after every dedicated nav key above, so
+            # it never shadows Space (already claimed for Enter/Space above)
+            # or any other bound key.
+            self._handle_tag_list_typeahead(event.text(), rows, current)
+        else:
+            return False
+        return True
+
+    def _clear_typeahead_buffer(self) -> None:
+        self._typeahead_buffer = ""
+
+    def _handle_tag_list_typeahead(self, char: str, rows: list, current: int) -> None:
+        """Extends or restarts the type-ahead buffer and jumps the keyboard
+        cursor to the next matching tag. Same buffer shape as ChapterList's
+        digit jump (chapter_list.py) — accumulate, debounce, commit — but
+        with a cycling behavior digit-jump doesn't need: repeatedly pressing
+        the SAME single letter (e.g. "s", "s", "s") cycles through every tag
+        starting with that letter one at a time, rather than the buffer
+        staying "s" forever and always landing on the first match. Typing
+        DIFFERENT letters in quick succession (e.g. "s", "e") instead
+        narrows to tags starting with the full typed prefix, same as typing
+        normally into a search field — the two behaviors coexist by
+        checking whether the new character repeats the buffer's own single
+        existing character."""
+        char = char.lower()
+        if self._typeahead_buffer and char == self._typeahead_buffer[-1] and len(self._typeahead_buffer) == 1:
+            pass  # repeat of the same single letter — cycle, don't append (buffer already correct)
+        else:
+            self._typeahead_buffer += char
+        self._typeahead_timer.start()  # restart — fires 800ms after the last keystroke
+
+        buf = self._typeahead_buffer
+        tags = [(i, row.property("tag_name") or "") for i, row in enumerate(rows)]
+        matches = [i for i, tag in tags if tag.startswith(buf)]
+        if not matches:
+            # No tag starts with the full buffer — fall back to just the
+            # newly typed character alone, so a mistyped second letter
+            # doesn't strand the user with zero matches until the debounce
+            # clears; matches whatever Qt's own native type-ahead does in
+            # the same situation.
+            self._typeahead_buffer = char
+            matches = [i for i, tag in tags if tag.startswith(char)]
+        if not matches:
+            return
+        # Land on the first match AFTER the current cursor (wrapping to the
+        # start), so repeated presses of one letter cycle forward through
+        # every match instead of sticking on the first one found.
+        after = [i for i in matches if i > current]
+        target = after[0] if after else matches[0]
+        self._set_kbdnav_row(target)
+
+    def _handle_tag_detail_keys(self, event) -> bool:
+        """Keyboard nav for the tag-DETAIL sub-panel — live design 2026-09-08.
+        Dispatch order matters: panel-wide keys first (they must win regardless
+        of where the keyboard cursor currently is), then whichever REGION
+        (thumbnail grid / color row) is currently reachable. Returns True iff
+        the key was consumed.
+
+        Panel-wide, work from anywhere EXCEPT while _tag_name_edit has real
+        focus (checked FIRST, below, before any of these) — Tab/Shift+Tab is
+        the one key that still applies while editing, since it's the way OUT
+        of edit mode; every other key while editing belongs to the QLineEdit
+        itself. (Correction, 2026-09-08: an earlier version of this docstring
+        claimed "native editing keys never reach here since QLineEdit
+        consumes them before this app-wide filter runs" — that was simply
+        wrong. A QApplication-wide event filter runs BEFORE the target
+        widget's own event delivery, not after, so with the old dispatch
+        order — hasFocus() checked LAST — Backspace/Delete were stolen from
+        the field entirely: Backspace closed the whole panel instead of
+        deleting a character, Delete armed the tag-delete confirmation
+        instead of deleting a character. Confirmed live.)
+          Backspace — same action as clicking the '<' back button
+          Escape    — cancel an ARMED delete confirmation only; otherwise NOT
+                      consumed here, so it falls through to MainWindow's own
+                      panel-close handling (same class of "let the more
+                      specific case intercept, defer otherwise" as
+                      BookDetailPanel's own Escape handling elsewhere in this
+                      app)
+          Delete    — arm the delete confirmation (mirrors Space/Enter's role
+                      as "activate" elsewhere: global within the panel,
+                      explicit design call — "Delete button will not have
+                      focus")
+          Tab / Shift+Tab — jump into (or out of) the name field's edit mode;
+                      identical behavior for both, since there's no "next
+                      stop" to cycle to the way Tab normally cycles a row of
+                      controls (explicit design call)
+        """
+        key = event.key()
+
+        # ANY key other than Space/Enter/Return, while the delete confirmation is armed, must
+        # dismiss it and swallow the press — checked FIRST, ahead of even Tab. Closes a real
+        # gap found 2026-09-09 (app-wide confirm-dismiss consistency pass): Tab was checked
+        # unconditionally above the `_confirming_delete` block below, so Tab while armed moved
+        # real Qt focus into `_tag_name_edit` (made read-only while confirming, so nothing
+        # could actually be typed) WITHOUT dismissing the confirmation — the "Confirm to
+        # delete" label stayed visibly armed underneath. Escape and Delete keep their own
+        # dedicated branches immediately below (Escape's cancel-if-armed / defer-otherwise
+        # shape, and Delete's arm-if-not-already-armed shape, are both already correct and
+        # would be redundant to duplicate here) — this check only needs to catch every OTHER
+        # key, which is exactly what the existing arrow-key branch inside the
+        # `_confirming_delete` block further down already did; Tab was the one key that
+        # bypassed it entirely by being dispatched even earlier in this same method.
+        if (self._confirming_delete
+                and key not in (Qt.Key.Key_Space, Qt.Key.Key_Return, Qt.Key.Key_Enter,
+                                Qt.Key.Key_Escape, Qt.Key.Key_Delete)):
+            self._cancel_delete_confirm()
+            return True
+
+        if key == Qt.Key.Key_Tab or (key == Qt.Key.Key_Backtab):
+            if self._tag_name_edit.hasFocus():
+                self._tag_name_edit.clearFocus()
+                self._book_grid.setFocus(Qt.FocusReason.TabFocusReason)
+            else:
+                if self._reserved_layout.currentWidget() is self._color_picker_row:
+                    self._show_reserved("none")
+                self._clear_color_kbdnav()
+                self._tag_name_edit.setFocus(Qt.FocusReason.TabFocusReason)
+                self._tag_name_edit.selectAll()
+            return True
+
+        if self._tag_name_edit.hasFocus():
+            # Editing — every other key belongs to the QLineEdit itself
+            # (returnPressed/textChanged are already wired via signals;
+            # Escape is claimed by the dedicated obj-is-_tag_name_edit branch
+            # in eventFilter, which runs before this method is ever reached;
+            # arrows/Backspace/Delete move/edit the text cursor natively).
+            # Nothing below applies while editing.
+            return False
+
+        if key == Qt.Key.Key_Backspace:
+            self._show_list()
+            return True
+
+        if key == Qt.Key.Key_Escape:
+            if self._confirming_delete:
+                self._cancel_delete_confirm()
+                return True
+            return False  # not armed — defer to the panel's own close handling
+
+        if key == Qt.Key.Key_Delete:
+            if not self._confirming_delete:
+                self._on_delete_tag()
+            return True
+
+        if self._confirming_delete:
+            # A dedicated branch, ahead of the color-row/thumbnail-grid dispatch below — live
+            # design call, 2026-09-08, fixing a real bug: with no branch here, Enter/Space fell
+            # through to whichever region's own handler (color row or thumbnail grid) and did
+            # THAT region's normal thing instead of confirming — reported live as "Enter
+            # doesn't confirm, Space just dismisses" (Space was actually triggering the
+            # thumbnail grid's own remove action, which itself checks _confirming_delete and
+            # cancels — a dismiss, not a confirm, and only by accident of that check existing
+            # elsewhere). Only Space/Enter/Return can still reach this point as of 2026-09-09
+            # (the app-wide swallow-and-dismiss check near the top of this method now catches
+            # every OTHER key while armed, including arrows and Tab, before dispatch ever gets
+            # this far) — so this is now purely the confirm action, not a dismiss branch too.
+            if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space):
+                self._on_confirm_delete()
+                return True
+            return True  # defensive: nothing should reach the locked grid/colors while armed
+
+        if self._color_kbdnav_index is not None:
+            return self._handle_color_row_keys(event)
+        return self._handle_thumb_grid_keys(event)
+
+    def _clear_color_kbdnav(self) -> None:
+        if self._color_kbdnav_index is not None:
+            _, _, ring = self._color_picker_dots[self._color_kbdnav_index]
+            ring.hide()
+        self._color_kbdnav_index = None
+
+    def _set_color_kbdnav(self, index: int) -> None:
+        if self._color_kbdnav_index is not None:
+            _, _, prev_ring = self._color_picker_dots[self._color_kbdnav_index]
+            prev_ring.hide()
+        self._color_kbdnav_index = index
+        _, color_key, ring = self._color_picker_dots[index]
+        # The ring matches its OWN dot's color (live design call, 2026-09-08
+        # follow-up) rather than a single theme-wide focus color — for a row
+        # where each cell already carries a distinct, meaningful color, a
+        # ring in that SAME color reads as "this one" rather than a generic
+        # focus indicator competing with the color it's pointing at. The
+        # neutral dot (color_key None) has no such color of its own, so it
+        # keeps the theme-derived tags_kbdnav_ring/accent_light fallback —
+        # same one the thumbnail grid's ring still uses.
+        dot_color = TAG_COLORS.get(color_key)
+        color = dot_color or self._current_theme.get(
+            "tags_kbdnav_ring", self._current_theme.get("accent_light", "#ffffff")
+        )
+        ring.set_color(color)
+        ring.show()
+        ring.raise_()
+
+    def _handle_color_row_keys(self, event) -> bool:
+        """Left/Right cycle the picker dots with CONTINUOUS wrap (Right past the
+        last dot goes to the first, Left before the first goes to the last —
+        live design call, 2026-09-08 follow-up: differs from the thumbnail
+        grid's reading-order wrap since this is a flat row, not a 2-D grid);
+        Down leaves to the thumbnail grid, Up leaves to the name field's edit
+        mode (explicit design call: "name is reachable from the colored dots.
+        You just press Up."); Enter/Space picks the focused color, same action
+        as clicking it."""
+        key = event.key()
+        n = len(self._color_picker_dots)
+        idx = self._color_kbdnav_index
+
+        if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space):
+            _, color_key, _ = self._color_picker_dots[idx]
+            self._set_tag_color(color_key)
+            return True
+        if key == Qt.Key.Key_Right:
+            self._set_color_kbdnav((idx + 1) % n)
+            return True
+        if key == Qt.Key.Key_Left:
+            self._set_color_kbdnav((idx - 1) % n)
+            return True
+        if key == Qt.Key.Key_Down:
+            self._clear_color_kbdnav()
+            self._show_reserved("none")  # leaving without picking a color closes the picker
+            pos = self._book_grid.kbdnav_pos()
+            if pos is None:
+                rows_count, _ = self._book_grid.kbdnav_grid_shape()
+                if rows_count > 0:
+                    self._book_grid.set_kbdnav_pos((0, 0))
+            self._book_grid.setFocus(Qt.FocusReason.OtherFocusReason)
+            return True
+        if key == Qt.Key.Key_Up:
+            self._clear_color_kbdnav()
+            self._show_reserved("none")  # leaving without picking a color closes the picker
+            self._tag_name_edit.setFocus(Qt.FocusReason.OtherFocusReason)
+            self._tag_name_edit.selectAll()
+            return True
+        return False
+
+    def _handle_thumb_grid_keys(self, event) -> bool:
+        """Left/Right/Up/Down move the thumbnail cursor with READING-ORDER wrap
+        (same model as Themes' swatch grid and the Speed/Sleep/Sprint preset
+        grids' 2026-09-07 fix): past a row's last thumbnail, Right continues
+        onto the next row's first; past a row's first, Left continues onto the
+        previous row's last. Right at the very LAST thumbnail overall wraps
+        around to the very first (live design follow-up, 2026-09-08). Left at
+        the grid's OWN first thumbnail (row 0, col 0) instead exits UP to the
+        color row rather than wrapping — explicit live design call, confirmed
+        again on the same follow-up: "wrapping it up to go to the last item...
+        it can be argued that it makes going back up harder to find," so Left
+        stays a second, more-discoverable way out at that one position, while
+        Right still gets the full wrap. Up at row 0 (any column) also exits to
+        the color row. Enter/Space = left-click (remove from tag);
+        Shift+Enter/Shift+Space OR Alt+Enter/Alt+Space = right-click (open
+        book detail) — Shift mirrors the Speed/Sleep/Sprint Shift-modifier
+        convention for "the other click" established earlier this branch;
+        Alt is ADDITIONALLY supported because Library already uses Alt+Enter
+        for its own "open detail" action (live design call, 2026-09-08).
+        As of 2026-09-10 this is no longer Tags-only: Library gained a
+        matching Shift+Enter and Speed/Sleep/Sprint gained Alt+Enter, so
+        both modifiers are now accepted as synonyms everywhere either one
+        previously existed alone — see _handle_flat_panel_arrows in
+        app.py and library.py's _list_key."""
+        key = event.key()
+        modifiers = event.modifiers()
+        other_click = bool(
+            modifiers & Qt.KeyboardModifier.ShiftModifier
+            or modifiers & Qt.KeyboardModifier.AltModifier
+        )
+        rows_count, cols = self._book_grid.kbdnav_grid_shape()
+        if rows_count == 0:
+            return False
+        pos = self._book_grid.kbdnav_pos()
+        if pos is None:
+            self._book_grid.set_kbdnav_pos((0, 0))
+            return True
+        row, col = pos
+
+        if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space):
+            path = self._book_grid.kbdnav_current_path()
+            if path:
+                if other_click:
+                    self.detail_requested.emit(path)  # right-click equivalent
+                else:
+                    # left-click equivalent — routed through _TagBookGrid's own
+                    # _on_remove (NOT _on_grid_remove directly), same path a real
+                    # mouse click takes via _TagBookThumb.mousePressEvent's
+                    # remove_requested signal. _on_remove is what keeps the
+                    # grid's own self._books/_rebuild() in sync with the removal
+                    # — calling _on_grid_remove (parent_remove) alone, as an
+                    # earlier version of this did, updated the DB and the book-
+                    # count label but left the grid showing the stale (pre-
+                    # removal) thumbnails until the next full _open_tag. Found
+                    # live 2026-09-08 from a screenshot: label said "2 books",
+                    # grid still showed 3 thumbnails.
+                    self._book_grid._on_remove(path)
+            return True
+
+        def _row_len(r: int) -> int:
+            return self._book_grid.kbdnav_row_length(r)
+
+        if key == Qt.Key.Key_Right:
+            if col + 1 < _row_len(row):
+                self._book_grid.set_kbdnav_pos((row, col + 1))
+            elif row + 1 < rows_count:
+                self._book_grid.set_kbdnav_pos((row + 1, 0))
+            else:
+                self._book_grid.set_kbdnav_pos((0, 0))  # last overall -> wrap to first
+            return True
+        if key == Qt.Key.Key_Left:
+            if col > 0:
+                self._book_grid.set_kbdnav_pos((row, col - 1))
+            elif row > 0:
+                self._book_grid.set_kbdnav_pos((row - 1, _row_len(row - 1) - 1))
+            else:
+                self._enter_color_row_from_thumbnails()
+            return True
+        if key == Qt.Key.Key_Down:
+            # Wraps to row 0 at the last row (live design follow-up,
+            # 2026-09-08) — mirrors Right-wraps-to-the-first-thumbnail rather
+            # than exiting the grid, since Down/Up already have their own
+            # dedicated exit (row 0's Up) distinct from this axis.
+            next_row = row + 1 if row + 1 < rows_count else 0
+            target_col = min(col, _row_len(next_row) - 1)
+            self._book_grid.set_kbdnav_pos((next_row, target_col))
+            return True
+        if key == Qt.Key.Key_Up:
+            if row > 0:
+                target_col = min(col, _row_len(row - 1) - 1)
+                self._book_grid.set_kbdnav_pos((row - 1, target_col))
+            else:
+                self._enter_color_row_from_thumbnails()
+            return True
+        return False
+
+    def _enter_color_row_from_thumbnails(self) -> None:
+        """Leaves the thumbnail grid upward into the color row — opening the
+        picker first if it wasn't already showing (Left/Up from the grid are
+        the KEYBOARD's own way of reaching the colors, distinct from the
+        mouse's click-the-dot toggle, so they must make the row visible
+        themselves rather than requiring it to already be open)."""
+        self._book_grid.set_kbdnav_pos(None)
+        self._book_grid.clearFocus()
+        if self._reserved_layout.currentWidget() is not self._color_picker_row:
+            if not self._confirming_delete:
+                self._show_reserved("picker")
+        self._set_color_kbdnav(0)
 
     def _build_tag_row(self, tag_data: dict) -> QWidget:
         row = QWidget()
@@ -625,6 +1411,7 @@ class TagManagerWidget(QWidget):
         layout.addWidget(badge)
 
         tag = tag_data['tag']
+        row.setProperty("tag_name", tag)  # read back by _handle_tag_list_keys' Enter/Space
         row.mousePressEvent = lambda e: self._open_tag(tag) if e.button() == Qt.MouseButton.LeftButton else None
         return row
 
@@ -714,6 +1501,26 @@ class TagManagerWidget(QWidget):
         self._list_widget.hide()
         self._panel_widget.show()
         QApplication.instance().installEventFilter(self)
+        # Keyboard-nav entry point (2026-09-08): the thumbnail grid, not the top
+        # row — explicit live design call ("I am considering that we start with
+        # the thumbnails... more practical", since thumbnails receive the most
+        # interaction and a top-row-first entry would cost 2-3 presses to reach
+        # them every time). No stale cursor survives a re-open of a (possibly
+        # different) tag.
+        self._book_grid.set_kbdnav_pos(None)
+        # _clear_color_kbdnav(), not a bare `= None` — the bare form (this
+        # line's own shape until 2026-09-08) left whatever _DotFocusRing was
+        # showing from a PRIOR session still visible, since only
+        # _clear_color_kbdnav actually calls ring.hide() on it. The dot ring
+        # widgets are built once in _build_ui and never recreated (unlike the
+        # thumbnail grid's rings, which are fresh every _rebuild()), so a ring
+        # left shown here survives indefinitely — reported live as "closed the
+        # panel, changed the theme, came back and the ring from earlier is
+        # still lingering... did it again, a third one appeared" (each
+        # reopen's ring was a real widget, correctly positioned, just never
+        # told to hide).
+        self._clear_color_kbdnav()
+        self._book_grid.setFocus(Qt.FocusReason.OtherFocusReason)
 
     def _show_list(self):
         QApplication.instance().removeEventFilter(self)
@@ -721,6 +1528,14 @@ class TagManagerWidget(QWidget):
         self._list_widget.show()
         self._current_tag = None
         self.refresh()
+        # Without this, real Qt focus stays wherever it last was in the detail
+        # panel (e.g. _book_grid) — invisible since that widget is now hidden,
+        # but it means _tag_scroll never gets a KeyPress, so arrows silently do
+        # nothing until the user backs all the way out and the panel is
+        # reopened (whatever re-claims focus at that point). Backspace from the
+        # detail panel must leave the list exactly as ready for arrow nav as
+        # a fresh panel-open does.
+        self._tag_scroll.setFocus(Qt.FocusReason.OtherFocusReason)
 
     def _on_action_btn_hover(self, hover: bool):
         if self._confirming_delete or self._action_btn_mode not in ("delete", "save"):
@@ -749,23 +1564,44 @@ class TagManagerWidget(QWidget):
                 self._revert_tag_name()
                 self._tag_name_edit.clearFocus()
                 return True
+            if event.key() == Qt.Key.Key_Down and self._panel_widget.isVisible():
+                # Down from the name field cancels any unsaved edit and returns
+                # to the color row — explicit live design call, 2026-09-08:
+                # "Down arrow from the name should cancel it and go back to
+                # colors" — "the user haven't hit Enter to save them, so going
+                # out means discard is the intention." Same discard as Escape
+                # (_revert_tag_name), but landing in the color row rather than
+                # the thumbnail grid, mirroring how Up from the color row is
+                # what reaches the name field in the first place. Reuses
+                # _enter_color_row_from_thumbnails (its name is a slight
+                # misnomer now — it's really "enter the color row from
+                # wherever", already correctly guarded against
+                # _confirming_delete) rather than duplicating the same
+                # picker-opening logic a second time.
+                self._revert_tag_name()
+                self._tag_name_edit.clearFocus()
+                self._enter_color_row_from_thumbnails()
+                return True
 
-        if obj is self._tag_scroll and event.type() == QEvent.Type.KeyPress:
-            if event.key() in (Qt.Key.Key_Up, Qt.Key.Key_Down):
-                # Correction only, same shape as Library/Stats' wheel fix (2026-08-12/13) —
-                # let native singleStep-based scrolling run first (unchanged amount), then
-                # round the RESULT to the nearest row boundary one event-loop tick later,
-                # since the corrected value isn't available yet inside this filter call.
-                bar = self._tag_scroll.verticalScrollBar()
+        # Tag-LIST keyboard cursor (added 2026-09-08) — replaces the old scroll-only
+        # stub that used to live here (native singleStep scrolling with no real
+        # selection). Scoped to the list view being visible: the tag-detail
+        # sub-panel's own, separate set of interactions (back/edit/delete/color
+        # picker/thumbnails) is a SEPARATE handler, below.
+        if (obj is self._tag_scroll and event.type() == QEvent.Type.KeyPress
+                and self._list_widget.isVisible()):
+            if self._handle_tag_list_keys(event):
+                return True
 
-                def _snap_after_native_scroll(bar=bar):
-                    v = bar.value()
-                    snapped = round(v / _TAG_ROW_PITCH) * _TAG_ROW_PITCH
-                    snapped = max(bar.minimum(), min(bar.maximum(), snapped))
-                    if snapped != v:
-                        bar.setValue(snapped)
-
-                QTimer.singleShot(0, _snap_after_native_scroll)
+        # Tag-DETAIL keyboard nav (added 2026-09-08). Scoped to the detail
+        # sub-panel being visible, checked on every KeyPress in the panel
+        # regardless of `obj` — Backspace/Esc/Delete/Tab are meant to work from
+        # ANYWHERE in the panel (explicit design call: "Delete... Global. Delete
+        # button will not have focus."), not just from one specific focused
+        # widget, so this can't be gated the same way the list's own handler is.
+        if event.type() == QEvent.Type.KeyPress and self._panel_widget.isVisible():
+            if self._handle_tag_detail_keys(event):
+                return True
 
         if event.type() == QEvent.Type.MouseButtonPress:
             from PySide6.QtCore import QRect
@@ -804,6 +1640,13 @@ class TagManagerWidget(QWidget):
             return
         new_name = self._tag_name_edit.text().strip().lower()
         if new_name == self._current_tag:
+            # Enter with nothing actually changed — live design call, 2026-09-08:
+            # this used to be a silent no-op (Enter appeared to do nothing at
+            # all), which read as broken. Since there's nothing to save, Enter
+            # here means the same thing leaving the field any other way means:
+            # exit edit mode, same as Escape (_revert_tag_name is a no-op too
+            # in this exact case, since the text already matches the original).
+            self._tag_name_edit.clearFocus()
             return
         if not new_name:
             return
@@ -942,6 +1785,24 @@ class TagManagerWidget(QWidget):
         )
         if hasattr(self, '_book_grid'):
             self._book_grid.set_placeholder_color(self._placeholder_color_tags)
+        # Keyboard-cursor focus ring color (2026-09-08 follow-up) — was
+        # hardcoded white, which reads poorly against light-background themes
+        # (live report); briefly fell back to accent, then switched to
+        # accent_light after a live "not sharp/needs to be lighter" report —
+        # matches focus_folder_list_dot's own convention for a similarly
+        # thin/small focus affordance.
+        kbdnav_ring_color = resolved.get('tags_kbdnav_ring', resolved.get('accent_light', '#ffffff'))
+        if hasattr(self, '_book_grid'):
+            self._book_grid.set_kbdnav_color(kbdnav_ring_color)
+        if hasattr(self, '_color_kbdnav_index') and self._color_kbdnav_index is not None:
+            _, color_key, ring = self._color_picker_dots[self._color_kbdnav_index]
+            # Colored dots' rings match their OWN dot color (see
+            # _set_color_kbdnav) — only the neutral dot's ring is
+            # theme-derived, so only re-apply the theme color there. A
+            # theme change never changes what color a coral/mint/etc. dot
+            # IS, so there's nothing to re-derive for those.
+            if color_key is None:
+                ring.set_color(kbdnav_ring_color)
 
     def _on_grid_remove(self, path: str):
         if self._confirming_delete:

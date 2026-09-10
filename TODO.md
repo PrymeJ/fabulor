@@ -9,6 +9,257 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
 
 ## Summary index
 
+### Hover-pickup keyboard navigation for Settings/Speed/Sleep/Sprint — paused, intermittent regression
+- [2026-09-08] Goal: extend Tags' "pick up keyboard nav from wherever the mouse is hovering"
+  principle to the traveling-focus-marker panels (Settings' arrow-nav tabs, Speed, Sleep,
+  Sprint) — user-requested consolidation of the app's two "where am I" mechanisms. Two
+  implementation attempts, both abandoned after live regressions; approach is currently
+  reverted entirely, not merged, not started fresh.
+  - **Attempt 1** (all four panels at once): redirected focus to a `_widget_at_cursor` hit-test
+    result whenever `_handle_settings_arrows`/`_handle_flat_panel_arrows` found focus wasn't a
+    recognized row member, gated by the marker's own `_kbdnav_cursor_anchor`/
+    `_KBDNAV_CURSOR_JITTER_PX` "has the mouse moved since keyboard took over" check (same
+    anchor `_on_kbdnav_cursor_poll` already uses for the opposite hand-back direction). Also
+    stamped a fresh anchor in `PanelManager._claim_panel_focus` on panel-open, since
+    `OtherFocusReason` is a deliberate no-op for the modality flag. **Regression**: mouse hover
+    (the `:hover` QSS) disappeared across the whole panel, and on Settings' Themes tab
+    specifically the swatch grid's own separate keyboard-hover state
+    (`ThemeManager._set_kbdnav_swatch_hover`/`_kbdnav_swatch_pos`) got corrupted — two swatches
+    simultaneously showing the highlight. Root cause (found by code inspection, not
+    re-reproduced against attempt 1's exact code): `_hover_pickup_target` was refreshing
+    `_kbdnav_cursor_anchor` to the CURRENT mouse position on every successful pickup, but
+    `_on_kbdnav_cursor_poll`'s hand-back check depends on that anchor staying FIXED at wherever
+    the mouse was when keyboard mode first activated (`_set_keyboard_nav_active`'s own
+    `if active == current: return` guard deliberately never re-stamps it on repeat `True` calls
+    — see that method's own comment on why). Continuously sliding the anchor made "has the
+    mouse moved" permanently read false, so `kbdnav` stayed stuck `true` and the
+    `[kbdnav="true"] QPushButton:hover`-suppression rule (and the equivalent Settings
+    `#pattern_button` rule) suppressed hover indefinitely. The swatch-grid corruption is a
+    SEPARATE issue on top of that — `.setFocus()` was called directly on `swatch_box` without
+    going through its own internal cursor-position state machine at all.
+  - **Attempt 2** (Speed-only pilot, with `[HOVER-PICKUP-TRACE]` logging at every decision
+    point, specifically to re-derive the mechanism after reverting attempt 1): removed the
+    anchor-write entirely (`_hover_pickup_target` now only READS the anchor, matching what the
+    poll does) and scoped the actual pickup logic to `panel_key == "speed"` only, touching
+    nothing on Settings/Sleep/Sprint's own code paths. Live trace confirmed `kbdnav` correctly
+    transitioning `True`→`False` on hand-back, with a property READBACK immediately after
+    `setProperty`/`unpolish`/`polish` confirming the QSS attribute itself was genuinely
+    `'false'` at that moment — yet the user still reported hover broken afterward, including on
+    Settings' plain `#pattern_button`s (which this attempt's code never touches at all) and
+    Speed/Sleep/Sprint's ramp grids, while non-`kbdnav`-gated controls (Add/Rescan, the
+    Excluded Books eye icon, Theme swatches, the pool's Add/Remove/Change buttons) kept working
+    throughout. An A/B test was attempted (stash the pilot's diff, restart, retest three times
+    against the "clean" committed state through `1fa0746`; unstash, restart, retest) and every
+    stashed-state run passed — **but this does NOT actually confirm the pilot code is the
+    cause, and should not be read as having done so.** The bug is intermittent even WITH the
+    pilot code present (the user's own account: "earlier... I couldn't reproduce it on the next
+    start. Then when I wasn't expecting it, it failed"), so a handful of clean passes on the
+    stashed side is exactly as weak a signal as the clean passes seen on the buggy side — three
+    successes prove "didn't fail this time," not "can't fail." Whether `1fa0746` itself is
+    genuinely bug-free was never independently established; it was only assumed to be, because
+    it predates this session's hover-pickup work. This is the reason the attempt was paused
+    rather than continued: an intermittent race (most likely something timing-dependent around
+    the 60ms `_kbdnav_cursor_poll` tick, `_KBDNAV_CURSOR_POLL_MS`, racing against a keypress or
+    a focus-change event) is a poor candidate for further blind code-reading regardless of which
+    side of the diff it lives on — it needs either a tighter, reliable repro, or a soak/stress
+    test that exercises the arrow-nav + poll interaction far more times than manual testing can,
+    before the next attempt can trust any "it works now" result.
+  - **Not yet tried / worth considering for a future attempt**: (a) a redesign that never calls
+    `.setFocus()` speculatively during pickup-eligibility CHECKING and only commits the focus
+    change once fully validated, to shrink whatever window the race lives in; (b) instrumenting
+    `_on_kbdnav_cursor_poll` itself (not just `_set_keyboard_nav_active`) with the same
+    property-readback-after-repolish trace, since the poll is what actually decides to call
+    `_set_keyboard_nav_active(False)` and hasn't been traced as closely as the setter has; (c)
+    checking whether the swatch-grid corruption from attempt 1 was really fully explained by
+    the anchor-write bug, or whether it points at a second, independent issue worth isolating
+    on its own before folding Themes back into any future attempt at this feature.
+  - Current state: fully reverted, nothing merged, `app.py` back to `1fa0746`. Tags' own
+    hover-pickup (`ScrollHoverTracker`) is unaffected and unrelated — this item is purely about
+    extending the same principle to the other four panels. **Open, unresolved question this
+    entry deliberately does NOT claim to answer**: whether `1fa0746` itself (the pre-hover-pickup
+    baseline this branch currently sits at) can independently exhibit this same intermittent
+    hover-suppression symptom on its own, unrelated to anything in this feature attempt — it was
+    never stress-tested for that, only run a handful of times without failing, which the rest of
+    this entry's own reasoning says is not strong evidence either way.
+  - **2026-09-08 Session 4 update — a THIRD, different mechanism was independently built for
+    Stats' Day/Week/Month row lists and shipped working, live-confirmed.** Not a resumption of
+    attempts 1-2 above (different panel, different code path), but directly relevant: both prior
+    attempts here used an ANCHOR-REFRESH design (`_hover_pickup_target` re-stamping
+    `_kbdnav_cursor_anchor` on every pickup) and both broke hover suppression in ways never fully
+    root-caused. Session 4's Stats fix used a POLL-based design instead — a dedicated `QTimer`
+    (`StatsRowListView._kbdnav_hover_poll`, `_STATS_KBDNAV_HOVER_POLL_MS`/
+    `_STATS_KBDNAV_HOVER_JITTER_PX`, matching `_KBDNAV_CURSOR_POLL_MS`/`_KBDNAV_CURSOR_JITTER_PX`
+    exactly) that independently samples `QCursor.pos()` on its own clock and hands hover back to
+    the mouse only once it's moved past jitter tolerance AND is resting over a genuinely
+    different, real target — never touching or re-stamping the anchor mid-flight, and never
+    reacting to any Qt hover SIGNAL while keyboard mode is active (both `entered` and the
+    blur-grab's `showEvent`/`leaveEvent` echoes are silenced outright, deferring entirely to the
+    poll). This is closer in spirit to `_on_kbdnav_cursor_poll` itself than either prior attempt
+    here was, despite this item's own goal being exactly "extend the marker's own mechanism to
+    more panels." **If this item is picked up again, start from Session 4's Stats mechanism
+    (`ui/stats_panel.py`, `StatsRowListView.__init__`'s design-note comment block has the full
+    writeup) as the reference design, not attempt 1 or attempt 2's anchor-refresh shape** — see
+    SESSION.md 2026-09-08 Session 4 for the full trace of why the anchor-refresh shape kept
+    failing and what specifically the poll design does differently.
+  - **2026-09-08 Session 4 (reported same conversation, not yet started): Library has the
+    identical root bug** — "Library doesn't get it correctly either. Pagination makes it jump to
+    the mouse." Named by Pryme as the next instance of this same principle, explicitly scoped as a
+    follow-on to this TODO item, not started. Library's `_on_keyboard_nav_moved`/
+    `_flash_keyboard_selection[_list]` (`ui/library.py`) currently has NO poll/anchor arbitration
+    at all — mouse `entered` (`_on_view_entered`) unconditionally wins the instant it fires,
+    including a synthetic re-evaluation from the keyboard's own `scrollTo()` call, the exact same
+    mechanism class Stats' Session 4 fix addressed. Likely the most direct next target for the
+    poll-based design above.
+  - **Pryme's own framing of the underlying principle, stated directly (2026-09-08 Session 4),
+    worth keeping verbatim for whichever session picks this back up**: "Make the keys pickup from
+    where the mouse is, and make the keys win unless the mouse hovered over something else. This
+    principle should be observed throughout the app with a holistic approach."
+
+### Settings keyboard-focus regressions found while testing Tags (check after Tags is done)
+- [2026-09-08] Excluded Books focus strand — FIXED. Un-excluding the LAST remaining book drops
+  `ExcludedBooksPopup.book_count` to 0, and `reposition()` hides the popup entirely in that case.
+  If the popup itself held real Qt focus (the normal case — Enter/Space on its own focused row
+  triggered the restore), `hide()` stranded focus on the now-hidden widget with nothing to
+  reclaim it, permanently blocking global shortcuts (`_focus_allows_global_shortcuts()` reads
+  "a panel-local widget still owns this key") until a mouse click reset focus elsewhere. Fixed
+  in `_on_excluded_book_restored` (app.py) by redirecting to the same target
+  `_on_excluded_books_exit_upward` already uses on a normal Up-out-of-the-popup exit (Persist
+  search filter's row) whenever the popup held focus and reposition() just hid it.
+- [2026-09-08] Library scan focus strand — NOT YET ROOT-CAUSED, intermittent, diagnostic tracing
+  added. Reported live: Rescan clicked, Esc closes Settings WHILE the scan is still running,
+  then Space/arrow keys are no-ops on the main window. Neither side could reproduce this on
+  demand in the same session it was reported (worked cleanly on retries), so this was NOT fixed
+  blind. Investigated so far: confirmed directly (small standalone Qt script) that disabling a
+  currently-focused `QPushButton` does NOT drop focus to `None` — Qt silently moves it to a
+  focusable SIBLING instead — which is what `_set_scan_buttons_enabled(False)` does to
+  `add_folder_btn`/`remove_folder_btn`/`refresh_library_btn` while a scan runs; a synthetic
+  repro of "disable the focused button (or all three), then hide+release the panel, then
+  re-enable them once the scan finishes" behaved correctly in isolation (focus dropped to None
+  and stayed there) both times, so the real bug needs either the actual scanner thread's timing
+  or some other live-only factor a synchronous script doesn't capture. `_focus_allows_global_
+  shortcuts()` (app.py) now carries a narrow, permanent-until-removed `[FOCUS-STRAND-TRACE]`
+  log gated specifically on "no panel is open AND focus is still panel-local" (the exact bug
+  signature — a panel-local focus while a panel IS genuinely open is normal and would drown
+  this in noise otherwise), logging the blocking widget's identity/visibility/enabled state,
+  its full parent chain, and whether the scanner is still running at that moment. Purely
+  diagnostic, no behavior change (`allowed`'s value and effect are untouched) — waiting for it
+  to actually fire the next time this reproduces, rather than continuing to guess blind.
+- [2026-09-08] Speed/Sleep/Sprint "ramp-up" buttons' highlight not clearing — FIXED. Root cause:
+  each panel's per-instance ramp stylesheet (`_apply_preset_ramp_colors`) had a bare, unscoped
+  `QPushButton:focus` rule for the keyboard-cursor highlight. These buttons keep REAL Qt focus by
+  design even after the traveling marker itself stops being drawn (its own idle self-fade, or an
+  instant `clear()` when the mouse takes over — see `_set_keyboard_nav_active`/
+  `_update_focus_marker` in app.py), so the bare `:focus` rule kept matching and the highlight
+  stayed lit indefinitely. Fixed by scoping the rule to `[kbdnav="true"]` (same ancestor-scoped
+  pattern the adjacent `:hover`/`:focus:hover` suppression rules already used) in all three
+  panels — the highlight now disappears the instant `[kbdnav]` flips false, same timing as
+  `clear()`.
+
+
+### Diacritic-insensitive library search
+- [2026-09-08] Raised live: an author like Meša Selimović can't be searched by typing "mesa" (no
+  š on the keyboard) — currently the only workaround is searching a substring that avoids the
+  accented letter entirely (e.g. "selim"). Standard fix is Unicode NFKD normalization + stripping
+  combining marks (`unicodedata.normalize('NFKD', s)` then drop `unicodedata.combining(c)`
+  characters) applied to both the query and the searchable fields at filter time, alongside the
+  existing case-fold — no library, no hand-maintained substitution list, covers essentially every
+  Latin-script diacritic (š→s, ć/č→c, ö→o, etc.) via Python's stdlib alone. Would apply in
+  `LibraryPanel._apply_filter_and_sort`. Does NOT help non-Latin scripts (Cyrillic, Greek, CJK) —
+  out of scope, those aren't diacritic variants of Latin letters. Explicitly deferred until after
+  this branch (`feature/traveling-focus-marker`) merges to main — not started.
+
+### Keyboard navigation — remaining surfaces
+Branch `feature/traveling-focus-marker` (not merged). The whole Settings panel (Themes, Look,
+Controls, Audio, Library) plus Speed, Sleep, and Sprint are all arrow-navigable as of
+2026-09-07 Session 1. `disable_sleep_btn`'s and `disable_sprint_btn`'s missing-hover gaps (an
+ID selector outranks the generic `QPushButton:hover`, same root cause as `reset_audio_btn`'s
+original gap) were both closed this pass, since keyboard navigation made them directly
+relevant — no longer an open item.
+
+### Tab-bar mouse/keyboard hover mutual-exclusion — Stats missing it, Settings incomplete (folded into the app-wide hover-pickup consolidation)
+- [2026-09-09] Live-reported: "The tab row of Settings have the mouse and the keyboard cancel
+  the highlight of each other. Stats doesn't have that, and two highlights coexist at the same
+  time." Confirmed as a genuine QSS gap: Settings' `get_settings_stylesheet` has TWO
+  hover-suppression rules — `[kbdnav="true"][kbdnav_style="traveling"] QTabBar::tab:hover:
+  !selected {...}` and `[kbdnav="true"][kbdnav_tab_focused="true"] QTabBar::tab:hover:!selected
+  {...}` — both repainting a hovered-but-not-selected tab back to its resting look the instant
+  the tab bar genuinely holds keyboard focus, added in `8eedb00`. `get_stats_stylesheet` only
+  ever received that rule's SIBLING — the `::tab:selected` fill paint — when `71b389f`
+  ("generalize tab-bar kbdnav to Stats") ported the fill-highlight mechanism; the accompanying
+  `::tab:hover:!selected` suppression rule was never copied over, under either marker style.
+  Not a deliberate scope decision on record anywhere — reads as an incomplete port.
+
+  **[2026-09-10] Attempted, reverted — this is NOT the "likely mechanical" fix it looked like.**
+  Porting the two missing rules verbatim (byte-identical shape to Settings', just `#stats_panel`
+  instead of `#settings_panel`) DID close the original coexistence gap — but introduced a worse,
+  different bug: mouse hover on Stats' tab bar stopped repainting entirely after any keyboard
+  navigation touched the tab bar, staying stuck (no highlight on hovering a different tab) until
+  an actual click. Isolated properly, not guessed: a live `[STATS-HOVER-TRACE]` logger confirmed
+  the `kbdnav`/`kbdnav_tab_focused` properties DO correctly flip back and the tab bar DOES get
+  `unpolish`/`polish`/`update()`'d at the right moment (ruling out the already-known "tab bar
+  needs its own repolish" gotcha this file documents — that mechanism was checked and is
+  correctly firing). Tested each of the two new rules ALONE (traveling-style rule alone under
+  traveling marker style; fill_highlight rule alone under fill_highlight style, switched live to
+  actually exercise it) — BOTH independently reproduce the stuck-hover bug, so it isn't the
+  rule *count* or a conflict between the two; it's something about adding this selector SHAPE
+  (`[kbdnav="true"][...] QTabBar::tab:hover:!selected`) to Stats' stylesheet at all. No mechanism
+  confirmed — every plausible explanation checked (event filter differences, tab-bar construction
+  differences, QSS cascade/specificity, source order) came back identical between Settings and
+  Stats, which is itself the puzzle: the two panels run byte-identical code paths and still
+  behave differently. Both rules fully reverted; `app.py` and `themes.py` confirmed back to their
+  pre-attempt committed state (`git diff --stat` clean on `app.py`, only the pre-existing
+  unrelated theme-tuning diff on `themes.py`). Left as an open, harder-than-expected bug — next
+  attempt should NOT copy Settings' rule shape verbatim; needs either a different suppression
+  mechanism (e.g. a plain dynamic property written by app code instead of relying on native
+  `:hover` re-evaluation, the same class of fix this file already used once for the Themes swatch
+  grid's `WA_UnderMouse` unreliability) or a live Qt-internals trace beyond what a property/repaint
+  logger can show (e.g. instrumenting `QTabBar`'s own `mouseMoveEvent`/hit-test to see whether it's
+  even being CALLED after the repolish, not just whether the repolish itself ran).
+
+  **[2026-09-10] Rescoped — folded into the app-wide hover-pickup/most-recent-input-wins
+  consolidation, not a standalone fix.** Pryme's own call after the reverted attempt above: "it
+  makes more sense it is fixed with the one consolidated hover principle which we should have
+  throughout the app. Even when there is one highlight in the Settings tab, it doesn't continue
+  from where the mouse is if the mouse was the most recent input." This names a SECOND,
+  reverse-direction gap in the same paused plan already tracked for this branch (the
+  "keys pick up from where the mouse is" work, deferred since the session that closed out the
+  confirmation-dialog keyboard-consistency pass) — that plan only covers keys picking up from a
+  stationary mouse; it does not yet cover the mouse fully reclaiming hover ownership once it's
+  genuinely the most recent input again, which is the actual shape of both this tab-bar bug and
+  the gap Pryme just pointed out on Settings' own tab bar. See the plan file itself
+  (`snuggly-growing-stardust.md`, "Scope note added 2026-09-10") for the fuller framing. Do NOT
+  attempt another standalone QSS patch for Stats' tab bar specifically — build the one shared
+  mechanism first, covering both directions, then this closes as a side effect rather than its
+  own fix.
+
+### Three more keyboard-nav consistency gaps, found by Pryme's own live testing (not yet investigated)
+- [2026-09-09] All three reported together, none investigated yet — grouped here rather than as
+  separate entries since they were all found in the same pass and are all small, self-contained
+  gaps rather than one shared root cause:
+  - **Settings' Themes-tab interval options have no Tab-focus indicator.** "Tab in Settings
+    doesn't underline the interval options. Enter selects them, but they are never indicated" —
+    i.e. Tab can reach and Enter can activate an interval option, but nothing shows the user
+    which one currently has keyboard focus while tabbing through them (no underline, no
+    highlight, no marker). Likely the interval row's own QLabel-based buttons never got the same
+    `kbdnav_hover`/focus-indicator treatment other Themes-tab controls have — see this file's own
+    `swatch_box`/interval-row history further up in this list, and the "text-decoration:
+    underline does NOT render on QLabel via QSS" gotcha already documented in CLAUDE.md
+    (2026-09-06 Session 2) as the likely reason a naive underline-based indicator wouldn't work
+    here either, if that's what's attempted.
+  - **Speed panel's Tab order is wrong.** "Tab skips Default speed after grid. Goes there after
+    Smart rewind. Order needs to be fixed here." — the Default-speed row is being reached later in
+    the Tab sequence (after Smart Rewind) than its visual position (right after the preset grid)
+    would suggest, so Tab-cycling through Speed doesn't match reading order. Likely a
+    `flat_panel_rows`/construction-order mismatch, the same general class of "Qt's native order
+    diverges from the visual model" issue already flagged twice elsewhere in this same section —
+    worth checking whether this is literally the same underlying defect surfacing a third time,
+    or a separate, unrelated row-ordering bug specific to how Speed's rows list was built.
+  - **Tags panel: Tab is a no-op on the tag list.** Explicitly flagged by Pryme as low priority —
+    "Could be added, but not a big deal." The tag list (list-view mode, before drilling into a
+    specific tag's detail) currently has no Tab-driven keyboard entry point at all; Up/Down
+    already work there via `ScrollHoverTracker`'s hover-pickup mechanism once some other input
+    has given the list focus, but Tab itself does nothing. Deferred — no urgency signaled.
+
 ### Listening Sprint backward-seek compensation doesn't net forward+backward excursions
 - [2026-08-11] The pure tick-to-tick `_last_known_pos` diff in `SprintPanel.update_sprint_state`
   can't tell a genuine rewind from "seeked forward then came back" — seeking forward 20 minutes then
@@ -507,7 +758,8 @@ correctly — the contrast is what made these visible, so they are not regressio
 
   **Original design notes, kept for reference:** smaller than it first looks, because the opacity
   machinery already exists. **What was already there** (found 2026-07-28 after the user pointed at
-  `settings_tab_hover_opacity`): `panel_opacity_hover` is a per-theme float (0.88-0.95 across the
+  `tab_hover_opacity`, renamed 2026-09-09 from `settings_tab_hover_opacity`): `panel_opacity_hover`
+  is a per-theme float (0.88-0.95 across the
   theme set, every theme sets one) and the panel background is ALREADY painted as
   `rgba(bg_main, panel_opacity_hover)` — `themes.py:3458` in `get_settings_stylesheet`, with a
   second consumer around `:3724`. So the three states are mostly a matter of choosing the alpha and
