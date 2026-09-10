@@ -9,7 +9,7 @@ from PySide6.QtCore import Qt, Signal, QTimer, QThreadPool, QSize, QByteArray, Q
 from PySide6.QtGui import QPixmap, QImage, QColor, QIcon, QPainter
 from PySide6.QtSvg import QSvgRenderer
 from .cover_loader import CoverLoaderWorker, to_grayscale
-from .library import _cover_cache
+from .library import _cover_cache, _fold_diacritics
 from .icon_utils import render_logo_placeholder_bordered as _render_svg_placeholder_bordered
 from .text_context_menu import ContextIconMenu
 from .line_edit_dragfix import DragSafeLineEdit
@@ -911,7 +911,11 @@ class TagManagerWidget(QWidget):
             if item.widget():
                 item.widget().deleteLater()
 
-        tags = self.db.get_all_tags()
+        # SQL's ORDER BY (db.get_all_tags) sorts by raw byte/codepoint order, which puts an
+        # accented tag after every plain-ASCII one — re-sorted here in Python the same way
+        # the library sorts author/title (see library.py's sort_key), since tags are always
+        # lowercase already (db.add_book_tag lowercases on write).
+        tags = sorted(self.db.get_all_tags(), key=lambda t: _fold_diacritics(t['tag']))
         for tag_data in tags:
             row = self._build_tag_row(tag_data)
             self._tag_list_layout.insertWidget(
