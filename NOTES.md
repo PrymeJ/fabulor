@@ -1,3 +1,126 @@
+## 2026-09-10 — Sleep/Sprint Disable-Cancel button blink: root cause fully traced, three fix attempts, all reverted — mechanism understood, no fix shipped
+
+**Symptom, reported live and slowed down for review:** clicking Sleep's "Disable the sleep timer"
+or Sprint's "Cancel the sprint" button — canceling the active timer/sprint via that button
+specifically, not any other path — makes the button visibly blink before it disappears: highlight
+(hover) → dark (pressed) → highlight again → gone. At normal speed it reads as "blinking twice."
+Confirmed NOT a blur artifact by the reporter before investigation started: reproduces identically
+with the transport-bar blur setting on Transparent (no blur at all), ruling out the
+`_grab_and_blur` hide/show class of bug this file documents elsewhere.
+
+**First two theories, both plausible-sounding, both wrong, both caught by asking rather than
+assuming.** Initial instinct was "disable the button so the extra repaint can't happen" — tried at
+two different timings before checking either against reality:
+
+1. **Disable on `pressed` (i.e. the moment the mouse goes down).** Reasoning: skip the
+   post-release repaint by getting the button disabled before release ever resolves. Shipped,
+   tested live, reported back: "Visually they are stuck pressed. And they are no-op." Verified the
+   mechanism directly afterward (not just accepted the report) via a synthetic
+   `QTest.mouseClick` + `clicked.connect` check: `QAbstractButton::mouseReleaseEvent` gates
+   emitting `clicked()` on the button still being `isEnabled()` at release time. Disabling any
+   earlier than that silently kills `clicked()` — the cancel action never runs, the button never
+   hides, and it's stuck showing whatever visual state it had at the moment of disable.
+
+2. **Disable inside the `clicked` slot itself** (`disable_sprint()`/`disable_sleep_timer()`,
+   right at the top, before any other work). Reasoning, drawn from this file's own documented
+   rule ("DO NOT try to fix a visible flash by reordering an `emit()`/`.show()` pair within the
+   same call stack" — Qt doesn't paint between two synchronous statements): if `clicked()` fires
+   synchronously as part of release handling, disabling here might land before the native repaint.
+   Explicitly flagged in the commit comment at the time as "NEEDS LIVE VERIFICATION... a synthetic
+   Qt paint-event probe for this gave no reliable signal either way" — i.e. shipped honestly
+   labeled as unverified, not as a confident claim. Live result: "Same as what I have seen before.
+   Highlght, dark, highlight, disappear." Confirmed wrong, not just insufficient.
+
+**Root cause, actually traced, not theorized — a temporary `[SPRINT-BTN-FLASH]` diagnostic
+logger was added** (paintEvent state dump + mousePress/mouseRelease timestamps on
+`disable_sprint_btn`, `logger.warning` since this app's logging is file-sink-only with no stdout —
+see `logger_setup.py`) and the user reproduced one click live while it ran. Reading the actual
+timestamps settled it:
+
+```
+mousePress   t=52015.5614
+paint  isDown=True                       t=52015.5662   (pressed/dark — correct)
+mouseRelease t=52015.6180
+paint  isDown=False enabled=True         t=52015.6283   <- THE FLASH FRAME
+disable_sprint() ENTRY                   t=52015.6286   <- 0.3ms too late
+pre-hide / post-hide                     t=52015.7107 / .7112
+```
+
+Qt's own `QAbstractButton::mouseReleaseEvent` repaints the button back to its enabled/hover-visible
+state as part of turning off its internal `isDown()` flag — and only AFTER that repaint does it
+emit `clicked()`. This is a real, separate paint event inside Qt's own release handling, not
+something `disable_sprint()`/`disable_sleep_timer()` can preempt no matter how early inside the
+slot the disable runs — by the time `clicked()` reaches Python code at all, the flash-causing
+repaint has already happened. Confirmed the ordering directly (not inferred from the log alone)
+with a second synthetic test: instrumenting `mouseReleaseEvent` itself showed `'release-start',
+'clicked', 'release-end'` — `clicked()` fires from INSIDE the base `mouseReleaseEvent` call,
+before it returns.
+
+**This closes off attempt 1 and attempt 2 as a matched pair, not independently retriable:**
+there is no point in the press→release→clicked() sequence where disabling the button both (a)
+happens before the flash-causing repaint and (b) happens after `isEnabled()` is last checked for
+`clicked()` to fire. Those two constraints sit on either side of the exact same instant.
+
+**Attempt 3 — a fade instead of a suppression.** Reasoning: if the frame can't be prevented,
+maybe it can be smoothed into invisibility instead. Replaced the direct `.hide()` in
+`disable_sprint()`/`disable_sleep_timer()` with a 180ms `QGraphicsOpacityEffect` +
+`QPropertyAnimation` fade-to-0-then-hide, same idiom as `ChapterList.fade_out`
+(`chapter_list.py`). Live result: "Worse. Blinks the same way, the focus goes to Reset all sprint
+data button after the Disable button is removed." Two things learned:
+- **The fade cannot help the reported symptom by construction** — it doesn't even start until
+  `disable_sprint()` runs, and the flash frame has already painted by then (same timing gap
+  attempt 2 hit). A fade only affects what happens AFTER it starts; it can't retroactively soften
+  a frame already on screen.
+- **A genuine new regression, distinct from the blink itself:** delaying `.hide()` by the fade's
+  180ms opened a window where BOTH `disable_sprint_btn` (still fading, still technically visible)
+  and `_reset_sprint_btn` (shown synchronously, immediately after the fade started —
+  `_reset_sprint_btn.show()` runs right after `_fade_out_disable_btn()` in the original code) were
+  visible at once. When `disable_sprint_btn` finally hid at the fade's end, Qt's documented
+  "`hide()` on a still-focused widget silently re-grants focus to whatever else is around" gotcha
+  (see CLAUDE.md's Keyboard focus ownership section, consequence 3) landed focus on
+  `_reset_sprint_btn`, which is now a real, visible, nearby candidate — a timing window that
+  never existed with the original synchronous `.hide()`, where both the hide and the sibling's
+  show happened effectively atomically in the same call stack.
+
+Reverted in full (`git checkout -- src/fabulor/ui/sprint_panel.py src/fabulor/ui/sleep_timer.py`)
+back to the exact pre-investigation committed state — confirmed via `git diff --stat` showing zero
+changes to either file.
+
+**Attempt 3b — a click-through opaque scrim, painting OVER the repaint instead of suppressing
+it.** Different mechanism entirely: a child `QLabel` (`Qt.WA_TransparentForMouseEvents`,
+`Qt.FocusPolicy.NoFocus`, so it never receives clicks/focus itself — press/release/clicked still
+reach the real button underneath unchanged, no focus-ownership risk this time), shown on
+`mousePressEvent`, sized to the button's rect, painted in the theme's live-resolved `accent_dark`
+with the button's own text centered on top, hidden the instant the real button hides (no delay —
+explicitly avoiding attempt 3's timing-window regression). This genuinely worked for the reported
+symptom: live-confirmed no flash. Needed one cosmetic follow-up round — first pass had wrong
+geometry, no border-radius, and no text (a plain colored rectangle); fixed by switching the
+`QWidget` scrim to a `QLabel` carrying the button's own text, and adding an approximate
+border-radius (Fusion's default `QPushButton` corner rounding isn't exposed as a queryable value,
+so this was a visual approximation, not an exact match) plus the button's real font-size/color.
+
+**Then a structural gap killed it anyway, caught live before it shipped:** "Press, hold out, it
+gets stuck. Release the mouse, it is still stuck." The scrim shows on `mousePressEvent` but
+nothing was wired to hide it if the user presses and then drags off the button before releasing —
+a real, natively-supported gesture (`QAbstractButton` cancels the click without ever firing
+`clicked()` when release lands outside the button) that this design never accounted for. Since
+`disable_sprint()` is the ONLY place that hides the scrim, and it only runs on an actual
+`clicked()`, a press-drag-off-release sequence leaves the scrim (and the whole button, visually
+dark and inert) stuck permanently. This is the exact same "off-button release" case checked
+earlier in the investigation as a diagnostic question (confirmed then: releasing off-button
+correctly shows the plain hover-off color, no click, no cancel — normal Qt behavior with the
+button unmodified) — the scrim design simply never accounted for that same case needing its OWN
+cleanup path. Fixable in principle (track press/move/leave state and hide the scrim on a drag-off,
+mirroring how a real `QPushButton` un-presses itself) but judged not worth the added complexity
+for a purely cosmetic issue. Reverted in full again, same method, confirmed clean via
+`git diff --stat`.
+
+**Net state:** the flash is real, its root cause is now fully understood and documented (not a
+guess), three genuinely different fix strategies were tried and live-verified, and none shipped.
+Left as a known, accepted cosmetic issue — see TODO_ARCHIVE.md for the closing summary and
+CLAUDE.md's Debugging discipline section for the one short, reusable Qt fact worth keeping from
+this (button click/repaint ordering).
+
 ## 2026-08-22 — Checkpoint-recovery duplicate-write race: found, fixed, 67 historical rows cleaned up. Two independent heatmap rounding bugs fixed alongside it. `f3816cf`, `43a9fca`
 
 **First symptom, reported live with screenshots (streak/heatmap follow-up from the prior `main`

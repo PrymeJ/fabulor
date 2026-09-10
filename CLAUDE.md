@@ -138,6 +138,16 @@ The real library used for day-to-day testing has been ~400 books. That is not re
   instead — same shape as the `user_seek_pending`/`sleep_fired` rule: a flag set where intent is
   known beats anything inferred downstream. Two successive fixes here were defeated by trusting a
   reason (see `_set_keyboard_nav_active`'s MODALITY OWNERSHIP notes, app.py).
+- **`QAbstractButton::mouseReleaseEvent` repaints the button back to enabled/hover-visible BEFORE
+  it emits `clicked()`, not after.** Confirmed via a live paint-event trace with timestamps, not
+  assumed — a flash frame painted 0.3ms before a `setEnabled(False)` placed at the very top of the
+  `clicked` slot could run. Nothing reachable from inside a `clicked` slot (disabling, hiding,
+  reordering statements) can suppress that specific repaint; disabling any EARLIER than release
+  (e.g. on `pressed`) instead kills `clicked()` outright, since Qt gates it on `isEnabled()` at
+  release time. If a button's own native release-repaint is the thing that needs suppressing —
+  not just something to react to afterward — it needs an opaque overlay painted over the button
+  itself (with its own full press/drag-off/release state tracking), not a `clicked`-slot fix. See
+  NOTES.md, 2026-09-10 (Sleep/Sprint Disable-Cancel button blink — three fix attempts, all reverted).
 - **`unpolish`/`polish` on a parent does NOT re-resolve a child's cached style.** A dynamic
   property gating QSS on an ancestor (e.g. `#settings_panel[kbdnav="true"] ... :hover`) will not
   take effect on descendants until each one is polished itself — and `update()` alone is not

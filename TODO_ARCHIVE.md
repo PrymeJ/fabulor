@@ -5,6 +5,21 @@ list scannable. Kept, not deleted, per the project's normal practice of not thro
 that isn't fully duplicated in NOTES.md/SESSION.md/a commit message. Order is the same relative
 order these entries had in TODO.md before the split (2026-07-30).
 
+- **[2026-09-10] INVESTIGATED, NOT RESOLVED: Sleep/Sprint Disable-Cancel button blinks
+  highlight→dark→highlight before disappearing.** Root cause fully traced (a live paint-event
+  logger, not guesswork): Qt's own `QAbstractButton::mouseReleaseEvent` repaints the button back
+  to enabled/hover-visible as part of its internal `isDown()` transition, and only AFTER that
+  repaint does it emit `clicked()` — so nothing reachable from the `clicked` slot can suppress it.
+  Three fix attempts, each tried live and each failed for a distinct, verified reason: disabling
+  on press (kills `clicked()` outright, button gets stuck), disabling in the `clicked` slot or
+  fading the hide (too late to help, and the fade version introduced a real focus-jump
+  regression), and an opaque click-through scrim overlay (visually worked, but gets permanently
+  stuck if the mouse is pressed then dragged off the button before release — a real, natively-
+  supported gesture the design never accounted for). Full trace-by-trace writeup, including the
+  exact timestamps and synthetic-test evidence for each failure: NOTES.md, 2026-09-10. Left as a
+  known, low-priority cosmetic issue — both `sprint_panel.py` and `sleep_timer.py` are back to
+  their pre-investigation committed state, no code changes kept.
+
 - **[2026-09-10] CLOSED: Book-detail keyboard shortcut (Alt+Enter/Shift+Enter) consistency across
   panels.** Originally opened 2026-09-08 with two explicit follow-ups after Tags' thumbnail grid
   gained both modifiers as synonyms: (1) give Library's own keyboard nav a matching Shift+Enter
