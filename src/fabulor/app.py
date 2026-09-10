@@ -4107,15 +4107,25 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
         Overrides Qt's native arrow behaviour, which treats a QHBoxLayout of buttons as a flat
         chain: natively Up/Down do the same thing as Left/Right (step one button sideways),
-        which is useless on a tab of stacked rows. Here:
+        which is useless on a tab of stacked rows. Here (as of 2026-09-10 — see below for why
+        Left/Right changed from deferring to Qt's native chain):
 
             Down   from the tab bar -> first button of the FIRST row
                    from a button    -> first button of the NEXT row
-            Up     from a button    -> first button of the PREVIOUS row
+                   from the LAST row -> wraps to the tab bar
+            Up     from the tab bar -> first button of the LAST row
+                   from a button    -> first button of the PREVIOUS row
                    from row 0       -> back to the tab bar
             Left   at row 0's first button -> back to the tab bar
-                   otherwise                -> native (previous button in the row)
-            Right  -> always native (next button in the row)
+                   otherwise                -> previous button in the row; at a row's first
+                                                button, previous row's LAST button
+            Right  at the LAST row's last button -> wraps to the tab bar
+                   otherwise                       -> next button in the row; at a row's last
+                                                       button, next row's FIRST button
+
+        Full reading-order wrap on all four directions — the tab bar sits at both ends, reachable
+        from any edge of the grid, mirroring Speed/Sleep/Sprint's own _handle_flat_panel_arrows
+        (which has no tab bar to wrap to, so it swallows at its own edges instead).
 
         Up/Down always land on the row's FIRST button rather than trying to preserve a column:
         row widths differ both within and across tabs (Look runs 5, 3, 3, 4, 3 and 2-or-4;
@@ -4216,11 +4226,17 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             return False  # not clickable, or not one of our controls — leave it to Qt
         tab_bar = self.tabs.tabBar()
 
-        # On the tab bar: Down enters the buttons. Left/Right must stay native so they keep
-        # switching tabs (via _ThemesTabBarInterceptor), and Up has nowhere above to go.
+        # On the tab bar: Down enters the buttons at row 0, Up enters at the LAST row —
+        # added 2026-09-10, symmetric with Down/Up's wrap at the other end of the grid (see
+        # below: Down at the last row and Right past the last row's last item both now wrap
+        # back UP to the tab bar). Left/Right must stay native so they keep switching tabs
+        # (via _ThemesTabBarInterceptor).
         if focus is tab_bar:
             if key == Qt.Key.Key_Down:
                 self._focus_settings_control(rows[0][0])
+                return True
+            if key == Qt.Key.Key_Up:
+                self._focus_settings_control(rows[-1][0], from_below=True)
                 return True
             return False
 
@@ -4319,8 +4335,14 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         if key == Qt.Key.Key_Down:
             if row_i + 1 < len(rows):
                 self._focus_settings_control(rows[row_i + 1][0])
-                return True
-            return True  # last row: swallow, so Down can't fall out of the grid
+            else:
+                # Last row: wrap to the tab bar — added 2026-09-10, symmetric with Up at
+                # row 0 already going to the tab bar just below. Previously swallowed
+                # (a dead end); the Library-popup special case above already claims Down
+                # on Library's own last row, so this only ever fires on the OTHER tabs'
+                # last row, or Library when the popup is empty/unavailable.
+                tab_bar.setFocus(Qt.FocusReason.TabFocusReason)
+            return True
         if key == Qt.Key.Key_Up:
             if row_i > 0:
                 # from_below: arriving upward, so a list box should land on its LAST path.
@@ -4334,9 +4356,14 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # the "native within-row stepping" comment below), a plain QLabel has NO such native
         # behaviour even with Qt.FocusPolicy.TabFocus set (confirmed live and synthetically
         # 2026-09-06: Right arrow silently did nothing, focus never left the first label).
-        # Moves focus manually via _focus_settings_control-equivalent setFocus, clamped at the
-        # row's own ends (no wrap — matches every other row's Left/Right-at-the-edge behaviour,
-        # which falls through to leave-the-row handling rather than wrapping).
+        # Moves focus manually via _focus_settings_control-equivalent setFocus, WITHIN the row
+        # only — at either end it falls through to the generic row-edge handling below (Right
+        # continuing reading-order into the next row/tab-bar, Left into the previous row/tab-
+        # bar), exactly like every other row now does. Previously swallowed Right at the row's
+        # end as a dead end — that was correct only by coincidence, back when every OTHER row's
+        # Right-at-the-end also went nowhere (Qt's unreliable native chain); now that reading-
+        # order wrap is the real, deliberate model app-wide, this row must not be the one
+        # exception left behind.
         if isinstance(focus, QLabel) and key in (Qt.Key.Key_Left, Qt.Key.Key_Right):
             row = rows[row_i]
             new_col = col_i + (1 if key == Qt.Key.Key_Right else -1)
@@ -4344,10 +4371,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 row[new_col].setFocus(Qt.FocusReason.TabFocusReason)
                 self._keep_marker_awake()
                 return True
-            if key == Qt.Key.Key_Right:
-                return True  # at the row's right end: swallow, no wrap
-            # key == Key_Left at the row's left end falls through to the row-0/col-0 and
-            # generic Left-elsewhere handling below, same as every other row's leftmost item.
+            # At either end: fall through to the generic row-edge handling below.
 
         # Left/Right on a focused SLIDER adjust its value instead of moving focus — a slider's
         # own affordance is its position, so stepping off it sideways would leave the keyboard
@@ -4360,10 +4384,33 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self._keep_marker_awake()
             return True
 
-        if key == Qt.Key.Key_Left and row_i == 0 and col_i == 0:
-            tab_bar.setFocus(Qt.FocusReason.TabFocusReason)
+        # Reading-order wrap — added 2026-09-10, replacing reliance on Qt's native
+        # sibling-focus-chain stepping (construction order, not `rows`' visual order —
+        # confirmed live inconsistent: "Right arrow is mostly no-op, from Look and Controls
+        # it goes to the tab" — the same class of bug _handle_flat_panel_arrows' own comment
+        # already documents and fixed for Speed/Sleep/Sprint). Right past a row's last item
+        # continues onto the NEXT row's first item; past the LAST row's last item, wraps to
+        # the tab bar (mirroring Up-from-tab-bar landing on the last row, added just above).
+        # Left mirrors this in the other direction; Left before row 0's first item already
+        # went to the tab bar (unchanged, folded into this block for one shared code path).
+        if key == Qt.Key.Key_Right:
+            row = rows[row_i]
+            if col_i + 1 < len(row):
+                row[col_i + 1].setFocus(Qt.FocusReason.TabFocusReason)
+            elif row_i + 1 < len(rows):
+                self._focus_settings_control(rows[row_i + 1][0])
+            else:
+                tab_bar.setFocus(Qt.FocusReason.TabFocusReason)
             return True
-        # Left elsewhere, and Right anywhere: native within-row stepping is already correct.
+        if key == Qt.Key.Key_Left:
+            row = rows[row_i]
+            if col_i > 0:
+                row[col_i - 1].setFocus(Qt.FocusReason.TabFocusReason)
+            elif row_i > 0:
+                self._focus_settings_control(rows[row_i - 1][-1], from_below=True)
+            else:
+                tab_bar.setFocus(Qt.FocusReason.TabFocusReason)
+            return True
         return False
 
     def _handle_stats_arrows(self, event) -> bool:
@@ -4399,7 +4446,14 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         the user wouldn't reasonably want on a 2-digit field anyway.
         No visual "you are here" marker/highlight is applied to the spinbox itself this pass —
         Pryme's own read: moving keyboard focus into it already highlights its text natively,
-        which already answers "where is the cursor" without a second affordance."""
+        which already answers "where is the cursor" without a second affordance.
+
+        Reading-order wrap (added 2026-09-10, mirroring the identical fix in
+        _handle_settings_arrows): Up from the tab bar -> "⚙" tab's last row (Down already went
+        to row 0); Down at the last row -> wraps to the tab bar (previously swallowed); Right
+        past a row's last item -> next row's first item, past the LAST row's last item -> wraps
+        to the tab bar; Left mirrors this backward. Replaces the same stale reliance on Qt's
+        native sibling-focus-chain stepping this pass fixed in Settings."""
         key = event.key()
         if key not in (Qt.Key.Key_Up, Qt.Key.Key_Down, Qt.Key.Key_Left, Qt.Key.Key_Right,
                        Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space,
@@ -4471,6 +4525,19 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                     list_view.setFocus(Qt.FocusReason.TabFocusReason)
                     return True
                 return True  # Overall/Timeline: no down-target this pass — swallow, no-op
+            if key == Qt.Key.Key_Up:
+                # Mirrors Down's own per-tab behavior — added 2026-09-10, alongside the
+                # matching Down-at-last-row/Right-at-grid-end wrap just below, for the same
+                # reading-order-wrap consistency pass done on Settings' tabs (see
+                # _handle_settings_arrows). Only "⚙" has real navigable rows to land on;
+                # every other tab has no up-target, same as Down has no down-target for
+                # Overall/Timeline.
+                current_tab = tab_bar.tabText(tab_bar.currentIndex())
+                if current_tab == "⚙":
+                    rows = self.panel_manager.stats_tab_button_rows()
+                    if rows:
+                        self._focus_settings_control(rows[-1][0], from_below=True)
+                return True
             return False  # every other tab-bar key (incl. native Left/Right) is Qt's to handle
 
         rows = self.panel_manager.stats_tab_button_rows()
@@ -4508,17 +4575,43 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         if key == Qt.Key.Key_Down:
             if row_i + 1 < len(rows):
                 self._focus_settings_control(rows[row_i + 1][0])
-            return True  # last row: swallow, so Down can't fall out of the grid
+            else:
+                # Last row: wrap to the tab bar — added 2026-09-10, symmetric with Up at
+                # row 0 already going to the tab bar just below, and matching the identical
+                # fix in _handle_settings_arrows (see that method's docstring for the full
+                # reading-order-wrap design this mirrors). Previously swallowed.
+                tab_bar.setFocus(Qt.FocusReason.TabFocusReason)
+            return True
         if key == Qt.Key.Key_Up:
             if row_i > 0:
                 self._focus_settings_control(rows[row_i - 1][0])
             else:
                 tab_bar.setFocus(Qt.FocusReason.TabFocusReason)
             return True
-        if key == Qt.Key.Key_Left and row_i == 0 and col_i == 0:
-            tab_bar.setFocus(Qt.FocusReason.TabFocusReason)
+        # Reading-order wrap — added 2026-09-10, same fix and same reasoning as
+        # _handle_settings_arrows' identical block (replacing reliance on Qt's native
+        # sibling-focus-chain stepping, which is construction order, not `rows`' visual
+        # order). Right past a row's last item continues onto the NEXT row's first item;
+        # past the LAST row's last item, wraps to the tab bar. Left mirrors this backward;
+        # Left before row 0's first item already went to the tab bar (unchanged, folded in).
+        if key == Qt.Key.Key_Right:
+            row = rows[row_i]
+            if col_i + 1 < len(row):
+                row[col_i + 1].setFocus(Qt.FocusReason.TabFocusReason)
+            elif row_i + 1 < len(rows):
+                self._focus_settings_control(rows[row_i + 1][0])
+            else:
+                tab_bar.setFocus(Qt.FocusReason.TabFocusReason)
             return True
-        # Left elsewhere, and Right anywhere: native within-row stepping is already correct.
+        if key == Qt.Key.Key_Left:
+            row = rows[row_i]
+            if col_i > 0:
+                row[col_i - 1].setFocus(Qt.FocusReason.TabFocusReason)
+            elif row_i > 0:
+                self._focus_settings_control(rows[row_i - 1][-1], from_below=True)
+            else:
+                tab_bar.setFocus(Qt.FocusReason.TabFocusReason)
+            return True
         return False
 
     def _handle_themes_swatch_arrows(self, key, outer_row_i: int, tab_bar) -> bool:
