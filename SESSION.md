@@ -1,4 +1,42 @@
-## Session Summary — 2026-09-10 Session 1 — Merged `feature/traveling-focus-marker` into `main` (109 commits — the whole keyboard-navigation/traveling-marker/confirmation-consistency arc), then continued directly on `main`: diacritic-aware library/tag search and sort, a reverted tab-bar hover-suppression attempt (documented, not shipped), and Sprint's "Reset all sprint data" now hides instead of always showing. Merge commit `c2023e1`; on-`main` work committed `612a946`, `07f4bdc`, `47df940`, `c27ae29`.
+## Session Summary — 2026-09-12 Session 1 — Trimmed CLAUDE.md's changelog tail: moved 9 closed-out entries (2026-08-13 down through 2026-07-11 Session 3) to NOTES.md, following the same extraction convention as the two 2026-08-02 passes. CLAUDE.md 2303 → 2121 lines.
+
+**1. Why this pass, and what was in scope.** CLAUDE.md had grown again since the last trim, and the
+Critical Architecture Rules section (the bulk of the file, ~1450 lines) is explicitly load-bearing —
+its own text says crossing/cutting a rule there needs a specific stated reason, not just brevity, so
+that section was left untouched. The trimmable part was the `*Previously: ...*` changelog tail at
+the bottom: a running series of dated write-ups, each summarizing a session's work. The file's own
+Conventions section already states the correct destination for this kind of material ("standalone
+analysis... NOTES.md stays for root-cause writeups of things already done"), and the bottom of
+CLAUDE.md already documented two prior extractions (2026-08-02, in two passes) that did exactly
+this — moving old changelog entries to NOTES.md once their load-bearing lesson had already been
+promoted into a standing rule or Debugging-discipline bullet elsewhere in the file. This pass reused
+that same precedent rather than inventing a new trimming approach.
+
+**2. What was checked before moving anything.** Sampled several candidate entries (2026-09-08
+Session 4, 2026-09-08 Session 2, 2026-07-11 Session 3, 2026-07-27, 2026-07-28) to confirm the
+2026-08-02 precondition still held: every one explicitly states its own lesson was already promoted
+("now a Debugging discipline bullet above," "new rule added above," "no new DO-NOT rule — the
+transferable lessons are... Debugging discipline bullets above"). None of the 9 entries ultimately
+moved were load-bearing on their own — they were historical narrative whose substance already lives
+in a standing rule.
+
+**3. What was moved and what was kept.** Extracted the 9 entries from `*Previously: 2026-08-13*`
+down through `*Previously: 2026-07-11 Session 3*` (two rounds of scrollbar row-alignment work, Book
+Detail's History-tab hover/keyboard-selection/focus fixes, the full Stats lazy-delegate migration
+across Day/Week/Month, the panel-backdrop restyle perf fix, theme hover/preview reliability across
+two sessions, the `visual_area` blur clip, and the transport-keyboard-shortcuts focus bugs) verbatim
+into NOTES.md, under a new "CLAUDE.md changelog tail, extracted 2026-09-12" header that names the
+precedent and states the same promoted-already precondition. Replaced the removed block in CLAUDE.md
+with a short pointer note (mirroring the existing 2026-08-02 pointer note's shape), listed
+immediately above it so the two extraction passes read in chronological order. **Deliberately left
+in place**: the 2026-09-04 through 2026-09-09 entries (the traveling-focus-marker feature arc) —
+that arc was still active/unmerged at the time of this trim, so it doesn't meet the same
+"closed-out" bar the prior two passes used; it's the natural next batch once it's further settled.
+
+**4. Result.** CLAUDE.md: 2303 → 2121 lines (~8% smaller). NOTES.md: +192 lines, all moved content,
+nothing rewritten or summarized away — every entry preserved verbatim per the same non-destructive
+constraint the 2026-08-02 passes used. No rule, constant, or lesson was dropped; only session
+narrative already superseded by a standing rule was relocated.
 
 **1. The merge.** `feature/traveling-focus-marker` had drifted 109 commits ahead of the point it
 branched from `main` (confirmed via `git merge-base`, not assumed — Pryme's own recollection of
