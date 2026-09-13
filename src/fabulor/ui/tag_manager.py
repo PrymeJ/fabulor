@@ -928,6 +928,16 @@ class TagManagerWidget(QWidget):
                 self._tag_list_layout.count() - 1, row
             )
 
+        # Force an immediate re-check of what's under the cursor against the
+        # BRAND-NEW row widgets just built above — see ScrollHoverTracker.resync's
+        # own docstring for why this can't be left to Qt's usual event-driven
+        # recomputation. Without this, returning to the list via the "<" back
+        # button (which leaves the cursor resting exactly where row[0] just
+        # reappeared, with no boundary crossing to trigger a resync) left
+        # row[0] unhighlightable on hover until some other row was hovered
+        # first — found live 2026-09-13.
+        self._row_hover.resync()
+
     def _tag_list_rows(self) -> list:
         """Tag-list row widgets in visual order, live off the layout — shared by
         ScrollHoverTracker (mouse) and the keyboard cursor below, so the two
@@ -1542,6 +1552,19 @@ class TagManagerWidget(QWidget):
         self._list_widget.show()
         self._current_tag = None
         self.refresh()
+        # Re-install for the list view itself (added 2026-09-13, alongside the
+        # Tab/Shift+Tab list-nav fix) — the remove above is unconditional and
+        # Qt's installEventFilter is deduplicated per-object (one remove drops
+        # the registration regardless of how many times install was called),
+        # so without this the app-wide filter is left fully gone after every
+        # tag -> "<" round-trip: _show_list() only swaps _panel_widget/
+        # _list_widget visibility on an ALREADY-visible TagManagerWidget, so
+        # showEvent (the only other installer) never re-fires to paper over it.
+        # Symptom without this: Tab/Shift+Tab (and the tag-detail keys branch,
+        # next time a tag is reopened without an intervening blur-grab
+        # hide/show) silently stop working after returning from any tag detail
+        # via the "<" button or Backspace.
+        QApplication.instance().installEventFilter(self)
         # Without this, real Qt focus stays wherever it last was in the detail
         # panel (e.g. _book_grid) — invisible since that widget is now hidden,
         # but it means _tag_scroll never gets a KeyPress, so arrows silently do

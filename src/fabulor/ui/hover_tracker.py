@@ -137,6 +137,26 @@ class ScrollHoverTracker(QObject):
         future keyboard cursor can coordinate with it rather than guess."""
         return self._hovered
 
+    def resync(self):
+        """Force an immediate re-check of what's under the cursor right now.
+
+        Call this after any refresh/rebuild of the row widgets. `_resync` is
+        otherwise purely event-driven — it only recomputes in response to a
+        genuine Enter/Leave/Hover* boundary crossing (see the eventFilter
+        above) — so a rebuild that leaves the cursor already resting INSIDE a
+        freshly-built row's geometry produces no such crossing and would
+        otherwise never get highlighted until the mouse actually moves.
+        Confirmed live 2026-09-13: the Tags list's "<" back button leaves the
+        cursor sitting where the button was, and the rebuilt row[0] lands at
+        that same screen position — no boundary crossing ever happens for it,
+        so it stayed unhighlighted (despite the cursor still showing correctly
+        as a pointing hand, which is Qt's own unrelated native hit-testing)
+        until some OTHER row was hovered first. Returning to the list via
+        Backspace never showed this, because the cursor is typically resting
+        somewhere else (e.g. over the detail panel's thumbnail grid) when the
+        list reappears, so the next real hover is a genuine crossing."""
+        self._resync()
+
     def suspend(self, suspended: bool = True):
         """Stop (or resume) mouse-hover tracking without tearing down.
 
@@ -182,9 +202,17 @@ class ScrollHoverTracker(QObject):
         # Only track while the pointer is actually over the viewport. Without
         # this, scrolling by wheel from elsewhere (or a programmatic scroll on
         # refresh) would light a row under a cursor that is somewhere else
-        # entirely.
+        # entirely. Still clears any stale `_hovered` on the way out — a hide
+        # (e.g. the Tags list swapped out for its own detail sub-panel) fires a
+        # real Leave that reaches here, and leaving `_hovered` pointing at a
+        # row that's about to be deleted-and-rebuilt is what let a later
+        # `refresh()` come back with a dangling reference instead of a clean
+        # slate (found live 2026-09-13: row[0]'s hover silently no-opped after
+        # returning from a tag's detail panel via the "<" button — see
+        # `resync()` below for the other half of that fix).
         viewport = self._scroll.viewport()
         if not viewport.isVisible():
+            self._hovered = None
             return
         # Enumerate before the containment test, not after: this is what applies
         # WA_Hover, and rows must carry it BEFORE the cursor first arrives or
