@@ -254,11 +254,6 @@ relevant — no longer an open item.
     diverges from the visual model" issue already flagged twice elsewhere in this same section —
     worth checking whether this is literally the same underlying defect surfacing a third time,
     or a separate, unrelated row-ordering bug specific to how Speed's rows list was built.
-  - **Tags panel: Tab is a no-op on the tag list.** Explicitly flagged by Pryme as low priority —
-    "Could be added, but not a big deal." The tag list (list-view mode, before drilling into a
-    specific tag's detail) currently has no Tab-driven keyboard entry point at all; Up/Down
-    already work there via `ScrollHoverTracker`'s hover-pickup mechanism once some other input
-    has given the list focus, but Tab itself does nothing. Deferred — no urgency signaled.
 
 ### Listening Sprint backward-seek compensation doesn't net forward+backward excursions
 - [2026-08-11] The pure tick-to-tick `_last_known_pos` diff in `SprintPanel.update_sprint_state`

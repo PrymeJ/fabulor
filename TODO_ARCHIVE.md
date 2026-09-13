@@ -938,3 +938,16 @@ order these entries had in TODO.md before the split (2026-07-30).
   grab source reverted (Pryme: "tooltip and hover broken just like before"), confirming they were
   never caused by the grab-source/rate-limiting work at all. Both remain open; see the "Blur grab
   hide/show side effects" entry above for their status.
+
+- **[2026-09-13] CLOSED: Tags panel: Tab was a no-op on the tag list.** The low-priority item from
+  2026-09-09 ("Could be added, but not a big deal") was implemented: Tab moves the keyboard cursor
+  down one row (same as Down), Shift+Tab (delivered by Qt as `Key_Backtab`) moves it up one row —
+  nothing fancier, no new destination, since Tab has no "next stop" to cycle to in this view. The
+  fix needed a second, non-obvious piece: `_tag_scroll`'s own per-widget `eventFilter` (the thing
+  that makes Up/Down work) can never see Tab/Backtab at all — Qt resolves those two keys as
+  focus-chain navigation inside `QWidget::event()` itself, before a filter installed on a single
+  widget ever gets the KeyPress; only an application-level filter runs early enough. Fixed by also
+  installing `TagManagerWidget`'s existing app-wide filter while the list view is visible (not just
+  while the tag-detail sub-panel is open, as before), with a new branch scoped to exactly those two
+  keys so every other list-view key still goes through the unaffected, unchanged
+  `_tag_scroll`-scoped path. `3e21fc7`.

@@ -1,3 +1,119 @@
+## Session Summary — 2026-09-13 Session 1 — Tab/Shift+Tab for the Tags list, plus a chain of three related keyboard bugs in a tag's detail view found by live testing immediately after, ending in a data-loss-adjacent fix (Enter silently removing a book from a tag) and a design correction that removed more code than it added.
+
+**1. Tab/Shift+Tab in the tag list — simple feature, one genuine Qt gotcha.** Requested plainly:
+"Tab works like down arrow on the list, Shift+Tab works as up arrow." `_handle_tag_list_keys`
+already had the Up/Down logic (`_set_kbdnav_row`); adding `Key_Tab`/`Key_Backtab` as synonyms was a
+two-line change. Live-tested and reported broken — Up/Down worked, Tab did nothing. Root cause: the
+list view's `eventFilter` is installed on `_tag_scroll` alone, but Qt resolves Tab/Backtab as
+focus-chain navigation inside `QWidget::event()` itself, before a per-widget filter's KeyPress
+branch ever runs — confirmed by tracing how `BookDetailPanel`'s own, working Tab handling
+does it differently (an application-wide filter, installed in `showEvent`, which runs earlier in
+Qt's dispatch than anything scoped to one widget). Fixed by extending `TagManagerWidget`'s existing
+app-wide filter (previously armed only while the tag-detail sub-panel was visible) to also arm while
+the list view itself is showing, with the new Tab/Backtab branch scoped to exactly those two keys so
+every other list-view key keeps going through the unaffected, unchanged `_tag_scroll`-only path.
+`3e21fc7`.
+
+**2. Two bugs surfaced from the SAME transition while checking the Tab fix for regressions — row[0]
+hover breaking, and the Tab fix itself silently regressing.** Investigating whether opening Book
+Detail from Tags could race the new app-wide filter (it can't — LIFO install order and the list/
+detail mutual exclusivity both hold) surfaced a real, unrelated regression in the Tab fix itself:
+`_show_list()`'s unconditional `removeEventFilter(self)` fully drops the app-wide filter (Qt dedupes
+installs — one remove clears the registration no matter how many times install ran), and nothing
+reinstalls it, since `_show_list()` only swaps sub-widget visibility on an already-visible
+`TagManagerWidget` — `showEvent` never re-fires to paper over it. So Tab/Shift+Tab (and the tag-
+detail keys branch) would have silently stopped working after every tag → "&lt;" round-trip. Fixed
+by reinstalling the filter at the end of `_show_list()`.
+
+Separately, live testing surfaced a genuinely independent bug in the same transition: hovering
+row[0] after returning from a tag's detail panel via the "&lt;" button showed the pointing-hand
+cursor but never painted the highlight, until some OTHER row was hovered first — Backspace back to
+the list never showed this. Root cause: `ScrollHoverTracker._resync`'s early-return (viewport not
+visible) skipped past `_set_hovered(None)`, leaving `_hovered` pointing at a row about to be
+deleted-and-rebuilt; `refresh()` then rebuilt every row from scratch with no re-sync of its own. The
+"&lt;" button specifically (not Backspace) reproduces it because the cursor is left resting exactly
+where the button was, and the rebuilt row[0] renders at that same screen position — no boundary-
+crossing Enter event ever fires for it, so nothing tells the tracker to re-check. Fixed with two
+changes: `_resync`'s early-return now clears the stale reference, and a new public
+`ScrollHoverTracker.resync()` forces an immediate cursor re-check, called at the end of `refresh()`.
+Both fixes: `dc4e176`.
+
+**3. Three keyboard bugs in a tag's DETAIL view, all traced to one shared enabling fact, one of them
+genuinely destructive.** Reported together after opening a tag: "any key I press move[s] focus to
+thumbnail[0]"; Tab into the name field left a visible focus ring lingering on whatever thumbnail was
+last selected; and — the serious one — "if I press Enter during in-line edit without dirtying it,
+Enter goes to the book and deletes it" (removes it from the tag). All three trace to
+`_handle_thumb_grid_keys`'s `pos is None` branch, which used to seed `kbdnav_pos` to `(0, 0)` and
+consume the event for literally ANY key reaching it, with no check on what the key was or whether
+the grid genuinely held focus. Combined with the Tab-into-name-field branch never clearing that
+position (only the color row's own state was cleared on that transition), a stale non-`None`
+position could sit under the grid while the user was typing elsewhere.
+
+The destructive bug's actual trigger was a confirmed, empirically-verified Qt behavior, not a guess:
+`QLineEdit`'s `returnPressed` firing a slot that calls `clearFocus()` synchronously causes Qt to
+redeliver that SAME physical Return keypress to the app-wide filter a second time, once focus has
+already moved — verified directly with an offscreen harness before touching any fix, since this was
+the load-bearing claim for a data-loss-adjacent change. `_on_rename`'s no-op branch (nothing typed)
+called exactly that pattern, and the phantom second Return landed in the grid's stale-position Enter
+branch, silently calling `_on_remove` on whatever thumbnail was left selected. Fixed with three
+changes: `_handle_thumb_grid_keys`'s Enter/Space activate branch now requires `_book_grid.hasFocus()`
+before acting (real Qt focus, not just a non-`None` position); the Tab-into-name-field branch now
+also clears `kbdnav_pos`; and the `pos is None` seed branch was narrowed to only fire for keys the
+method actually understands, while the grid genuinely holds focus. `ae8bc9d`.
+
+**4. Fixing (3) exposed a worse consequence — the whole Tags panel dismissing itself — traced to the
+exact old "Keyboard focus ownership" bug CLAUDE.md already documents, reachable via a new path.**
+Live-tested immediately after (3) shipped: saving a rename left the text caret still visibly
+blinking, and pressing Enter again then an arrow closed the whole panel; the same closed the panel
+even with nothing dirtied, just Tab-into-edit → Enter → arrow. Traced precisely: `_on_rename`'s
+success branch never released focus at all (asymmetric with its own no-op sibling, which did) — so
+the caret staying visible was a real, not cosmetic, symptom. Pressing Enter again then hit the no-op
+branch, whose bare `clearFocus()` drops real Qt focus to NOTHING (not the grid, not the panel, not
+anything) — and with the Tags panel still open but no widget in it focused,
+`MainWindow._focus_allows_global_shortcuts()` (correctly, for the case it was built for: no panel
+open at all) treats `focus is None` as safe for a global shortcut. The next arrow key fired
+`VOLUME_UP`/`DOWN` → `_on_volume_changed` → `hide_all_panels()`, closing the whole panel — the exact
+mechanism CLAUDE.md's own "Keyboard focus ownership" section documents being fixed once already, now
+reachable through a focus dead-end this session's own fixes had just created rather than the
+original typing-in-a-field path.
+
+Fixed by giving both `_on_rename` branches one shared exit, `_exit_name_edit_to_grid()`: clears
+focus from the name field, clears the grid's `kbdnav_pos` (a stale position could reach edit mode
+via more than just Tab — a direct click, or Up from the color-picker row, neither of which reset it
+— confirmed by auditing every entry point into edit mode before relying on Tab's own clear alone),
+and hands real focus to `_book_grid`. First version of this also armed a one-shot
+`_suppress_next_grid_enter` flag, since landing real focus on the grid meant the SAME phantom
+redelivery would now find `_book_grid.hasFocus() == True` and could reselect thumbnail[0] as a side
+effect — confirmed empirically that Qt gives no reliable signal (not event identity, not
+`spontaneous()`) to tell the phantom apart from a genuine keystroke, so a flag was the only option
+available at that point. `ae8bc9d`.
+
+**5. Live testing found the flag's own behavior still wrong, and the resulting design conversation
+was itself a correction to something Claude had stated as fact.** Reported: every Enter in the name
+field — dirtied or not — moved focus to thumbnail[0] with a visible ring, which should never happen;
+leaving edit mode should return to the exact same neutral state a freshly-opened panel starts in.
+Separately, asked directly whether Enter/Space with no cursor yet should select-and-activate
+thumbnail[0] (matching what was believed to be the tag list's own behavior) or be a no-op. Claude's
+initial framing — that the tag list already works this way — was **wrong and directly corrected**:
+`_handle_tag_list_keys`'s Enter/Space branch has always been a no-op unless a row is already
+keyboard-selected, confirmed by re-reading the actual code rather than trusting the restated claim.
+Given the grid's Enter/Space is genuinely destructive (removes a book from the tag with no undo —
+the only way back is finding that book's own detail panel and re-adding the tag), the correct fix
+was narrower and simpler than the flag: Enter/Space in the thumbnail grid now NEVER seeds a cursor
+from `None` — only Left/Right/Up/Down do — matching the tag list exactly. This made the entire
+`_suppress_next_grid_enter` mechanism from step 4 unnecessary; removed outright rather than left as
+dead defensive code, since the class of bug it guarded against stops being reachable by construction
+once Enter/Space can no longer act without a real, arrow-navigated cursor already in place. Net
+diff: 21 insertions, 55 deletions. `44e0b63`.
+
+**General lesson worth keeping from this arc**: three separate, live-caught regressions (the filter-
+removal regression in step 2, the panel-dismissing focus dead-end in step 4, and the wrong
+tag-list-behavior claim in step 5) all came from fixing one bug without checking whether the fix's
+own side effects reopened a different, adjacent one — each was caught only because live testing kept
+happening after every single fix rather than being batched, and because a background agent was sent
+to verify the load-bearing empirical claims (the double-dispatch mechanism, the LIFO filter
+ordering, the actual tag-list behavior) before code was written on top of them, not after.
+
 ## Session Summary — 2026-09-12 Session 1 — Trimmed CLAUDE.md's changelog tail: moved 9 closed-out entries (2026-08-13 down through 2026-07-11 Session 3) to NOTES.md, following the same extraction convention as the two 2026-08-02 passes. CLAUDE.md 2303 → 2121 lines.
 
 **1. Why this pass, and what was in scope.** CLAUDE.md had grown again since the last trim, and the

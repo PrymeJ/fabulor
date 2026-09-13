@@ -1771,7 +1771,39 @@ Any `QWidget` subclass (not `QFrame`, not `QLabel`) that owns a background-color
 
 *Reorganization note (2026-07-13): the "Critical Architecture Rules" section was restructured to remove repetition — it previously existed as two passes (a full-prose section and a later condensed second pass covering many of the same rules). The two were merged: rules that appeared in both now appear once, under whichever fact they share, with no information dropped. Rules unique to either pass are unchanged. See the note directly under the "Critical Architecture Rules" heading for detail.*
 
-*Last updated: 2026-09-09 Session 1 — App-wide confirmation-dialog keyboard consistency: audited
+*Last updated: 2026-09-13 Session 1 — Tab/Shift+Tab added to the Tags list, followed by a chain of
+keyboard bugs in a tag's detail view, one genuinely data-loss-adjacent (Enter silently removing a
+book from a tag) and one caused by the fix for it (the whole panel dismissing itself). Full
+trace-by-trace narrative: SESSION.md, 2026-09-13 Session 1. Commits `3e21fc7`, `dc4e176`, `ae8bc9d`,
+`44e0b63`.
+
+**New, generalizable Qt fact worth keeping separate from the session narrative:** a `QLineEdit`
+slot connected to `returnPressed` that changes focus SYNCHRONOUSLY (e.g. `clearFocus()`) causes Qt
+to redeliver the SAME physical Return keypress to an app-wide event filter a SECOND time, once
+focus has already moved — confirmed with a live offscreen harness before any fix was written on top
+of the claim, precisely because it was the load-bearing fact behind a destructive bug (Enter
+removing a book from a tag with no undo). Neither event identity (`id(event)`/`is`) nor
+`event.spontaneous()` reliably distinguishes this phantom redelivery from a genuinely separate,
+second real keypress — both were tested empirically and both failed as a detection signal. The only
+robust fix found was requiring the ACTUAL widget the key is meant to act on to genuinely hold real
+Qt `hasFocus()` at the moment of acting, not merely inferring intent from some other piece of state
+(a non-`None` cached position, in this case) that a phantom redelivery could still satisfy. Where
+that alone isn't enough — because the redelivery arrives AFTER a deliberate focus hand-off to the
+very widget that's supposed to act next — the more robust fix is removing the destructive action's
+ability to fire from an unselected/neutral state at all, rather than adding a guard against one more
+way to reach it: TagManagerWidget's thumbnail grid now only lets Left/Right/Up/Down seed a keyboard
+cursor from `None`, never Enter/Space, closing the whole class of "a bare Enter with nothing visibly
+selected does something destructive" by construction. A companion, narrower Qt fact from the same
+investigation: `MainWindow._focus_allows_global_shortcuts()`'s `focus is None` case (correct for "no
+panel is open at all") is NOT safe once a panel IS open but a widget inside it has merely dropped
+focus without another panel-local widget claiming it — a bare `clearFocus()` with no follow-up
+`setFocus()` onto a sibling can silently leave a panel one arrow-key press away from calling
+`hide_all_panels()` via the volume shortcut, the exact old bug the "Keyboard focus ownership"
+section already documents, reachable here through a brand-new path. Any future `clearFocus()` call
+inside an open panel should have a matching `setFocus()` onto some other panel-local widget in the
+same breath, not left to drop to `None`.
+
+*Previously: 2026-09-09 Session 1 — App-wide confirmation-dialog keyboard consistency: audited
 all nine "arm a destructive confirmation, auto-revert after 7s" sites (Book Detail's four, Tag
 Manager's delete-a-tag, Stats' reset-all-stats, Sprint's reset-all-sprint-data + a generic
 conflict-confirm overlay, Sleep's own conflict-confirm overlay), then unified them on two rules:
