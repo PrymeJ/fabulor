@@ -864,12 +864,18 @@ class TagManagerWidget(QWidget):
         # several times over by the time a key was pressed. BookDetailPanel
         # already gets this for free (it pairs showEvent/hideEvent on itself,
         # so its own filter self-heals every grab tick) — TagManagerWidget
-        # never had the showEvent half. Reinstall is scoped to the detail
-        # sub-panel actually being the visible one, since the filter must NOT
-        # be active while the tag LIST view is showing (that view's own
-        # eventFilter gate is `obj is self._tag_scroll`, unaffected by this).
+        # never had the showEvent half. Reinstall covers the detail sub-panel
+        # (as before) AND the list view (added for Tab/Shift+Tab list nav,
+        # 2026-09-13) — Qt special-cases Tab/Backtab as focus-chain navigation
+        # inside QWidget::event() itself, resolved BEFORE a filter installed on
+        # a widget alone (_tag_scroll's own eventFilter gate, `obj is
+        # self._tag_scroll`) ever sees the KeyPress; only an application-level
+        # filter runs early enough to intercept those two keys. eventFilter's
+        # own list-view Tab/Backtab branch below is scoped to exactly those two
+        # keys for exactly this reason — every other list-view key still goes
+        # through the unaffected `_tag_scroll`-scoped path.
         super().showEvent(event)
-        if self._panel_widget.isVisible():
+        if self._panel_widget.isVisible() or self._list_widget.isVisible():
             QApplication.instance().installEventFilter(self)
 
     def hideEvent(self, event):
@@ -981,8 +987,12 @@ class TagManagerWidget(QWidget):
         """Up/Down/PgUp/PgDown/Home/End move the keyboard cursor; Enter/Space
         open the tag under it (the same action a left-click on the row
         performs) — live design call, 2026-09-08: list-view nav ships before
-        the tag-detail sub-panel's own, larger set of interactions. Returns
-        True iff the key was consumed."""
+        the tag-detail sub-panel's own, larger set of interactions. Tab is a
+        plain synonym for Down and Shift+Tab (delivered by Qt as Key_Backtab)
+        for Up — nothing fancy, just another way to move one row at a time;
+        it does not leave the list or toggle focus anywhere, since Tab has no
+        other destination inside this view. Returns True iff the key was
+        consumed."""
         key = event.key()
         rows = self._tag_list_rows()
         if not rows:
@@ -1008,9 +1018,9 @@ class TagManagerWidget(QWidget):
             current = rows.index(hovered) if hovered in rows else -1
         else:
             current = self._kbdnav_row_index
-        if key == Qt.Key.Key_Down:
+        if key == Qt.Key.Key_Down or key == Qt.Key.Key_Tab:
             self._set_kbdnav_row(min(current + 1, len(rows) - 1) if current >= 0 else 0)
-        elif key == Qt.Key.Key_Up:
+        elif key == Qt.Key.Key_Up or key == Qt.Key.Key_Backtab:
             self._set_kbdnav_row(max(current - 1, 0) if current >= 0 else len(rows) - 1)
         elif key == Qt.Key.Key_PageDown:
             self._set_kbdnav_row(min(current + _TAG_SCROLL_ROWS, len(rows) - 1) if current >= 0 else 0)
@@ -1585,6 +1595,21 @@ class TagManagerWidget(QWidget):
                 self._revert_tag_name()
                 self._tag_name_edit.clearFocus()
                 self._enter_color_row_from_thumbnails()
+                return True
+
+        # Tag-LIST Tab/Shift+Tab (added 2026-09-13) — checked on EVERY KeyPress
+        # regardless of `obj`, unlike the `_tag_scroll`-scoped branch just below.
+        # Qt treats Tab/Backtab as focus-chain navigation inside QWidget::event()
+        # itself, resolved before a filter installed on a single widget
+        # (`_tag_scroll`'s own gate, `obj is self._tag_scroll`) ever sees the
+        # KeyPress — only an application-level filter runs early enough to catch
+        # them (same reason the tag-DETAIL sub-panel's Tab handling, below, has
+        # always had to be `obj`-independent). Scoped to exactly these two keys
+        # so every other list-view key keeps going through the unaffected,
+        # `_tag_scroll`-scoped branch immediately after this one.
+        if (event.type() == QEvent.Type.KeyPress and self._list_widget.isVisible()
+                and event.key() in (Qt.Key.Key_Tab, Qt.Key.Key_Backtab)):
+            if self._handle_tag_list_keys(event):
                 return True
 
         # Tag-LIST keyboard cursor (added 2026-09-08) — replaces the old scroll-only
