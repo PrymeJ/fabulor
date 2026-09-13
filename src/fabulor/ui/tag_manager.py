@@ -540,6 +540,9 @@ class TagManagerWidget(QWidget):
         self._current_tag: str | None = None
         self._tag_name_original: str = ""
         self._confirming_delete: bool = False
+        # Set by _exit_name_edit_to_grid, consumed by the very next Enter/Space
+        # _handle_thumb_grid_keys sees — see that method's own comment on why.
+        self._suppress_next_grid_enter: bool = False
         # Keyboard cursor for the tag LIST (added 2026-09-08) — an index into
         # _tag_list_rows(), independent of ScrollHoverTracker's mouse-driven
         # _hovered (that tracker's own suspend() is the coexistence hook, see
@@ -1159,6 +1162,17 @@ class TagManagerWidget(QWidget):
                 if self._reserved_layout.currentWidget() is self._color_picker_row:
                     self._show_reserved("none")
                 self._clear_color_kbdnav()
+                # Mirrors the _clear_color_kbdnav() call above — without this the
+                # thumbnail grid's own focus ring (drawn from kbdnav_pos, not real
+                # Qt focus) stayed visibly lingering after Tab moved focus away
+                # from the grid entirely (found live 2026-09-13).
+                self._book_grid.set_kbdnav_pos(None)
+                # A pending one-shot suppression (armed by _exit_name_edit_to_grid,
+                # meant to block only the very next Enter/Space) would otherwise
+                # survive indefinitely if the user Tabs back into the field before
+                # ever pressing Enter/Space in the grid — re-entering edit mode
+                # makes that stale expectation meaningless.
+                self._suppress_next_grid_enter = False
                 self._tag_name_edit.setFocus(Qt.FocusReason.TabFocusReason)
                 self._tag_name_edit.selectAll()
             return True
@@ -1310,13 +1324,60 @@ class TagManagerWidget(QWidget):
         rows_count, cols = self._book_grid.kbdnav_grid_shape()
         if rows_count == 0:
             return False
+
+        # One-shot suppression armed by _exit_name_edit_to_grid — see its own
+        # docstring. Consumed here, ahead of everything else in this method,
+        # so it blocks Enter/Space from seeding thumbnail[0] as a side effect
+        # of the phantom post-rename Return redelivery, without touching the
+        # deliberate "no cursor yet -> Enter/Space selects thumbnail[0]"
+        # behavior for a genuinely fresh keystroke (found live 2026-09-13:
+        # every Enter used to land back on thumbnail[0] with a visible ring
+        # after leaving edit mode — dirtied or not — which is wrong; leaving
+        # edit mode should return to the SAME neutral, no-selection state a
+        # freshly-opened panel starts in). Cleared unconditionally on every
+        # call so it can never survive to suppress a later, unrelated key.
+        if self._suppress_next_grid_enter:
+            self._suppress_next_grid_enter = False
+            if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space):
+                return True
+
         pos = self._book_grid.kbdnav_pos()
         if pos is None:
-            self._book_grid.set_kbdnav_pos((0, 0))
-            return True
+            # Only a key this method actually understands, arriving while the
+            # grid genuinely holds real Qt focus, should seed the cursor — this
+            # used to fire unconditionally for ANY key reaching here regardless
+            # of focus or key identity (found live 2026-09-13: "any key I press
+            # move[s] focus to thumbnail[0]"). The focus check additionally
+            # closes a narrower version of the Enter-double-dispatch bug fixed
+            # just below: a rename Enter that leaves kbdnav_pos at None (e.g.
+            # right after Tab, per the fix above) would otherwise still seed
+            # and select thumbnail[0] as a side effect of the phantom second
+            # delivery, even though nothing gets removed from that branch alone.
+            if (self._book_grid.hasFocus()
+                    and key in (Qt.Key.Key_Left, Qt.Key.Key_Right, Qt.Key.Key_Up,
+                                Qt.Key.Key_Down, Qt.Key.Key_Return, Qt.Key.Key_Enter,
+                                Qt.Key.Key_Space)):
+                self._book_grid.set_kbdnav_pos((0, 0))
+                return True
+            return False
         row, col = pos
 
         if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space):
+            # Real Qt focus, not just a non-None kbdnav_pos, must actually be on
+            # the grid before Enter/Space is allowed to act on it — closes a
+            # real, confirmed double-dispatch: QLineEdit's returnPressed slot
+            # can call clearFocus() synchronously (e.g. _on_rename's no-op-
+            # rename branch), and Qt re-delivers that SAME physical Return
+            # keypress to the eventFilter a second time once focus has moved.
+            # Without this guard, that second delivery reached here with a
+            # stale kbdnav_pos still pointing at some thumbnail and silently
+            # removed it from the tag — found live 2026-09-13: "if I press
+            # Enter during in-line edit without dirtying it, Enter goes to the
+            # book and deletes it." Nothing in this class's normal navigation
+            # ever changes real Qt focus (only kbdnav_pos), so this guard is
+            # inert for every legitimate keyboard-nav session.
+            if not self._book_grid.hasFocus():
+                return False
             path = self._book_grid.kbdnav_current_path()
             if path:
                 if other_click:
@@ -1505,6 +1566,7 @@ class TagManagerWidget(QWidget):
         self._current_tag = tag
         self._tag_name_original = tag
         self._confirming_delete = False
+        self._suppress_next_grid_enter = False
         self._show_reserved("none")
         if hasattr(self, '_action_btn'):
             self._action_btn.setEnabled(True)
@@ -1698,7 +1760,7 @@ class TagManagerWidget(QWidget):
             # here means the same thing leaving the field any other way means:
             # exit edit mode, same as Escape (_revert_tag_name is a no-op too
             # in this exact case, since the text already matches the original).
-            self._tag_name_edit.clearFocus()
+            self._exit_name_edit_to_grid()
             return
         if not new_name:
             return
@@ -1718,8 +1780,67 @@ class TagManagerWidget(QWidget):
             self._rename_revert_timer.setSingleShot(True)
             self._rename_revert_timer.timeout.connect(lambda: self._set_action_mode("delete"))
             self._rename_revert_timer.start(2000)
+            # Exit edit mode on a successful save too — this branch used to
+            # leave _tag_name_edit holding real focus indefinitely (the caret
+            # kept blinking after a save), unlike its no-op sibling above,
+            # which already released focus. That asymmetry was more than
+            # cosmetic: leaving focus in the field meant PRESSING ENTER AGAIN
+            # hit the no-op branch, whose bare clearFocus() dropped real Qt
+            # focus to NOTHING (not this widget, not the grid, not the panel)
+            # — and with focus at None, the very next arrow key was dispatched
+            # as a MainWindow-global shortcut (volume) instead of panel-local
+            # input, which calls hide_all_panels() and silently closed the
+            # whole Tags panel. Found live 2026-09-13. See
+            # _exit_name_edit_to_grid's own docstring for why landing on
+            # _book_grid, not just clearFocus(), is what actually closes this.
+            self._exit_name_edit_to_grid()
         else:
             self._set_action_mode("save_error")
+
+    def _exit_name_edit_to_grid(self) -> None:
+        """Leave the name field's edit mode and hand real Qt focus to the
+        thumbnail grid — the same "leaving the field" destination Tab already
+        uses (`_handle_tag_detail_keys`'s Tab branch). `clearFocus()` alone
+        drops real Qt focus to NOTHING, not to any other panel-local widget;
+        with the Tags panel still open but no widget in it focused,
+        `MainWindow._focus_allows_global_shortcuts()` reads focus as `None`
+        and treats the NEXT keypress as safe for a global shortcut (this is
+        correct when no panel is open at all, and wrong here) — reachable via
+        Enter in this field either after a successful rename or a no-op one,
+        both of which call this.
+
+        Also clears the grid's own kbdnav_pos to None, same as the Tab branch
+        already does — NOT redundant with it. `_tag_name_edit` can be entered
+        several ways besides Tab (a direct mouse click, or Up from the color
+        picker row), none of which reset kbdnav_pos, so a stale non-None
+        position from an earlier grid-navigation session could otherwise
+        survive into edit mode. Confirmed live 2026-09-13: the SAME Return
+        keypress that fires `_on_rename` gets redelivered by Qt a second time
+        once this method's setFocus(_book_grid) completes (the already-
+        diagnosed QLineEdit double-dispatch) — by then `_book_grid.hasFocus()`
+        is True, so `_handle_thumb_grid_keys`'s Enter/Space branch would act
+        on whatever stale position was left there, reopening the earlier
+        "Enter removes a thumbnail" bug via this new path if kbdnav_pos
+        weren't cleared here too.
+
+        Arms `_suppress_next_grid_enter` for the SAME reason, one layer up:
+        clearing kbdnav_pos stops the phantom redelivery from ACTING on a
+        stale thumbnail, but the grid's normal "no cursor yet -> Enter/Space
+        seeds thumbnail[0]" convenience (deliberate: that's the same behavior
+        a fresh panel-open gives a first Enter press) would otherwise still
+        fire for the phantom itself, since by the time it arrives
+        _book_grid.hasFocus() is genuinely True and kbdnav_pos is genuinely
+        None — indistinguishable from a real first keystroke by either of
+        those signals alone. Confirmed empirically 2026-09-13 that Qt gives no
+        reliable way to tell the phantom apart from a real Enter by event
+        identity or spontaneity, so this is a one-shot flag rather than a
+        detection trick: armed here, consumed by the very next Enter/Space
+        _handle_thumb_grid_keys sees, and cleared by ANY other key so it can
+        never suppress a later, genuinely new Enter press."""
+        self._tag_name_edit.clearFocus()
+        self._book_grid.set_kbdnav_pos(None)
+        self._book_grid.setFocus(Qt.FocusReason.OtherFocusReason)
+        self._suppress_next_grid_enter = True
 
     def _on_tag_name_changed(self, text: str):
         # A new edit starting must cancel any pending revert-to-"delete" from a
