@@ -540,9 +540,6 @@ class TagManagerWidget(QWidget):
         self._current_tag: str | None = None
         self._tag_name_original: str = ""
         self._confirming_delete: bool = False
-        # Set by _exit_name_edit_to_grid, consumed by the very next Enter/Space
-        # _handle_thumb_grid_keys sees — see that method's own comment on why.
-        self._suppress_next_grid_enter: bool = False
         # Keyboard cursor for the tag LIST (added 2026-09-08) — an index into
         # _tag_list_rows(), independent of ScrollHoverTracker's mouse-driven
         # _hovered (that tracker's own suspend() is the coexistence hook, see
@@ -1167,12 +1164,6 @@ class TagManagerWidget(QWidget):
                 # Qt focus) stayed visibly lingering after Tab moved focus away
                 # from the grid entirely (found live 2026-09-13).
                 self._book_grid.set_kbdnav_pos(None)
-                # A pending one-shot suppression (armed by _exit_name_edit_to_grid,
-                # meant to block only the very next Enter/Space) would otherwise
-                # survive indefinitely if the user Tabs back into the field before
-                # ever pressing Enter/Space in the grid — re-entering edit mode
-                # makes that stale expectation meaningless.
-                self._suppress_next_grid_enter = False
                 self._tag_name_edit.setFocus(Qt.FocusReason.TabFocusReason)
                 self._tag_name_edit.selectAll()
             return True
@@ -1325,38 +1316,25 @@ class TagManagerWidget(QWidget):
         if rows_count == 0:
             return False
 
-        # One-shot suppression armed by _exit_name_edit_to_grid — see its own
-        # docstring. Consumed here, ahead of everything else in this method,
-        # so it blocks Enter/Space from seeding thumbnail[0] as a side effect
-        # of the phantom post-rename Return redelivery, without touching the
-        # deliberate "no cursor yet -> Enter/Space selects thumbnail[0]"
-        # behavior for a genuinely fresh keystroke (found live 2026-09-13:
-        # every Enter used to land back on thumbnail[0] with a visible ring
-        # after leaving edit mode — dirtied or not — which is wrong; leaving
-        # edit mode should return to the SAME neutral, no-selection state a
-        # freshly-opened panel starts in). Cleared unconditionally on every
-        # call so it can never survive to suppress a later, unrelated key.
-        if self._suppress_next_grid_enter:
-            self._suppress_next_grid_enter = False
-            if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space):
-                return True
-
         pos = self._book_grid.kbdnav_pos()
         if pos is None:
-            # Only a key this method actually understands, arriving while the
-            # grid genuinely holds real Qt focus, should seed the cursor — this
-            # used to fire unconditionally for ANY key reaching here regardless
-            # of focus or key identity (found live 2026-09-13: "any key I press
-            # move[s] focus to thumbnail[0]"). The focus check additionally
-            # closes a narrower version of the Enter-double-dispatch bug fixed
-            # just below: a rename Enter that leaves kbdnav_pos at None (e.g.
-            # right after Tab, per the fix above) would otherwise still seed
-            # and select thumbnail[0] as a side effect of the phantom second
-            # delivery, even though nothing gets removed from that branch alone.
+            # Only a real NAVIGATION key seeds the cursor — Enter/Space never
+            # do, matching the tag list's own `_handle_tag_list_keys` (Enter/
+            # Space there is a no-op unless a row is already keyboard-selected;
+            # confirmed 2026-09-13 after this file previously stated the
+            # opposite, incorrectly). Enter/Space here is destructive (left-
+            # click-equivalent removes the book from the tag, with no undo —
+            # the only way back is finding that same book's own detail panel
+            # and re-adding the tag) — deliberately not something a bare Enter
+            # with no prior navigation should be able to trigger, avoiding the
+            # single-keystroke-with-no-visible-selection failure mode entirely
+            # rather than trying to guard around it case by case. This also
+            # used to fire unconditionally for ANY key regardless of focus or
+            # identity (found live 2026-09-13: "any key I press move[s] focus
+            # to thumbnail[0]") — the focus check closes that too.
             if (self._book_grid.hasFocus()
                     and key in (Qt.Key.Key_Left, Qt.Key.Key_Right, Qt.Key.Key_Up,
-                                Qt.Key.Key_Down, Qt.Key.Key_Return, Qt.Key.Key_Enter,
-                                Qt.Key.Key_Space)):
+                                Qt.Key.Key_Down)):
                 self._book_grid.set_kbdnav_pos((0, 0))
                 return True
             return False
@@ -1566,7 +1544,6 @@ class TagManagerWidget(QWidget):
         self._current_tag = tag
         self._tag_name_original = tag
         self._confirming_delete = False
-        self._suppress_next_grid_enter = False
         self._show_reserved("none")
         if hasattr(self, '_action_btn'):
             self._action_btn.setEnabled(True)
@@ -1821,26 +1798,15 @@ class TagManagerWidget(QWidget):
         is True, so `_handle_thumb_grid_keys`'s Enter/Space branch would act
         on whatever stale position was left there, reopening the earlier
         "Enter removes a thumbnail" bug via this new path if kbdnav_pos
-        weren't cleared here too.
-
-        Arms `_suppress_next_grid_enter` for the SAME reason, one layer up:
-        clearing kbdnav_pos stops the phantom redelivery from ACTING on a
-        stale thumbnail, but the grid's normal "no cursor yet -> Enter/Space
-        seeds thumbnail[0]" convenience (deliberate: that's the same behavior
-        a fresh panel-open gives a first Enter press) would otherwise still
-        fire for the phantom itself, since by the time it arrives
-        _book_grid.hasFocus() is genuinely True and kbdnav_pos is genuinely
-        None — indistinguishable from a real first keystroke by either of
-        those signals alone. Confirmed empirically 2026-09-13 that Qt gives no
-        reliable way to tell the phantom apart from a real Enter by event
-        identity or spontaneity, so this is a one-shot flag rather than a
-        detection trick: armed here, consumed by the very next Enter/Space
-        _handle_thumb_grid_keys sees, and cleared by ANY other key so it can
-        never suppress a later, genuinely new Enter press."""
+        weren't cleared here too. With kbdnav_pos None, that same phantom
+        redelivery lands in `_handle_thumb_grid_keys`'s `pos is None` branch —
+        which, as of 2026-09-13, no longer seeds a cursor from Enter/Space at
+        all (only real navigation keys do, matching the tag list's own
+        Enter/Space-is-a-no-op-with-no-selection behavior), so the phantom is
+        now inert there too without needing any dedicated suppression flag."""
         self._tag_name_edit.clearFocus()
         self._book_grid.set_kbdnav_pos(None)
         self._book_grid.setFocus(Qt.FocusReason.OtherFocusReason)
-        self._suppress_next_grid_enter = True
 
     def _on_tag_name_changed(self, text: str):
         # A new edit starting must cancel any pending revert-to-"delete" from a
