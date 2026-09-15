@@ -951,3 +951,93 @@ order these entries had in TODO.md before the split (2026-07-30).
   while the tag-detail sub-panel is open, as before), with a new branch scoped to exactly those two
   keys so every other list-view key still goes through the unaffected, unchanged
   `_tag_scroll`-scoped path. `3e21fc7`.
+
+- **[2026-09-15] CLOSED: Hover-pickup keyboard navigation for Settings/Speed/Sleep/Sprint/Stats,
+  plus the tab-bar mouse/keyboard mutual-exclusion gap it was folded into.** Two previously-paused
+  TODO items closed together in one session, since the second (tab-bar reclaim) turned out to need
+  the same anchor-discipline lesson the first one's two earlier failed attempts had already learned
+  the hard way. Both directions (keys picking up from a stationary mouse; mouse reclaiming from a
+  stale keyboard highlight) now ship for Settings' arrow-nav tabs, Speed, Sleep, Sprint, and Stats
+  (including its own tab bar and "⚙" tab), plus Tags' thumbnail grid gained the mouse-reclaim half
+  for the first time (it never had any reconciliation at all before this).
+
+  **Root cause of both prior anchor-refresh failures (attempts 1/2 above), finally confirmed
+  live:** pickup cannot share `_kbdnav_cursor_anchor` with `_set_keyboard_nav_active` at all, in
+  either direction (write OR read-only). `_set_keyboard_nav_active(True)` fires on EVERY qualifying
+  keypress, not just the first — it only skips the anchor WRITE once already active, but still runs
+  unconditionally before any arrow-handler method. On the very first arrow press after a panel
+  opens, that call IS the `False`→`True` transition, so it stamps `_kbdnav_cursor_anchor` to the
+  mouse's CURRENT position one line before pickup logic ever runs — silently erasing the "did the
+  mouse move before this press" signal pickup needs, on exactly the press that needed it most. A
+  fresh `_claim_panel_focus` anchor stamp (this session's first attempt at reviving the paused item)
+  was stranded the same way. Fixed by splitting off a wholly separate `_pickup_cursor_anchor`
+  (app.py) that `_set_keyboard_nav_active` never touches — written only by `_claim_panel_focus` (the
+  panel-open baseline) and by `_pickup_hover_target` itself after a successful pickup (so the next
+  check is "moved since the last pickup," not "moved since panel open" forever). Confirmed working
+  live by Pryme after this specific fix, distinguishing it from the earlier, still-broken attempt
+  that read the shared anchor: "Settings, Sprint, Sleep, Speed options buttons finally pick up from
+  the mouse highlight."
+
+  **Tab-bar mouse-reclaim (the folded-in second item) — the 2026-09-10 "no mechanism confirmed"
+  stuck-hover bug finally explained.** `QTabBar`'s native `:hover` is driven by real Qt
+  `HoverEnter/HoverMove/HoverLeave` events (`WA_Hover`, on by default) — while the mouse rests
+  somewhere else during keyboard suppression, no such event is ever delivered for the bar, so Qt's
+  internal `State_MouseOver` goes stale and does not self-correct, even on later GENUINE mouse
+  movement (confirmed directly: leaving and re-entering the bar does not fix it; only a click does).
+  Confirmed live via a synthetic `QMouseEvent(MouseMove)` dispatch that this is NOT fixable by
+  faking mouse movement — only a real `QHoverEvent` moves the internal state. Fix:
+  `MainWindow._resync_tab_bar_hover` dispatches one corrective `QHoverEvent(HoverMove)` at the
+  cursor's real position, from the exact call site `_set_keyboard_nav_active` already had for
+  repolishing the bar, the instant keyboard mode releases (`active=False`) — pure native-`:hover`
+  repaint, no custom paintEvent, so styling stays pixel-identical to native everywhere else in the
+  app (a hand-painted `KbdnavHoverTabBar` overlay was tried first this session and correctly
+  rejected live as visually inconsistent and fragile across desktop styles — reverted entirely, not
+  shipped).
+
+  This fix is *also* what makes the two originally-reverted suppression QSS rules
+  (`[kbdnav="true"][kbdnav_style="traveling"/"kbdnav_tab_focused"] QTabBar::tab:hover:!selected`,
+  themes.py) finally safe to port to `get_stats_stylesheet` — they were reverted in 2026-09-10
+  specifically because native hover never recovered once suppressed, which is precisely the bug
+  `_resync_tab_bar_hover` now fixes. Ported both. Without them, a keyboard-ONLY tab-bar session
+  (arrow keys only, mouse never moving at all) left a stale native `:hover` visible on whichever tab
+  the mouse had hovered before keyboard nav began — for the ENTIRE session, since the reclaim poll
+  only ever reacts to mouse MOVEMENT and never fires at all in this case. Live-reported and
+  precisely distinguished from the reclaim-poll mechanism (which traced as byte-identical between
+  Settings and Stats via a temporary `[KBDNAV-TRACE]` logger, later removed): "Overall tab is
+  selected, Month is hovered. I press right arrow, navigate the tabs, traveling marker is shown, the
+  Month tab still has the mouse hover highlight... That's the inconsistency between two panels." Two
+  more real, independent gaps found and fixed in the same pass: `_cursor_over_navigable_control`
+  never recognized Stats' own tab bar OR its "⚙" tab's button rows as navigable controls at all (it
+  only checked `flat_panel_rows`, which knows nothing about Stats), so the modality flag could never
+  clear there by any path regardless of the QSS/hover-event fixes above.
+
+  **Tags' thumbnail grid — new `GridHoverTracker` (hover_tracker.py), a 2-D sibling to the existing
+  `ScrollHoverTracker`** (row-band hit-testing doesn't fit a multi-column grid; `childAt()` does,
+  since each thumbnail is a real child widget, unlike a `QTabBar::tab` sub-control). Explicit design
+  call: NO mouse-hover visual on thumbnails at all — the tracker feeds keyboard pickup silently,
+  only the keyboard's own ring (`set_keyboard_focused`) ever paints. Found and fixed a real ordering
+  bug in `_TagBookGrid.set_kbdnav_pos`: applying the keyboard visual BEFORE suspending the mouse
+  tracker meant that seeding the keyboard cursor from a hovered thumbnail (the pickup case) had the
+  tracker's own suspend-triggered clear immediately undo the visual just shown — first arrow press
+  after a hover read as a no-op, second press (a real position change) was the first one that
+  visibly worked. Fixed by reordering: suspend first, apply the visual last.
+
+  **Tags list Enter/Space on a hovered-but-not-selected row** — extended to fall back to
+  `ScrollHoverTracker.hovered_row` when no keyboard cursor is active, matching how Library's mouse
+  hover already IS its real `currentIndex()` so Enter naturally acts on it there with no separate
+  mechanism needed. Deliberately scoped to the tag LIST only, NOT the thumbnail grid below it — the
+  grid's Enter/Space removes a book from the tag with no undo, and CLAUDE.md documents a real
+  2026-09-13 incident (a phantom Qt key-redelivery silently removing a book) that is specifically
+  why that grid requires a genuine keyboard press first, never a bare hover; extending hover-acts-
+  as-select there was explicitly deferred, not decided against.
+
+  Full session narrative (three rounds of live reports, each traced to a distinct, confirmed root
+  cause rather than patched blind) in SESSION.md, 2026-09-15. `513631e`.
+
+  **Not closed by this pass, deliberately left open:** Library's own instance of "keys don't pick up
+  from mouse hover, pagination jumps to the mouse" (2026-09-08 Session 4, still below in the open
+  TODO list) — named at the time as the natural next target for this same principle, but out of
+  scope for this session; Book Detail's tab bar was also never wired into this keyboard-modality
+  system at all (confirmed directly this session — `_kbdnav_active_panel_key` only recognizes
+  settings/speed/sleep/sprint/stats), a pre-existing gap rather than a regression, explicitly
+  deferred to a future session per Pryme's own call ("Fix Stats first, Book Detail later").

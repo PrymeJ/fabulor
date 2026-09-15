@@ -1,3 +1,57 @@
+## Hover-pickup keyboard navigation + tab-bar mouse-reclaim — 2026-09-15 Session 1
+
+Two directions on each surface: keys picking up from wherever the mouse is hovering (no keyboard
+cursor active yet), and mouse hover reclaiming a stale keyboard highlight once it's genuinely the
+most-recent input. All confirmed live in this session except where noted.
+
+### Keys pick up from mouse hover (Settings, Speed, Sleep, Sprint, Stats)
+- [x] Settings, any arrow-nav tab (Look/Controls/Audio/Library/Themes): rest the mouse over a
+  button, press an arrow with NO prior keyboard nav this session — the keyboard cursor should
+  seed from that button, not the tab's first row
+- [x] Settings tab bar: hover a different tab than the currently selected one, press an arrow —
+  picks up from the hovered tab
+- [x] Speed / Sleep / Sprint panels: same check, hover a preset button then press an arrow
+- [ ] Stats "⚙" tab: hover a button (day-start-hour spinbox, reset button), press an arrow —
+  picks up from hover (added same session as the fix above; confirm separately from the four
+  panels already verified)
+- [ ] On a FRESH panel open, with the mouse resting somewhere but never having moved since open:
+  arrows should start from the DEFAULT (first row), not pick up from the resting mouse — pickup
+  requires genuine movement, not just presence
+- [ ] Hold an arrow key with the mouse completely stationary: pickup should not re-trigger on
+  every repeat, keyboard nav should continue normally from wherever it already is
+
+### Mouse hover reclaims from keyboard (Settings and Stats tab bars)
+- [ ] Settings tab bar: arrow-navigate between tabs (marker visible on one), then move the mouse
+  to hover a DIFFERENT tab — the marker/keyboard highlight should disappear and native hover
+  should show on the tab the mouse is over
+- [ ] Stats tab bar: same check — arrow through Overall/Timeline/Day/Week/Month/⚙, then hover a
+  different tab with the mouse; this was the ORIGINAL reported bug (two earlier attempts failed,
+  see NOTES.md 2026-09-10/2026-09-15) — verify carefully across a few repetitions
+- [ ] Stats tab bar, KEYBOARD-ONLY session: hover a tab with the mouse, then switch tabs using
+  ONLY arrow keys (mouse never moves again) — the originally-hovered tab must NOT stay visibly
+  highlighted through the whole sequence (this was the specific reproduction that found the real
+  bug — a stationary mouse never triggers the reclaim poll at all, so this exercises the QSS
+  suppression rules, not the poll)
+- [ ] Compare Settings vs. Stats side by side doing the identical sequence — should look and
+  behave identically in both directions
+
+### Tags — thumbnail grid mouse/keyboard pickup, and list Enter-on-hover
+- [ ] Tags → open a tag's detail view → hover a thumbnail with the mouse (confirm NO visual
+  highlight appears from hover alone — this is intentional, only the keyboard ring should ever
+  show) → press an arrow key → the keyboard ring should appear on the PREVIOUSLY HOVERED
+  thumbnail on the FIRST press, not require a second press
+- [ ] Tags list (not the thumbnail grid) → hover a tag row with the mouse, no keyboard cursor
+  active → press Enter or Alt+Enter directly — should open that tag's detail view immediately,
+  matching Library's own hover+Enter behavior
+- [ ] Tags thumbnail grid → hover a thumbnail, press Enter/Space with NO prior arrow press —
+  should still be a no-op (deliberately NOT extended to hover — destructive, no-undo action, see
+  CLAUDE.md's 2026-09-13 incident)
+
+### Explicitly NOT in scope for this session — confirm these still show their PRE-EXISTING behavior, unchanged
+- [ ] Book Detail's own tab bar: no keyboard arrow-nav, no mouse-reclaim styling change (never
+  wired into this system at all — confirm nothing broke, not that it now works)
+- [ ] Library: keyboard nav does NOT yet pick up from mouse hover (open TODO item, unchanged)
+
 ## Confirmation-dialog keyboard consistency — Escape/Delete/swallow-and-dismiss — 2026-09-09 Session 1
 
 Nine sites total. All nine share the same two rules now: Escape (and every other non-Space/

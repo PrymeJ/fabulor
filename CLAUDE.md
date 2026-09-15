@@ -1771,7 +1771,41 @@ Any `QWidget` subclass (not `QFrame`, not `QLabel`) that owns a background-color
 
 *Reorganization note (2026-07-13): the "Critical Architecture Rules" section was restructured to remove repetition — it previously existed as two passes (a full-prose section and a later condensed second pass covering many of the same rules). The two were merged: rules that appeared in both now appear once, under whichever fact they share, with no information dropped. Rules unique to either pass are unchanged. See the note directly under the "Critical Architecture Rules" heading for detail.*
 
-*Last updated: 2026-09-13 Session 1 — Tab/Shift+Tab added to the Tags list, followed by a chain of
+*Last updated: 2026-09-15 Session 1 — Hover-pickup keyboard navigation (keys picking up from
+wherever the mouse is hovering) shipped for Settings/Speed/Sleep/Sprint/Stats, and mouse-reclaim-
+from-keyboard shipped for Settings'/Stats' tab bars — closing two TODO items that had been paused
+since 2026-09-08/2026-09-10. Also gave Tags' thumbnail grid mouse/keyboard hover reconciliation for
+the first time. Three live-reported rounds of bugs, each traced to a distinct, confirmed cause
+rather than patched on inference. Full trace-by-trace narrative: SESSION.md and NOTES.md, both
+2026-09-15. Commit `513631e`.
+
+**Two generalizable facts worth keeping separate from the session narrative:**
+
+1. **`_kbdnav_cursor_anchor` cannot be shared by any second consumer, even read-only, even with
+   care.** It answers one specific question — "where was the mouse when keyboard mode BEGAN" — and
+   `_set_keyboard_nav_active(True)` fires on EVERY qualifying keypress, not just the first; its
+   early-return only skips the anchor WRITE once already active, so the very FIRST arrow press
+   after a panel opens (the `False`→`True` transition) always re-stamps this anchor to the mouse's
+   CURRENT position before any handler that reads it runs. A hover-pickup feature needing "has the
+   mouse moved since I last checked" needs its OWN anchor (`_pickup_cursor_anchor`, added this
+   session) — this is the THIRD independently-discovered failure from assuming these two questions
+   could share one variable (TODO_ARCHIVE.md's "Attempt 1"/"Attempt 2" for the first two, in a
+   different form each time).
+2. **`QTabBar`'s native `:hover` is driven by real `HoverEnter`/`HoverMove`/`HoverLeave` events
+   (`WA_Hover`), not `MouseMove`.** A synthetic `QMouseEvent(MouseMove)` dispatched via
+   `QApplication.sendEvent` does NOT update `State_MouseOver` (confirmed directly — matches this
+   file's documented Wayland/KDE synthetic-event unreliability elsewhere, e.g. the Themes swatch
+   grid), but a synthetic `QHoverEvent(HoverMove)` DOES, cleanly and correctly. While the keyboard
+   suppresses native hover via QSS (`[kbdnav="true"]...`), the mouse resting elsewhere never
+   delivers such an event to the bar, so Qt's internal hover state goes stale and does NOT
+   self-correct even on later genuine mouse movement (leaving and re-entering the bar doesn't fix
+   it — only a click does). `MainWindow._resync_tab_bar_hover` dispatches one corrective
+   `QHoverEvent(HoverMove)` at the real cursor position the instant keyboard mode releases — this
+   is what finally makes Settings' two pre-existing tab-bar hover-suppression QSS rules safe to
+   port to Stats (two earlier 2026-09-10 attempts broke reclaim in exactly this way and were
+   reverted with "no mechanism confirmed" — see NOTES.md 2026-09-10 and 2026-09-15).
+
+*Previously: 2026-09-13 Session 1 — Tab/Shift+Tab added to the Tags list, followed by a chain of
 keyboard bugs in a tag's detail view, one genuinely data-loss-adjacent (Enter silently removing a
 book from a tag) and one caused by the fix for it (the whole panel dismissing itself). Full
 trace-by-trace narrative: SESSION.md, 2026-09-13 Session 1. Commits `3e21fc7`, `dc4e176`, `ae8bc9d`,
