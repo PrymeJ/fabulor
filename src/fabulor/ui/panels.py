@@ -2999,6 +2999,15 @@ class PanelManager:
     # focus); every other panel routes through these two helpers instead of duplicating the
     # isAncestorOf/ordering logic six times.
 
+    # Panels whose keyboard nav participates in the _kbdnav_cursor_anchor/hover-pickup
+    # machinery (app.py's MainWindow._pickup_hover_target) — all five panels
+    # MainWindow._kbdnav_active_panel_key recognises. "stats" was added 2026-09-15
+    # (Live design call: its own "⚙" tab's button rows should pick up from hover too,
+    # matching the other four) — Day/Week/Month's row lists are UNAFFECTED by this: they
+    # use their own separate, independent poll (StatsRowListView._kbdnav_hover_poll),
+    # not this shared anchor at all.
+    _HOVER_PICKUP_PANEL_KEYS = frozenset(("settings", "speed", "sleep", "sprint", "stats"))
+
     def _claim_panel_focus(self, panel_widget, panel_key: str = None):
         """Call once a panel/overlay has been shown and raised, to give it real Qt focus.
         Prefers the first Tab-order-eligible child (panel_tab_widgets, panel_key given) —
@@ -3017,6 +3026,21 @@ class PanelManager:
                 panel_widget.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
             target = panel_widget
         target.setFocus(Qt.FocusReason.OtherFocusReason)
+        # Hover-pickup baseline (2026-09-15). Stamps `_pickup_cursor_anchor` — NOT
+        # `_kbdnav_cursor_anchor` (see that attribute's own __init__ comment in app.py
+        # for why the two must never be conflated: _set_keyboard_nav_active(True) fires
+        # on EVERY qualifying keypress, including the first, and overwrites
+        # _kbdnav_cursor_anchor to the mouse's CURRENT position before
+        # _pickup_hover_target ever runs — a first attempt at this stamped that shared
+        # anchor and was silently defeated by exactly that overwrite, confirmed live:
+        # "Yet to pick up from the mouse... in the settings buttons" persisted even
+        # after that fix landed). Without this stamp, `_pickup_cursor_anchor` stays
+        # None until the first successful pickup writes it, so a mouse that moved
+        # before ANY key was pressed would never be detected as having moved. Stamping
+        # here, at panel-open, establishes wherever the mouse was BEFORE any key was
+        # ever pressed as the baseline.
+        if panel_key in self._HOVER_PICKUP_PANEL_KEYS:
+            self.main_window._pickup_cursor_anchor = QCursor.pos()
 
     def _release_panel_focus(self, panel_widget):
         """Call AFTER panel_widget.hide(), symmetric with _claim_panel_focus. Ordering is

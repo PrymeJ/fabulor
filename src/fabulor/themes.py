@@ -4982,6 +4982,25 @@ def get_stats_stylesheet(theme_name="default"):
         QWidget#stats_panel[kbdnav="true"][kbdnav_style="traveling"] QPushButton#pattern_button[selected="true"]:hover {{
             background: {t['accent']};
         }}
+        /* Traveling-style tab-bar hover suppression (2026-09-15) — the ACTUAL original gap
+           this whole investigation started from (live report: "Stats doesn't have that,
+           and two highlights coexist at the same time"). Mirrors get_settings_stylesheet's
+           identical rule exactly. This is NOT the same fix as MainWindow._resync_tab_bar_hover
+           (app.py) — that one corrects Qt's native :hover state at the MOMENT keyboard mode
+           hands back to the mouse (a poll-driven, one-shot dispatch); THIS rule is what keeps
+           a stale native :hover from ever being visible AT ALL while the keyboard is actively
+           driving, including when the keyboard switches tabs with the mouse sitting
+           COMPLETELY STILL the whole time — a case the poll never fires for at all, since it
+           only reacts to mouse MOVEMENT. Two earlier attempts at this exact rule (2026-09-10,
+           see NOTES.md "Stats tab-bar hover-suppression port") were reverted because native
+           :hover never recovered afterward once suppressed — that reclaim bug is what
+           _resync_tab_bar_hover now fixes (confirmed via live [KBDNAV-TRACE] logging,
+           2026-09-15: the poll/dispatch mechanism is proven correct and identical to
+           Settings'), so this rule is safe to add now where it wasn't before. */
+        QWidget#stats_panel[kbdnav="true"][kbdnav_style="traveling"] QTabBar::tab:hover:!selected {{
+            background: {t['bg_deep']};
+            color: rgba({text_rgb}, 0.9);
+        }}
         /* Fill-highlight, tab-bar case — mirrors get_settings_stylesheet's identical rule
            (added 2026-09-08) using the SAME tab_hover_bg/opacity/text key mouse hover already
            uses, for the same "keyboard focus should look like mouse hover on a tab, not like a
@@ -4994,6 +5013,16 @@ def get_stats_stylesheet(theme_name="default"):
         QWidget#stats_panel[kbdnav="true"][kbdnav_tab_focused="true"] QTabBar::tab:selected {{
             background: rgba({_hex_to_rgb(tab_hover_bg)}, {tab_hover_opacity});
             color: {tab_hover_text};
+        }}
+        /* Fill-highlight mouse-hover takeaway, tab-bar case — mirrors get_settings_
+           stylesheet's identical rule; see this file's own traveling-style suppression
+           rule above for why this is safe to add now (2026-09-15) where it wasn't in the
+           2026-09-10 reverted attempt (_resync_tab_bar_hover's reclaim fix). Same
+           kbdnav_tab_focused scoping as the :selected fill rule immediately above —
+           suppresses ONLY while the tab bar itself is the genuinely focused widget. */
+        QWidget#stats_panel[kbdnav="true"][kbdnav_tab_focused="true"] QTabBar::tab:hover:!selected {{
+            background: {t['bg_deep']};
+            color: rgba({text_rgb}, 0.9);
         }}
         QSpinBox {{
             background-color: {t['bg_dropdown']};

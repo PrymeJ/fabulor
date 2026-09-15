@@ -13,7 +13,7 @@ from .library import _cover_cache, _fold_diacritics
 from .icon_utils import render_logo_placeholder_bordered as _render_svg_placeholder_bordered
 from .text_context_menu import ContextIconMenu
 from .line_edit_dragfix import DragSafeLineEdit
-from .hover_tracker import ScrollHoverTracker
+from .hover_tracker import ScrollHoverTracker, GridHoverTracker
 from . import scrollbar_jump
 
 logger = logging.getLogger(__name__)
@@ -426,14 +426,49 @@ class _TagBookGrid(QScrollArea):
     def kbdnav_pos(self):
         return self._kbdnav_pos
 
+    def pos_of(self, thumb: "_TagBookThumb") -> tuple[int, int] | None:
+        """(row, col) of `thumb` in the real grid, or None if it isn't currently placed
+        (e.g. already removed from a stale reference). Used by TagManagerWidget's mouse-
+        hover handling to convert a GridHoverTracker hit (a widget) into the same
+        (row, col) coordinate _kbdnav_pos already uses, so a keyboard press right after a
+        mouse hover continues from wherever the mouse was — one shared position, same
+        principle as the tag list's ScrollHoverTracker.hovered_row -> _kbdnav_row_index
+        pickup."""
+        idx = self._grid.indexOf(thumb)
+        if idx < 0:
+            return None
+        row, col, _, _ = self._grid.getItemPosition(idx)
+        return (row, col)
+
     def set_kbdnav_pos(self, pos: tuple[int, int] | None) -> None:
+        # notify_kbdnav_pos_changed FIRST, _apply_kbdnav_visual LAST — load-bearing order
+        # (found live 2026-09-15). notify_kbdnav_pos_changed suspends GridHoverTracker,
+        # which clears ITS OWN idea of "hovered" and fires on_hover_changed(old_hover,
+        # None) up to TagManagerWidget — a real, needed signal (the mouse-hover ring on
+        # whatever was previously hovered must come down), but it is NOT the same cell
+        # this call is about to put the KEYBOARD ring on. Applying the visual before
+        # suspending had the keyboard's own fresh set_keyboard_focused(True) immediately
+        # undone by the suspend-triggered set_keyboard_focused(False) one line later,
+        # since both target the same widget when the keyboard seeds its cursor from
+        # wherever the mouse was already hovering (_handle_thumb_grid_keys' hover-pickup)
+        # — every OTHER keyboard move (mouse hovering nothing, or a different cell) never
+        # hit this because the two calls then target different widgets. Symptom: seeding
+        # from hover was a silent no-op on the very FIRST press, and the ring only
+        # appeared on the SECOND press once the pos actually changed and _apply_kbdnav_
+        # visual's own un-then-re-apply masked the ordering bug. Now the suspend-driven
+        # clear always lands before the real visual apply, so the apply is always the
+        # last word regardless of whether the two calls happen to target the same cell.
         self._kbdnav_pos = pos
+        self.notify_kbdnav_pos_changed(pos is not None)
         self._apply_kbdnav_visual()
         if pos is not None:
             item = self._grid.itemAtPosition(*pos)
             w = item.widget() if item is not None else None
             if w is not None:
                 self.ensureWidgetVisible(w, 0, 0)
+
+    def notify_kbdnav_pos_changed(self, active: bool) -> None:
+        pass
 
     def kbdnav_grid_shape(self) -> tuple[int, int]:
         """(row_count, cols) for the REAL thumbnail grid — cols is always
@@ -843,7 +878,22 @@ class TagManagerWidget(QWidget):
         self._book_grid = _TagBookGrid(self._assets_dir, self._placeholder_color_tags)
         self._book_grid.parent_remove = self._on_grid_remove
         self._book_grid.parent_detail = lambda path: self.detail_requested.emit(path)
+        self._book_grid.notify_kbdnav_pos_changed = self._on_thumb_kbdnav_pos_changed
         panel_layout.addWidget(self._book_grid)
+        # Mouse-position tracking for the keyboard cursor's hover-pickup (2026-09-15) —
+        # NOT a visual: explicit design call, no separate mouse-hover highlight on
+        # thumbnails at all (only the keyboard cursor's own ring, via
+        # set_keyboard_focused, ever shows). GridHoverTracker.hovered_cell is read
+        # silently by _handle_thumb_grid_keys when seeding a fresh keyboard cursor — see
+        # that method's own hover-pickup comment — so this exists purely to answer
+        # "which thumbnail is the mouse over right now" for that one purpose, with no
+        # on_hover_changed callback and therefore nothing painted from hover alone.
+        self._thumb_hover = GridHoverTracker(
+            self._book_grid, self._book_grid._container,
+            is_cell=lambda w: isinstance(w, _TagBookThumb),
+            parent=self,
+            on_mouse_reclaim=self._on_mouse_reclaimed_thumb_grid,
+        )
 
         self._stack_layout.addWidget(self._panel_widget)
 
@@ -964,6 +1014,35 @@ class TagManagerWidget(QWidget):
             rows[idx].style().polish(rows[idx])
         self._kbdnav_row_index = None
 
+    def _on_thumb_kbdnav_pos_changed(self, active: bool) -> None:
+        """Wired to _TagBookGrid.notify_kbdnav_pos_changed (the single chokepoint every
+        set_kbdnav_pos call funnels through). Suspends/resumes GridHoverTracker in
+        lockstep with the keyboard cursor becoming active/inactive — same
+        "designed for keyboard selection to land on top" contract ScrollHoverTracker's
+        own docstring describes, applied here via the callback-attribute indirection
+        _TagBookGrid already uses for parent_remove/parent_detail (see set_kbdnav_pos's
+        own comment for why this couldn't just be a direct self._thumb_hover.suspend()
+        call the way the tag list's _set_kbdnav_row makes one directly — that method
+        IS the tag list's single chokepoint; _kbdnav_pos here lives one layer down, on
+        _TagBookGrid itself, not on TagManagerWidget). Guarded with getattr since this
+        callback is wired to _book_grid BEFORE _thumb_hover is constructed a few lines
+        later in __init__ — harmless in practice (nothing calls set_kbdnav_pos during
+        construction), but a call arriving in that narrow window shouldn't raise."""
+        tracker = getattr(self, '_thumb_hover', None)
+        if tracker is not None:
+            tracker.suspend(active)
+
+    def _on_mouse_reclaimed_thumb_grid(self) -> None:
+        """Called by GridHoverTracker the instant it detects the REAL mouse has genuinely
+        moved while the keyboard cursor was active on the thumbnail grid — same
+        most-recent-input-wins contract as _on_mouse_reclaimed_tag_list above. Clears the
+        keyboard cursor's own ring via set_kbdnav_pos(None) — unlike the tag list (which
+        manipulates the `hovered` property directly here to avoid double-suspending its
+        tracker), _TagBookGrid's set_kbdnav_pos already does exactly the right single
+        thing (clear _kbdnav_pos, reapply the now-empty visual) with no tracker of its
+        own to conflict with."""
+        self._book_grid.set_kbdnav_pos(None)
+
     def _set_kbdnav_row(self, index: int | None) -> None:
         """Move the tag-list keyboard cursor to `index` (or clear it with None),
         updating the visual highlight and suspending/resuming mouse hover to
@@ -1008,8 +1087,23 @@ class TagManagerWidget(QWidget):
         if not rows:
             return False
         if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space):
-            if self._kbdnav_row_index is not None and 0 <= self._kbdnav_row_index < len(rows):
-                tag = rows[self._kbdnav_row_index].property("tag_name")
+            # Enter/Space act on the keyboard cursor when one is active, falling back to
+            # whatever the MOUSE is hovering otherwise — live-reported 2026-09-15: hovering
+            # a tag row and pressing Enter directly (with no prior arrow press) did nothing,
+            # unlike Library, where mouse hover already IS the real currentIndex() so Enter
+            # naturally acts on it (see LibraryPanel._on_view_entered). This is scoped to the
+            # tag LIST only, deliberately NOT the thumbnail grid below — opening a tag is
+            # non-destructive (matches Library's own click-equivalent semantics), whereas the
+            # thumbnail grid's Enter/Space removes a book from the tag with no undo, and
+            # CLAUDE.md documents a real incident (2026-09-13) that's specifically why THAT
+            # grid requires an actual keyboard press first, never a bare hover — left
+            # unchanged, a decision explicitly deferred rather than extended here.
+            index = self._kbdnav_row_index
+            if index is None:
+                hovered = self._row_hover.hovered_row
+                index = rows.index(hovered) if hovered in rows else None
+            if index is not None and 0 <= index < len(rows):
+                tag = rows[index].property("tag_name")
                 if tag:
                     self._open_tag(tag)
             return True
@@ -1335,7 +1429,14 @@ class TagManagerWidget(QWidget):
             if (self._book_grid.hasFocus()
                     and key in (Qt.Key.Key_Left, Qt.Key.Key_Right, Qt.Key.Key_Up,
                                 Qt.Key.Key_Down)):
-                self._book_grid.set_kbdnav_pos((0, 0))
+                # Hover pickup (2026-09-15): seed from wherever the mouse is currently
+                # hovering, when there is one — same principle and same read-only-hook
+                # shape as _handle_tag_list_keys' own ScrollHoverTracker.hovered_row
+                # pickup. Falls back to (0, 0) exactly as before when nothing is
+                # hovered (mouse elsewhere, or the panel just opened).
+                hovered = self._thumb_hover.hovered_cell
+                seed = self._book_grid.pos_of(hovered) if hovered is not None else None
+                self._book_grid.set_kbdnav_pos(seed if seed is not None else (0, 0))
                 return True
             return False
         row, col = pos
@@ -1560,6 +1661,13 @@ class TagManagerWidget(QWidget):
             f"{len(books)} book{'s' if len(books) != 1 else ''}"
         )
         self._book_grid.set_books(books)
+        # Force an immediate re-check against the BRAND-NEW thumbnails just built above
+        # — same reasoning as ScrollHoverTracker.resync's own docstring (and the tag
+        # list's identical fix, above): a cursor already resting inside a freshly-built
+        # thumbnail's geometry produces no Enter/Leave crossing to trigger this
+        # automatically, so without this a thumbnail under a stationary cursor would
+        # stay unhighlightable until some other cell was hovered first.
+        self._thumb_hover.resync()
 
         self._list_widget.hide()
         self._panel_widget.show()

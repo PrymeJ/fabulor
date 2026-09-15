@@ -10,11 +10,11 @@ from PySide6.QtWidgets import (
     QApplication, QGraphicsBlurEffect, QGraphicsOpacityEffect, QLineEdit, QLabel, QSpinBox,
 )
 from PySide6.QtCore import (
-    Qt, QTimer, QPoint, QRect, QEvent, QPropertyAnimation, QEasingCurve, QModelIndex,
+    Qt, QTimer, QPoint, QPointF, QRect, QEvent, QPropertyAnimation, QEasingCurve, QModelIndex,
     QRegularExpression, Signal, QObject, QElapsedTimer, QSize, QVariantAnimation, QThreadPool,
     QItemSelectionModel,
 )
-from PySide6.QtGui import QPixmap, QColor, QIntValidator, QRegularExpressionValidator, QIcon, QPainter, QKeyEvent, QCursor
+from PySide6.QtGui import QPixmap, QColor, QIntValidator, QRegularExpressionValidator, QIcon, QPainter, QKeyEvent, QCursor, QHoverEvent
 
 from .player import Player, _CHAPTER_BOUNDARY_EPSILON, _CHAPTER_WALK_TOLERANCE
 from .config import Config
@@ -755,6 +755,29 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self._kbdnav_cursor_poll = QTimer(self)
         self._kbdnav_cursor_poll.setInterval(_KBDNAV_CURSOR_POLL_MS)
         self._kbdnav_cursor_poll.timeout.connect(self._on_kbdnav_cursor_poll)
+        # SEPARATE from _kbdnav_cursor_anchor above — do not merge these (2026-09-15,
+        # found live after two failed attempts assumed they could share one anchor).
+        # _kbdnav_cursor_anchor answers "where was the mouse when keyboard mode BEGAN"
+        # and is deliberately fixed for the FULL duration of a keyboard-nav session
+        # (only _set_keyboard_nav_active's False->True transition writes it) — that is
+        # exactly what makes _on_kbdnav_cursor_poll's hand-back check work at all.
+        # Hover-PICKUP needs a different question answered: "has the mouse moved since
+        # the LAST time pickup was checked" — and _set_keyboard_nav_active(True) fires
+        # on EVERY qualifying keypress (it only SKIPS the anchor write when already
+        # active, but still runs unconditionally before _handle_settings_arrows/
+        # _handle_flat_panel_arrows/_handle_stats_arrows on every press). On the very
+        # FIRST arrow press after a panel opens, _keyboard_nav_active is False, so that
+        # call IS the active==False->True transition and overwrites _kbdnav_cursor_
+        # anchor to the CURRENT cursor position one line before _pickup_hover_target
+        # ever runs — silently erasing the exact "mouse moved before this press" signal
+        # pickup needs, on precisely the press it needs it most. This stranded a
+        # from-scratch _claim_panel_focus stamp the same way (confirmed live:
+        # "Yet to pick up from the mouse... in the settings buttons" persisted even
+        # after that fix). _pickup_cursor_anchor is stamped ONLY by _claim_panel_focus
+        # (panel-open baseline) and by _pickup_hover_target itself after a successful
+        # pickup (so the NEXT check is "moved since the last pickup", not "moved since
+        # panel open" forever) — _set_keyboard_nav_active never touches it.
+        self._pickup_cursor_anchor = None
         # Themes-tab rotation-interval digit shortcut buffer — see _handle_themes_shortcuts.
         # Mirrors ChapterList's own digit-jump debounce (chapter_list.py) exactly: 800ms
         # single-shot, restarted on every digit, buffer read and cleared only when it fires.
@@ -4106,6 +4129,77 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # (together with the NoFocus chrome buttons) it can never move focus anywhere.
         return True
 
+    def _pickup_hover_target(self, focus, rows: list, panel_key: str = "settings"):
+        """Hover-pickup: on every arrow-key press (not merely when focus is somewhere
+        invalid — see the CORRECTION note below), check whether the mouse has genuinely
+        moved since the last pickup check (via `_pickup_cursor_anchor`/
+        _KBDNAV_CURSOR_JITTER_PX — see the SECOND correction note below for why this is
+        a dedicated anchor, not `_kbdnav_cursor_anchor`) and, if so, ask Qt directly
+        what real widget it is over now (QApplication.widgetAt(QCursor.pos())). If
+        that's a recognised member of `rows` (or the panel's tab bar, for
+        "settings"/"stats"), give it real Qt focus so the caller's own lookup finds it
+        and proceeds exactly as if focus had started there. Returns `focus` unchanged
+        when there's nothing to pick up.
+
+        CORRECTION (2026-09-15, live-reported): the first version of this method only
+        ran when `focus` wasn't already a recognised row member — reasoning that a
+        "pickup" only makes sense when focus is somewhere invalid. That is wrong for
+        this app's actual modality: real Qt focus is ALWAYS on a valid row member while
+        a keyboard-navigable panel is open (_claim_panel_focus's own invariant — some
+        widget always holds focus), so that gate was permanently false and pickup could
+        never fire at all except in a corner case that doesn't occur in practice.
+        Reported live as "it picks up from the place from where key nav was last in, not
+        the mouse." The actual signal needed is most-recent-input-wins: has the mouse
+        moved since the keyboard last drove, REGARDLESS of whether current focus is
+        otherwise perfectly valid. `[kbdnav="true"]` suppresses native `:hover` on these
+        buttons while keyboard mode is active, so the mouse resting somewhere produces no
+        visible feedback at all until it actually MOVES — which is exactly what the
+        jitter check answers, and why a plain "is the mouse over something different"
+        check (with no movement requirement) would be wrong too: it would hijack focus
+        away from a stationary keyboard cursor just because the mouse happens to rest
+        over some other button, which was explicitly rejected in this plan's own design
+        notes ("On panel open, arrows always start from the default... until the mouse
+        genuinely moves").
+
+        Uses `_pickup_cursor_anchor` — a SEPARATE variable from `_kbdnav_cursor_anchor`,
+        READ AND ADVANCED here, never touched by _set_keyboard_nav_active (see that
+        attribute's own __init__ comment for exactly why the two can't share one
+        anchor: _set_keyboard_nav_active(True) fires on EVERY qualifying keypress, not
+        just the first, and overwrites _kbdnav_cursor_anchor to the CURRENT mouse
+        position on the very press this method would otherwise need "before this
+        press" data from). Two prior attempts at this exact feature (TODO.md,
+        "Attempt 1"/"Attempt 2") broke hover suppression app-wide by writing to THAT
+        shared anchor from a pickup site; this method writes to a wholly separate one
+        instead, so it can never step on _on_kbdnav_cursor_poll's own hand-back check.
+        QApplication.widgetAt is the live hit-test itself (confirmed directly,
+        2026-09-15; also already used elsewhere in this app, transport_bar_blur.py).
+
+        Mirrors Tags' own ScrollHoverTracker-driven pickup (_handle_tag_list_keys): confirmed
+        directly against that method that it moves PAST the hovered row on the very first
+        press, not landing ON it first — so this does the same: redirect focus, then let the
+        rest of the caller's method run unmodified on the very same keypress."""
+        anchor = self._pickup_cursor_anchor
+        if anchor is None:
+            return focus
+        pos = QCursor.pos()
+        if (abs(pos.x() - anchor.x()) < _KBDNAV_CURSOR_JITTER_PX
+                and abs(pos.y() - anchor.y()) < _KBDNAV_CURSOR_JITTER_PX):
+            return focus  # hasn't moved since the last pickup check
+        widget = QApplication.widgetAt(pos)
+        if widget is None or widget is focus:
+            return focus
+        if panel_key in ("settings", "stats"):
+            tab_bar = self._kbdnav_tab_bar_for(panel_key)
+            if widget is tab_bar:
+                self._pickup_cursor_anchor = pos
+                widget.setFocus(Qt.FocusReason.OtherFocusReason)
+                return widget
+        if not any(widget is w for row in rows for w in row):
+            return focus  # not a control this caller recognises — nothing to pick up
+        self._pickup_cursor_anchor = pos
+        widget.setFocus(Qt.FocusReason.OtherFocusReason)
+        return widget
+
     def _handle_settings_arrows(self, event) -> bool:
         """Arrow-key navigation for the button-row settings tabs (Look, Controls, Audio,
         Library, Themes — see panels._ARROW_NAV_TABS). Returns True iff this consumed the
@@ -4166,6 +4260,13 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         rows = self.panel_manager.settings_tab_button_rows()
         if not rows:
             return False
+        # Hover pickup (2026-09-15): checked on EVERY qualifying keypress, not just when
+        # focus is somewhere invalid — real Qt focus is always on a valid control while
+        # this panel is open, so gating on "focus not found" never fired in practice
+        # (see _pickup_hover_target's own CORRECTION note for the live report that
+        # caught this). The method itself is the real gate: it only redirects focus when
+        # the mouse has genuinely moved since keyboard mode last asserted.
+        focus = self._pickup_hover_target(focus, rows, "settings")
 
         # Space AND Return/Enter both toggle the current row's selection on a focused LIST BOX —
         # deliberately the SAME action on both keys, not split into "add"/"remove". A live report
@@ -4554,6 +4655,11 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         rows = self.panel_manager.stats_tab_button_rows()
         if not rows:
             return False
+        # Hover pickup (2026-09-15) — same mechanism as _handle_settings_arrows'/
+        # _handle_flat_panel_arrows' own pickup call; see _pickup_hover_target's
+        # docstring. Checked on every qualifying keypress; the method itself gates on
+        # whether the mouse has genuinely moved since keyboard mode last asserted.
+        focus = self._pickup_hover_target(focus, rows, "stats")
         pos = next(((r, c) for r, row in enumerate(rows)
                     for c, w in enumerate(row) if w is focus), None)
         if pos is None:
@@ -4911,6 +5017,12 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         rows = self.panel_manager.flat_panel_rows(panel_key)
         if not rows:
             return False
+        # Hover pickup (2026-09-15): same shape as _handle_settings_arrows' own pickup call
+        # — checked on EVERY qualifying keypress, not gated on "focus not found" (see
+        # _pickup_hover_target's CORRECTION note). Done once here, before grid_layout_for
+        # below, so BOTH downstream paths (a preset-grid cell and an ordinary flat row)
+        # benefit from a single pickup site rather than needing the fix twice.
+        focus = self._pickup_hover_target(focus, rows, panel_key)
         # Alt added 2026-09-10 as a synonym for Shift here — Library already used Alt+Enter
         # for its own "open detail" action and Tags already accepted both (see
         # _handle_thumb_grid_keys in tag_manager.py); this closes the gap so Speed/Sleep/Sprint
@@ -5346,6 +5458,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 bar.style().unpolish(bar)
                 bar.style().polish(bar)
                 bar.update()
+                if not active:
+                    self._resync_tab_bar_hover(bar)
             # EVERY button under the panel, not just the current tab's and not filtered by
             # object name. Two reasons, both learned the hard way:
             #   * settings_tab_button_rows() only reports the CURRENT tab, so flipping the flag
@@ -5599,6 +5713,44 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self._set_keyboard_nav_active(False)
         self._update_focus_marker()
 
+    def _resync_tab_bar_hover(self, bar) -> None:
+        """Force `bar`'s native `:hover` to repaint against the cursor's REAL current
+        position, called from _set_keyboard_nav_active right after it un-suppresses hover
+        (kbdnav flips false) on a tab bar. Fixes a real bug two prior QSS-only attempts
+        couldn't (2026-09-10, see NOTES.md "Stats tab-bar hover-suppression port"): Qt's
+        internal `QTabBar` hover tracking is driven entirely by genuine
+        HoverEnter/HoverMove/HoverLeave events reaching the bar (confirmed directly,
+        2026-09-15 — `QTabBar` carries `WA_Hover` by default). While the mouse rests
+        somewhere else during keyboard suppression, no such event is ever delivered for it,
+        so simply un-suppressing the QSS property leaves Qt's own `State_MouseOver`
+        pointing at wherever it was BEFORE suppression started — stale, not re-evaluated —
+        and native `:hover` keeps painting that stale answer (or nothing) until an actual
+        click forces Qt to recompute it. Dispatching one real `QHoverEvent(HoverMove)` at
+        the bar, targeting the cursor's actual live position, tells Qt's own hover tracking
+        exactly what a genuine mouse move there would have: confirmed directly (2026-09-15)
+        this correctly clears whichever tab was stale-hovered and lights the real one, via
+        Qt's own native paint path — no property, no custom paintEvent, so the visual stays
+        pixel-for-pixel whatever the current desktop's native `:hover` rule already renders
+        everywhere else in the app. This is the ENTIRE fix for the mouse-reclaim direction;
+        the keyboard-suppresses-mouse direction needs nothing here — the existing
+        `[kbdnav="true"]... QTabBar::tab:hover:!selected` QSS rule already overrides the
+        background regardless of Qt's internal State_MouseOver, so a stale `True` underneath
+        it while suppressed is harmless.
+
+        Safe to call whenever the cursor is off the bar entirely too: a HoverMove at a local
+        position outside the bar's own rect still correctly reports "hovering nothing" to
+        Qt's tracking, which is exactly what should happen if the un-suppress didn't come
+        from the mouse resting on this bar in the first place (e.g. Escape closing the
+        panel). Uses the (scenePos, globalPos, oldPos) constructor rather than the shorter
+        (pos, oldPos) one — functionally identical (confirmed directly, 2026-09-15) but the
+        shorter form is flagged deprecated by Qt itself; oldPos is left at (-1, -1) since the
+        actual prior hover position doesn't matter here — Qt only needs `pos` to resolve
+        which tab (if any) the state now belongs to."""
+        global_pos = QCursor.pos()
+        local = QPointF(bar.mapFromGlobal(global_pos))
+        old = QPointF(-1, -1)
+        QApplication.sendEvent(bar, QHoverEvent(QEvent.Type.HoverMove, local, global_pos, old))
+
     def _settings_is_active(self) -> bool:
         """Whether the Settings panel is the open panel — the surface the keyboard/mouse
         modality applies to.
@@ -5626,8 +5778,14 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         `panel_key` generalizes this 2026-09-07 from Settings-only to Speed/Sleep/Sprint too —
         defaults to "settings" so the (many) existing call sites that only ever meant Settings
         stay unchanged. For "settings", behavior is byte-for-byte what it always was (tab bar +
-        settings_tab_button_rows()); for the other three, it checks panel_manager.
-        flat_panel_rows(panel_key) instead, which has no tab bar to check.
+        settings_tab_button_rows()); for the other four, it checks panel_manager.
+        flat_panel_rows(panel_key) — Speed/Sleep/Sprint have no tab bar at all, but Stats does
+        (checked via _kbdnav_tab_bar_for below, added 2026-09-15): without this, the mouse
+        moving onto Stats' tab bar was never recognised as "over a navigable control" at all,
+        so this poll could never hand keyboard mode back to the mouse there by any path — a
+        real, separate gap from the native-:hover-stale-paint bug _resync_tab_bar_hover fixes
+        (that one is about the paint never catching up once the flag DOES clear; this one is
+        about the flag never clearing on Stats' tab bar in the first place).
 
         Uses the same live row source as the arrow navigation so the two can't disagree about
         what a button is — notably, a hidden control is not in the rows and so is correctly not
@@ -5638,6 +5796,26 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         if not hasattr(self, 'tabs') or not hasattr(self, 'panel_manager'):
             return False
         if panel_key != "settings":
+            tab_bar = self._kbdnav_tab_bar_for(panel_key)
+            if tab_bar is not None and tab_bar.isVisible():
+                local = tab_bar.mapFromGlobal(global_pos)
+                if tab_bar.rect().contains(local) and tab_bar.tabAt(local) >= 0:
+                    return True
+            # Stats' "⚙" tab has its own button rows (day-start-hour spinbox, the reset
+            # button, etc.) — a SEPARATE row source from flat_panel_rows, which only
+            # knows about Speed/Sleep/Sprint's flat (tab-less) layouts and returns []
+            # for "stats" (confirmed directly, 2026-09-15 — the actual bug behind a live
+            # report: "Stats > Options... mouse hover doesn't even cancel the keyboard
+            # marker"). Without checking stats_tab_button_rows() here too, hovering a
+            # button INSIDE that tab was never recognised as "over a navigable control"
+            # at all, so this poll could never hand keyboard mode back to the mouse for
+            # any control other than the tab bar itself.
+            if panel_key == "stats":
+                for row in self.panel_manager.stats_tab_button_rows():
+                    for w in row:
+                        if w.rect().contains(w.mapFromGlobal(global_pos)):
+                            return True
+                return False
             for row in self.panel_manager.flat_panel_rows(panel_key):
                 for w in row:
                     if w.rect().contains(w.mapFromGlobal(global_pos)):

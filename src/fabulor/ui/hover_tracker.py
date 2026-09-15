@@ -265,3 +265,140 @@ class ScrollHoverTracker(QObject):
             widget.setProperty("hovered", "true" if state else "false")
             widget.style().unpolish(widget)
             widget.style().polish(widget)
+
+
+class GridHoverTracker(QObject):
+    """Re-resolves the hovered CELL of a 2-D grid of widgets (e.g. a thumbnail grid)
+    whenever the mouse moves — the sibling to ScrollHoverTracker above for content that
+    isn't full-width rows. Same coexistence contract (suspend()/on_mouse_reclaim,
+    _MOUSE_RECLAIM_JITTER_PX) and same reason for existing at all (native `:hover` alone
+    goes stale under a still cursor when content moves, or never gets re-resolved for a
+    caller-owned keyboard visual) — the difference is purely the HIT TEST: a row tracker
+    only needs a y-band per row (`_row_at`), but a grid needs both dimensions, which
+    `QWidget.childAt(pos)` answers directly since each cell here is a real, separate
+    widget (unlike a `QTabBar::tab`, which is a sub-control with no widget of its own —
+    see MainWindow._resync_tab_bar_hover for that different case's own fix).
+
+    `container` is the widget whose children ARE the grid cells (e.g. `_TagBookGrid`'s
+    `self._container`, the QWidget the grid layout is installed on) — NOT the
+    QScrollArea itself, since `childAt()` needs to be called on the actual parent of the
+    cells. `is_cell` is a one-arg predicate distinguishing a real cell widget from
+    anything else `childAt()` might return (a layout spacer has no widget, but a cell's
+    OWN child widgets — e.g. a cover QLabel — would themselves be valid childAt() hits
+    and need walking up to the cell they belong to; see _cell_at).
+
+    Does not need ScrollHoverTracker's `verticalScrollBar().valueChanged` connection at
+    all: unlike a scrolled QVBoxLayout's rows, a QScrollArea's viewport moving under a
+    still cursor is exactly what the eventFilter's own Enter/Leave/Hover tracking
+    already answers correctly via `childAt()` re-evaluated fresh on the NEXT real event
+    — no separate "recompute after a valueChanged" path needed."""
+
+    def __init__(self, scroll, container, is_cell, parent=None, on_mouse_reclaim=None,
+                 on_hover_changed=None):
+        super().__init__(parent)
+        self._scroll = scroll
+        self._container = container
+        self._is_cell = is_cell
+        self._hovered = None
+        self._suspended = False
+        self._suspend_anchor = None
+        self._on_mouse_reclaim = on_mouse_reclaim
+        # Unlike ScrollHoverTracker (which owns its own `hovered` QSS-property visual
+        # directly, since every one of its rows follows that same convention),
+        # _TagBookThumb already has an established keyboard-focus visual
+        # (set_keyboard_focused/_focus_ring) that mouse hover should reuse rather than
+        # paint a second, different-looking highlight next to. This tracker stays
+        # visual-agnostic and hands the (previous, new) cell pair to the caller instead
+        # — same "generic tracker, caller-owned visual" split ScrollHoverTracker's own
+        # on_mouse_reclaim callback already uses for the keyboard-cursor side.
+        self._on_hover_changed = on_hover_changed
+        container.setMouseTracking(True)
+        scroll.viewport().setMouseTracking(True)
+        from PySide6.QtWidgets import QApplication
+        QApplication.instance().installEventFilter(self)
+
+    _TRACKED_EVENTS = None
+
+    def eventFilter(self, obj, event):
+        from PySide6.QtCore import QEvent
+        if GridHoverTracker._TRACKED_EVENTS is None:
+            GridHoverTracker._TRACKED_EVENTS = frozenset((
+                QEvent.Type.Enter, QEvent.Type.Leave, QEvent.Type.MouseMove,
+                QEvent.Type.HoverEnter, QEvent.Type.HoverMove, QEvent.Type.HoverLeave,
+            ))
+        if event.type() in GridHoverTracker._TRACKED_EVENTS:
+            try:
+                if self._scroll.isAncestorOf(obj):
+                    if self._suspended:
+                        self._maybe_reclaim_from_mouse()
+                    else:
+                        self._resync()
+            except (RuntimeError, TypeError):
+                pass
+        return False
+
+    @property
+    def hovered_cell(self):
+        """The cell widget currently under the cursor, or None."""
+        return self._hovered
+
+    def resync(self):
+        """Force an immediate re-check — call after any rebuild of the grid's cells,
+        same reasoning as ScrollHoverTracker.resync (a cursor already resting inside a
+        freshly-built cell's geometry produces no Enter/Leave crossing to trigger this
+        automatically)."""
+        self._resync()
+
+    def suspend(self, suspended: bool = True):
+        self._suspended = suspended
+        if suspended:
+            self._suspend_anchor = QCursor.pos()
+            self._set_hovered(None)
+        else:
+            self._suspend_anchor = None
+            self._resync()
+
+    def _maybe_reclaim_from_mouse(self):
+        anchor = self._suspend_anchor
+        if anchor is None:
+            return
+        pos = QCursor.pos()
+        if (abs(pos.x() - anchor.x()) < _MOUSE_RECLAIM_JITTER_PX
+                and abs(pos.y() - anchor.y()) < _MOUSE_RECLAIM_JITTER_PX):
+            return
+        self._suspended = False
+        self._suspend_anchor = None
+        if self._on_mouse_reclaim is not None:
+            self._on_mouse_reclaim()
+        self._resync()
+
+    def _resync(self, *_):
+        if self._suspended:
+            return
+        viewport = self._scroll.viewport()
+        if not viewport.isVisible():
+            self._hovered = None
+            return
+        pos = viewport.mapFromGlobal(QCursor.pos())
+        if not viewport.rect().contains(pos):
+            self._set_hovered(None)
+            return
+        container_pos = self._container.mapFrom(viewport, pos)
+        self._set_hovered(self._cell_at(container_pos))
+
+    def _cell_at(self, container_pos):
+        """The cell widget at `container_pos` (container-local coordinates), walking UP
+        from whatever childAt() returns — a cell's own child (e.g. a cover QLabel) is a
+        valid hit that isn't itself the cell, so this climbs the parent chain until
+        `is_cell` matches or the container itself is reached."""
+        w = self._container.childAt(container_pos)
+        while w is not None and w is not self._container and not self._is_cell(w):
+            w = w.parentWidget()
+        return w if (w is not None and self._is_cell(w)) else None
+
+    def _set_hovered(self, cell):
+        if cell is self._hovered:
+            return
+        previous, self._hovered = self._hovered, cell
+        if self._on_hover_changed is not None:
+            self._on_hover_changed(previous, cell)
