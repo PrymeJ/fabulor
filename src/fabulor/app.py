@@ -1525,6 +1525,9 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.session_recorder.close()
         self.current_file = ""
         self._current_book = None
+        # Per-book state: a pause armed on the removed book must not carry into
+        # whatever book is selected next — see _on_book_selected_from_library.
+        self._last_pause_timestamp = None
         if self.player:
             self.player.terminate()
 
@@ -2134,6 +2137,12 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self._dismiss_eof_prompt()
         self._save_current_progress()
         self._paused_time = None
+        # Smart rewind is per-book: a pause timestamp armed on the outgoing book must
+        # never survive into the incoming book's first resume (it would rewind the new
+        # book based on how long the OLD book sat paused, possibly past its own chapter
+        # boundaries). player.load_book() resets its own per-book state but does not
+        # own this timestamp (it lives on MainWindow), so it must be cleared here.
+        self._last_pause_timestamp = None
         # A sprint targets THIS book's listening session — switching books mid-sprint
         # must not silently carry the countdown/grace pool over to the new book.
         # Distinct from a deliberate manual cancel (sidebar X / panel button), which
@@ -3660,6 +3669,10 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self.session_recorder.close()
             self.config.set_last_position(self.current_file, 0)
             self.db.update_progress(self.current_file, 0)
+            # Any pending smart rewind belongs to whatever pause armed it, not to a
+            # fresh restart-from-0 of this book — see the same guard in
+            # _on_book_selected_from_library.
+            self._last_pause_timestamp = None
             # EOF-restart reloads the same book with no library animation and no
             # switch begin(); phase is IDLE (in_deadzone False) so no deadzone to clear.
             self.player.load_book(self.current_file, start_paused=False)

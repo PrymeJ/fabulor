@@ -1372,7 +1372,9 @@ class Player(QObject):
     def apply_smart_rewind(self, last_pause_ts: float, wait_min: int, rewind_sec: int) -> bool:
         """
         Calculates and applies smart rewind logic.
-        Rewinds based on how long the user was away.
+        Rewinds based on how long the user was away, clamped to the start of the
+        chapter playback was paused in — smart rewind never crosses back into a
+        previous chapter.
         Returns True if a rewind seek was issued, False otherwise.
         """
         if not self.instance or not last_pause_ts or wait_min <= 0 or rewind_sec <= 0:
@@ -1382,15 +1384,23 @@ class Player(QObject):
         if away_duration >= (wait_min * 60):
             speed = self.speed or 1.0
             rewind_amt = rewind_sec * speed
+            curr_time = self.time_pos or 0
 
-            # Respect chapter boundaries
+            # Respect chapter boundaries. Per CLAUDE.md's "DO NOT use self.player.chapter"
+            # rule, the current chapter must be derived by walking chapter_list against
+            # time_pos with _CHAPTER_WALK_TOLERANCE — self.chapter (mpv's native property,
+            # or the VT getter with no tolerance) is not reliable here, same as everywhere
+            # else in the app that needs "which chapter is this position in".
             start_limit = 0
-            curr_idx = self.chapter
-            chaps = self.chapter_list
-            if curr_idx is not None and chaps and curr_idx < len(chaps):
+            chaps = self.chapter_list or []
+            curr_idx = 0
+            for i, chap in enumerate(chaps):
+                if chap.get('time', 0) <= curr_time + _CHAPTER_WALK_TOLERANCE:
+                    curr_idx = i
+            if chaps and curr_idx < len(chaps):
                 start_limit = chaps[curr_idx].get('time', 0)
 
-            new_pos = max(start_limit, (self.time_pos or 0) - rewind_amt)
+            new_pos = max(start_limit, curr_time - rewind_amt)
             self.seek_async(new_pos)
             # is_seeking is set True inside seek_async already
             return True
