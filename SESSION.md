@@ -1,4 +1,38 @@
-## Session Summary — 2026-09-16 Session 1 — Fixed two smart-rewind bugs (cross-book leak, wrong chapter-boundary clamp), live-verified, `1cffb90`. Also removed the dead "dot"/"gradient" traveling-focus-marker paint styles, `8f6e24b`.
+## Session Summary — 2026-09-16 Session 1 — Fixed two smart-rewind bugs and a separate undo-anchoring bug, all live-verified, `1cffb90`/`3fe85a0`/`693274f`. Also removed the dead "dot"/"gradient" traveling-focus-marker paint styles, `8f6e24b`.
+
+Pryme reported a third, unrelated bug found while live-testing the smart-rewind fixes below:
+sitting in a short (e.g. 40s) chapter, pressing Next repeatedly through several chapters (some
+short, some long), then Undo, landed on the start of the first LONG chapter rather than the
+position before the short chapter was ever left.
+
+Root cause: every seek-driven call site (`handle_next`/`handle_prev`, chapter-list click, slider
+release/right-click, chapter-slider release) gated its OWN call to `Player.save_seek_position` on
+whether THAT SINGLE seek's displacement exceeded 60s (at speed) — the "don't bother showing undo
+for a trivial skip" heuristic. A spree of small seeks (Next through a 40s chapter, whose own
+displacement never crosses 60s) could clear the threshold in aggregate while no single press
+qualified individually. Because the gate lived at the caller and skipped calling
+`save_seek_position` entirely when it failed, the coalescing anchor was never captured on the
+first (non-qualifying) press — whichever LATER press finally cleared 60s captured its OWN start
+position as the anchor, a mid-spree position rather than where the spree began.
+
+Fixed by moving the distance decision into `save_seek_position` itself, the only place with access
+to the already-coalesced anchor: it now captures the anchor unconditionally on every call within a
+live coalescing spree, and only the "show the overlay" decision is gated on cumulative distance
+from that anchor. Every `app.py` call site now calls `_trigger_undo` unconditionally, passing the
+seek's destination; call sites that never had a distance gate (long-skip buttons, restart-to-0,
+chapter-slider wheel) pass `threshold=0.0` to preserve their exact prior behavior. Confirmed safe
+that a quietly-armed anchor (no overlay shown) can never be acted on prematurely: `undo_seek()` is
+reachable only via the overlay button or the `u` shortcut, both gated on the overlay actually being
+visible.
+
+Added `tests/test_undo_position.py` (6 tests, pure logic, no mpv/QApplication) reproducing the
+exact reported scenario directly against `save_seek_position`. Live-verified by Pryme: Next through
+a short chapter into a longer one, then Undo, now correctly returns to the position before the
+spree began. A small follow-up commit (`693274f`) corrected a stray "2026-09-17" date typo left in
+the fix's own comments/docstrings/test file — caught before it could mislead a future reader about
+when this was found.
+
+---
 
 Pryme reported two smart-rewind bugs: it was affecting the NEXT book on load instead of staying
 scoped to the book it armed on, and it wasn't confining the rewind to the chapter it was triggered
