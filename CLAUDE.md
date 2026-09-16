@@ -433,6 +433,13 @@ Added 2026-09-16, same session, on Pryme's own initiative after the wheel-scrub 
 
 Fixed by calling `_trigger_undo` unconditionally in both methods (removing the `if long_skip:` gate), same standard `60 * speed` threshold and read-back `time_pos` pattern as the two rules above. No special-casing was needed for "a single tap should stay silent" — that already falls out of the existing mechanism for free: a lone tap's displacement (10s default) is under the 60s gate on its own, so it's silent; a spree of taps or a held key/button accumulates via `save_seek_position`'s coalescing anchor exactly like the wheel scrub, and earns Undo once cumulative distance crosses 60s. `Action.LONG_SKIP_BACK`/`LONG_SKIP_FORWARD` (Shift+Left/Shift+Right, via `_nudge_long_skip`) already routed through the same `handle_rewind`/`handle_forward` with `long_skip=True`, so both the boundary-no-op fix and this fix cover keyboard long-skip with no separate change. Commit `df1923e`. Live-verified by Pryme. This is the fourth and final input modality to gain the gate this session — Next/Prev, long-skip/restart, chapter-slider wheel, and now regular skip taps/holds all share one mechanism.
 
+### A widget's clickable/hoverable zone must match its RENDERED content, not its layout bounds — and resync the cursor inside whatever sets the content, not just on mouseMoveEvent
+Found live 2026-09-16 (Session 2), as a chain of six instances of the same underlying shape across the vol_stack area and the chapter label: `muted_icon_label` (a 14x14 icon centered in a 104x24 `QStackedWidget` page), `sleep_timer_label` (centered text in a full 104x24 `QPushButton` with a transparent background), and `current_chapter_label` (a `ScrollingLabel` in a `stretch=1` layout cell far wider than its title text) all gated click/hover-cursor on the WIDGET's own bounds — which is correct for a widget whose content fills its bounds, but reaches well past what's actually on screen for any widget laid out wider than its content. Each was narrowed to hit-test against the content's own rendered rect (`_muted_icon_rect` — from the pixmap's real size; `_indicator_label_text_rect`/`ScrollingLabel._text_rect` — from font metrics, covering every rendering mode: static centered, elided, and actively scrolling).
+
+**Narrowing the hit-test rect creates a second, distinct bug if not paired with a forced resync: a STALE cursor when the content changes shape under a stationary mouse.** `mouseMoveEvent` only fires on genuine mouse movement — it does not fire when a page swaps (`_settle_vol_stack` swapping to the muted icon on scroll-to-mute), when a countdown label's text changes width every tick, or when `setText` lands new, differently-sized content (advancing chapters via keyboard while hovering near the edge of a scrolling title, landing on a short chapter that doesn't scroll). In every one of these, the widget's cursor PROPERTY can be set correctly and the platform still shows the previous cursor at the previous position until something moves. The fix is a resync that reads `QCursor.pos()` (mapped to local coordinates via `mapFromGlobal`) and re-evaluates the hit-test against it, called from wherever the content actually changes — not from `mouseMoveEvent` alone. Two shapes were used: an external resync the CALLER must remember to invoke (`_resync_muted_icon_cursor` called from `_settle_vol_stack`; `_resync_indicator_label_cursor` called from both `_on_sleep_display_text_updated`/`_on_sprint_display_text_updated`) — works, but is forgettable by a future call site — versus the more robust shape used for the chapter label, where the resync lives INSIDE `ScrollingLabel.setText` itself, the one choke point every text change already routes through regardless of caller, so it cannot be forgotten. **Prefer the internal-to-the-content-setter shape when the widget is a reusable class with multiple/future call sites; the external per-caller shape is acceptable only when there is exactly one call site and it is unlikely to grow more.**
+
+Before trusting either half of this fix (the narrowed rect, or the resync), each was verified against a live Qt harness driving real `QMouseEvent`s/`setText` calls and checking press-inside-fires vs. press-outside-doesn't and cursor-shape-after — not just read from the source and assumed correct, per this file's "never substitute a plausible explanation for a checked one" rule. One case (`sleep_timer_label`) was initially suspected of a real click-routing bug reaching past its own widget bounds entirely; confirmed via direct questioning of the live symptom (not assumed) that this was actually correct `QPushButton` behavior — a transparent background just made the real, legitimately-clickable bounds invisible — before deciding whether to narrow it anyway (narrowed per user preference, not because it was broken). Commits `f2526d7`, `0370816`.
+
 ### DO NOT connect `_on_file_ready` to the `file_loaded` signal — it must only connect to `book_ready`
 `book_ready` fires once per book (before any file for VT books; after file-loaded for non-VT). `file_loaded` fires on every mpv file-loaded event including VT file switches mid-book. If `_on_file_ready` runs on every file switch, it triggers position restore, which triggers another file switch, causing a quadruple-advance feedback loop. This was the root cause of two reverted stage 3 implementations.
 
@@ -1636,7 +1643,7 @@ All mode detection happens in `_resolve_playlist()` (run async on a `QThreadPool
 ### Controls & widgets (`controls.py`, `audio_controls.py`, `carousel.py`, `icon_utils.py`, `text_context_menu.py`)
 
 - **`ClickSlider`** — animatable `bg_color`/`fill_color`/`notch_color`/`notch_opacity`/`animatedValue` properties; `animate_to` (200–600 ms distance-scaled); `when_animations_done` chains flow then reveal; chapter-notch reveal animation (`revealedCount`, mirrored to seek direction, alternating tick halves); optional center mark + snap-to-center; right-click emits a ratio and snaps to markers.
-- **`FreezableLabel`** — `setText` is a no-op while frozen (pins labels during theme fades). **`ScrollingLabel`** (extends it) — horizontal marquee with Slow/Normal/Off modes, animatable `text_color`, `clicked`. **`HoverButton`** — `hovered`/`unhovered`/`rightClicked`. **`ShimmerButton`** — `play_shimmer()` runs an 800 ms diagonal glint.
+- **`FreezableLabel`** — `setText` is a no-op while frozen (pins labels during theme fades). **`ScrollingLabel`** (extends it) — horizontal marquee with Slow/Normal/Off modes, animatable `text_color`, `clicked`; `clicked` only fires (and the hand cursor only shows) when the click/hover position falls within the actual RENDERED text rect (`_text_rect`, covering scrolling/elided/static-centered — see the CLAUDE.md rule on hit-testing rendered content vs. layout bounds), not the widget's full layout bounds; `set_clickable(bool)` gates both entirely off (no cursor, no click) for e.g. fewer than 2 chapters. **`HoverButton`** — `hovered`/`unhovered`/`rightClicked`. **`ShimmerButton`** — `play_shimmer()` runs an 800 ms diagonal glint.
 - **`AudioSettingsTab`** — normalisation, voice boost, stereo/mono, channel swap, L/R balance slider (−100..100, snap-to-center). Each change calls `player.apply_audio_processing(...)`; a reset button appears only when something is non-default.
 - **`CoverCarousel`** — decorative scrolling strip, fixed 300px wide; static when ≤ 3 covers, else gapless looping scroll (`_TICK_MS = 33`, time-delta based); staggered reveal (first at 375 ms, then every 75 ms) with a fade-in; 1px top/bottom stripe lines; `set_stripe_color` / `stop` / `start`.
 - **`icon_utils`** — `render_logo_placeholder` (themed `fabulor.svg`), `render_logo_placeholder_bordered`, `load_themed_icon` (LRU 64; swaps `#000000` fills/strokes — for black-paint icons), `load_currentcolor_icon` (LRU 64; regex-replaces all non-`none` fills/strokes — for `currentColor` SVGs like clock/calendar).
@@ -1800,7 +1807,33 @@ Any `QWidget` subclass (not `QFrame`, not `QLabel`) that owns a background-color
 
 *Reorganization note (2026-07-13): the "Critical Architecture Rules" section was restructured to remove repetition — it previously existed as two passes (a full-prose section and a later condensed second pass covering many of the same rules). The two were merged: rules that appeared in both now appear once, under whichever fact they share, with no information dropped. Rules unique to either pass are unchanged. See the note directly under the "Critical Architecture Rules" heading for detail.*
 
-*Last updated: 2026-09-16 Session 1 — Extended the standard Undo distance gate to regular
+*Last updated: 2026-09-16 Session 2 — Volume wheel-scroll, mute click-to-restore, and a chain of
+six hand-cursor/hitzone fixes, all live-verified by Pryme. Several widgets in the vol_stack area
+and the chapter label are laid out wider than their visible content (a small icon centered in a
+much larger label, centered text in a wider transparent-background button, a scrolling label in a
+stretch=1 layout cell) — click/cursor gated on the WIDGET's bounds reached well past what was
+actually on screen. Fixed, in order, each triggering live-testing that surfaced the next: the
+muted icon's click/wheel/cursor zone (`_muted_icon_rect`, from the pixmap's real 14x14 size); a
+stale hand cursor left over after a scroll-to-mute page swap under a stationary mouse
+(`_resync_muted_icon_cursor`, called from `_settle_vol_stack`); `progress_slider`/`volume_slider`
+never having a hand cursor at all (only `chapter_progress_slider` did, traced to an incidental
+side effect of an unrelated feature, not a deliberate choice); the sleep/sprint countdown label's
+full-button hitzone (confirmed NOT a routing bug — `QPushButton`'s whole rect is legitimately
+clickable by convention when its background is transparent — narrowed anyway via
+`_indicator_label_text_rect`, a font-metrics rect, per Pryme's preference); and the chapter label's
+`ScrollingLabel` class-level fix (`_text_rect`, covering all three `paintEvent` cases: scrolling,
+elided, static), including a follow-up stale-cursor bug found immediately after — advancing
+chapters via keyboard while hovering a scrolling title's edge, landing on a short non-scrolling
+chapter, left the cursor stuck until the mouse moved. That one's resync lives INSIDE
+`ScrollingLabel.setText` itself (the one choke point every text change already routes through)
+rather than requiring each external caller to remember a resync call, the more fragile shape the
+muted-icon/sleep-label fixes used. Unrelated to the Undo/smart-rewind entries below (same day,
+earlier conversation) — this entry is scoped to the vol_stack/chapter-label cursor chain only.
+Commits `f2526d7`, `0370816`. Also resolved a SESSION.md structural issue: two separate
+"2026-09-16 Session 1" headers had accumulated from two different conversations — merged into one
+Session 1 and renumbered this work as Session 2.
+
+*Previously: 2026-09-16 Session 1 — Extended the standard Undo distance gate to regular
 skip taps/holds, live-verified by Pryme. `handle_rewind`/`handle_forward` previously only called
 `_trigger_undo` for `long_skip=True` — a single regular-skip tap (`</>` buttons, or Left/Right,
 default `skip_duration` 10s) or a held button/key (both auto-repeat) never armed or showed Undo

@@ -1,3 +1,68 @@
+## Session Summary — 2026-09-16 Session 2 — Volume wheel-scroll, mute click-to-restore, and a chain of hand-cursor/hitzone fixes across the vol_stack area and the chapter label, all live-verified. `f2526d7`, `0370816`.
+
+Pryme picked up two of the "isolated TODO items" surfaced at the end of Session 1: the volume
+slider/muted icon not accepting wheel-scroll, and clicking the muted icon to restore volume (a
+third item, the M4B-vs-VT exclude-while-playing design decision, was deferred pending his own
+testing). Settled two design questions via AskUserQuestion first — wheel should only register over
+the VISIBLE control, not empty `vol_stack` space; scroll-up over the muted icon restores to the
+pre-mute value (reusing `_toggle_mute`'s existing `_pre_mute_volume` target via a new shared
+`_restore_from_mute` helper), scroll-down is a deliberate no-op.
+
+What followed was a chain of five live-reported hitzone/cursor bugs, each fixed, tested, and then
+surfacing the next one — all variations on the same underlying fact: several widgets in this app
+are laid out wider than their visible content (a small icon centered in a much larger label, text
+centered in a wider button, a scrolling label in a stretch=1 layout cell), and naively gating
+click/cursor on the WIDGET's bounds reaches well past what's actually on screen.
+
+1. **Muted icon's click/wheel/cursor zone matched the full 104x24 `vol_stack` page, not the
+   14x14 icon glyph.** Fixed via `_muted_icon_rect` (centered rect from the pixmap's real size).
+2. **Stale hand cursor after scroll-to-mute.** Scrolling the slider down to 0 swaps the page to
+   the muted icon under a stationary mouse — nothing re-evaluates the cursor without a real
+   `mouseMoveEvent`. Fixed via `_resync_muted_icon_cursor`, called from `_settle_vol_stack` right
+   after the page swap, using `QCursor.pos()` mapped to local coordinates (this session's
+   reference pattern, reused twice more below).
+3. **`progress_slider`/`volume_slider` never had a hand cursor at all** (only
+   `chapter_progress_slider` did — traced to an incidental side effect of an unrelated 2026-05-28
+   feature, not a deliberate design choice). Fixed with a static cursor at construction for both
+   (neither has an inactive/ghost state, unlike the chapter slider).
+4. **Sleep/sprint countdown label (`sleep_timer_label`): same oversized-hitzone shape as the muted
+   icon, but on a `QPushButton` with a fully transparent background** — the whole 104x24 button is
+   legitimately clickable by `QPushButton`'s own convention (confirmed via
+   AskUserQuestion — NOT a routing bug, just a transparent background making the real bounds
+   invisible), narrowed anyway per Pryme's preference to match the visible text. Implemented via
+   `_indicator_label_text_rect` (font-metrics centered rect) plus a `mousePressEvent` override that
+   only forwards to `QPushButton`'s real press handler when the press lands in that rect — verified
+   correct with a live Qt smoke test (press inside fires `clicked`, press outside doesn't), not just
+   read from the source. Same stale-cursor risk as #2 (ticking countdown text changes shape under a
+   stationary mouse) — same `QCursor.pos()`-resync fix, called from both
+   `_on_sleep_display_text_updated`/`_on_sprint_display_text_updated`.
+5. **Chapter label: click/cursor zone spanned its whole stretch=1 layout cell, not the scrolling
+   chapter title text.** Traced to `ScrollingLabel.mousePressEvent` (`ui/controls.py`) unconditionally
+   emitting `clicked` on any click in the widget, and a static whole-widget cursor set in
+   `__init__`. Fixed at the CLASS level (only one live instance today, but the gap is generic) via
+   `_text_rect()`, covering all three of `paintEvent`'s rendering cases (actively scrolling, elided,
+   static centered) — verified live-logic-correct with a direct harness before trusting it. Added
+   `set_clickable(bool)` so `_update_chapter_label_clickability`'s existing "2+ chapters required"
+   gate composes with the new rect gate instead of just setting a cursor.
+
+   **A sixth bug in the same family, found by Pryme immediately after confirming #5 worked**:
+   advancing to a different chapter via the keyboard while the mouse hovered near the edge of a
+   scrolling title — landing on a chapter short enough not to scroll — left the hand cursor stuck
+   over now-empty space until the mouse moved; clicking there was a no-op. Same root cause as #2/#4
+   (content changed shape under a stationary mouse), but fixed differently and more robustly this
+   time: the resync lives INSIDE `ScrollingLabel.setText` itself, the one choke point every text
+   change already routes through (chapter changes, title/author marquees, anything using this
+   class), rather than requiring each external caller to remember a resync call the way #2 and #4
+   did. Verified with a live harness reproducing the exact scenario (scroll a long title, hover its
+   edge, `setText` to a short one without moving the simulated cursor, confirm the cursor
+   self-heals to `ArrowCursor`) before calling it done.
+
+All five (six, counting the follow-up) fixes were live-verified by Pryme as each landed, not
+batched and verified at the end — each confirmation gated whether the next fix in the chain was
+attempted.
+
+---
+
 ## Session Summary — 2026-09-16 Session 1 — Fixed two smart-rewind bugs and four Undo bugs (spree anchoring, boundary no-ops, wheel-scrub noise, and a coverage gap on regular skip), all live-verified, `1cffb90`/`3fe85a0`/`693274f`/`651c557`/`1a6e633`/`df1923e`. Also removed the dead "dot"/"gradient" traveling-focus-marker paint styles, `8f6e24b`.
 
 After the wheel-scrub fix landed, Pryme asked a forward-looking design question rather than
@@ -146,7 +211,9 @@ Documented in CLAUDE.md so it isn't mistaken for a smart-rewind regression later
 
 ---
 
-## Session Summary — 2026-09-16 Session 1 — Removed the dead "dot" and "gradient" traveling-focus-marker paint styles from `focus_marker.py`, keeping only the shipped "rotate" style (plus the separate `fill_highlight` config option, untouched). `8f6e24b`.
+Removed the dead "dot" and "gradient" traveling-focus-marker paint styles from
+`focus_marker.py`, keeping only the shipped "rotate" style (plus the separate `fill_highlight`
+config option, untouched). `8f6e24b`.
 
 Pryme asked whether any dead code remained from the marker's original "dot" implementation, after
 recalling the dot → shimmering-edge ("rotate") → fill-highlight design evolution. An Explore agent
