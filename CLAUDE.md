@@ -1771,7 +1771,20 @@ Any `QWidget` subclass (not `QFrame`, not `QLabel`) that owns a background-color
 
 *Reorganization note (2026-07-13): the "Critical Architecture Rules" section was restructured to remove repetition — it previously existed as two passes (a full-prose section and a later condensed second pass covering many of the same rules). The two were merged: rules that appeared in both now appear once, under whichever fact they share, with no information dropped. Rules unique to either pass are unchanged. See the note directly under the "Critical Architecture Rules" heading for detail.*
 
-*Last updated: 2026-09-15 Session 1 — Hover-pickup keyboard navigation (keys picking up from
+*Last updated: 2026-09-16 Session 1 — Removed the dead "dot" and "gradient" paint styles from
+`ui/focus_marker.py`'s `TravelingFocusMarker`, keeping only the shipped "rotate" style (the
+separate, QSS-driven `fill_highlight` config option is untouched — a different mechanism
+entirely, not a fourth marker style). `_MARKER_STYLE`'s three-way dispatch, `_paint_dot`,
+`_paint_gradient_trail`, and their style-only tunables (`_DOT_RADIUS`,
+`_TRAIL_LENGTH_PX`/`_TRAIL_SAMPLES`/`_TRAIL_WIDTH`) are gone; `paintEvent` now calls
+`_paint_rotating_border` unconditionally. Docstrings/comments describing a three-way style choice
+were rewritten to describe the rotate-only mechanism, with one note pointing at git history if
+either removed style is wanted again. `themes.py`'s `focus_marker`/`focus_marker_alpha` GROUP 9
+doc lines, which called themselves "dot style only," were corrected — both keys are still live as
+the rotate sweep's plain base color/alpha ceiling, used when no palette position applies. Full
+narrative: SESSION.md, 2026-09-16 Session 1. Commit `8f6e24b`.
+
+*Previously: 2026-09-15 Session 1 — Hover-pickup keyboard navigation (keys picking up from
 wherever the mouse is hovering) shipped for Settings/Speed/Sleep/Sprint/Stats, and mouse-reclaim-
 from-keyboard shipped for Settings'/Stats' tab bars — closing two TODO items that had been paused
 since 2026-09-08/2026-09-10. Also gave Tags' thumbnail grid mouse/keyboard hover reconciliation for

@@ -1,3 +1,43 @@
+## Session Summary — 2026-09-16 Session 1 — Removed the dead "dot" and "gradient" traveling-focus-marker paint styles from `focus_marker.py`, keeping only the shipped "rotate" style (plus the separate `fill_highlight` config option, untouched). `8f6e24b`.
+
+Pryme asked whether any dead code remained from the marker's original "dot" implementation, after
+recalling the dot → shimmering-edge ("rotate") → fill-highlight design evolution. An Explore agent
+confirmed the dot code was NOT dead — `_MARKER_STYLE` (`focus_marker.py`) was a hardcoded
+three-way switch (`"dot"` | `"gradient"` | `"rotate"`) with all three paint methods fully
+implemented and reachable, just defaulted to `"rotate"`. A follow-up grep of `app.py` for any
+separate/older marker-drawing code came back clean.
+
+Since only "rotate" has ever shipped and the `fill_highlight` style (a distinct, QSS-driven
+mechanism — a fill-shift on the widget itself, not an overlay) already serves as the intended
+alternative, Pryme asked to remove the dot/gradient paths outright as superfluous rather than kept
+as a live-tunable switch. Confirmed scope via AskUserQuestion (full removal vs. keep the switch
+scaffold for a hypothetical future style) — chose full removal.
+
+Removed: `_paint_dot`, `_paint_gradient_trail`, `_DOT_RADIUS`, `_MARKER_STYLE`, and the
+gradient-only tunables (`_TRAIL_LENGTH_PX`/`_TRAIL_SAMPLES`/`_TRAIL_WIDTH`); `paintEvent` now
+calls `_paint_rotating_border` unconditionally instead of dispatching on a style flag. Kept:
+`_marker_color`'s `palette_frac` parameter and `_active_palette()` — both are load-bearing for the
+rotate sweep, not vestiges of the removed styles (rotate is the one style that always needs a
+palette position, since the whole perimeter is lit and colored simultaneously). Rewrote the
+module docstring, the class docstring, `_marker_color`'s docstring, and several inline comments
+that described the three-way style choice as still live, replacing "dot" language with
+"marker"/"sweep" and leaving one explicit note pointing at git history if either removed style is
+ever wanted back. Also corrected three `themes.py` GROUP 9 doc lines (`focus_marker`,
+`focus_marker_alpha`, `focus_marker_palette`) that called themselves "dot style only" or
+"'rotate' style" — `focus_marker`/`focus_marker_alpha` are still live as the rotate sweep's plain
+base color/alpha ceiling (used when no palette position applies), just no longer dot-specific.
+
+Verified: full 524-test pytest suite green; app launched clean with no new startup errors (via the
+already-running `entr` dev loop, confirmed as a separate PID before killing only the extra manual
+instance started for this check — not the dev loop's own). No live visual re-check was requested
+by Pryme before this write-up; the rotate marker's rendering path itself was not touched by this
+change (only removed the two unreached alternatives and updated prose), so no regression risk to
+what's actually painted.
+
+`main_window_builders.py`'s own `_DOT_RADIUS` (the library folder-list keyboard cursor dot) is an
+unrelated, current feature — confirmed untouched, and the only other repo-wide hit for the
+removed constant names.
+
 ## Session Summary — 2026-09-15 Session 1 — Hover-pickup keyboard navigation shipped for Settings/Speed/Sleep/Sprint/Stats, plus mouse-reclaim on tab bars — resuming a plan paused since 2026-09-10 with an explicit scope note that it now covered two directions, not one. Three live-reported rounds of bugs, each traced to a distinct, confirmed cause. `513631e`.
 
 Resumed `/home/pryme/.claude/plans/snuggly-growing-stardust.md` — direction (1), keys picking up
