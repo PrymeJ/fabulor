@@ -388,7 +388,6 @@ correctly — the contrast is what made these visible, so they are not regressio
 - [2026-07-13] Chapter-elapsed label reads ~1s short near a chapter boundary
 - [2026-07-12] Chapter-slider load-time retrace disagrees with the restore seek by 0.35s
 - [2026-07-12] `_PAUSED_SEEK_UNDERSHOOT_COMP` applied unconditionally, not gated on boundary proximity
-- [2026-07-15] Undo doesn't return to true origin after rapid repeat Next/Prev
 
 ### Panel focus / keyboard navigation
 - [2026-07-31] ScrollHoverTracker.suspend() is the hook for mouse/keyboard highlight coexistence
@@ -916,24 +915,6 @@ correctly — the contrast is what made these visible, so they are not regressio
   is the known-fragile zone" CLAUDE.md rule is about; any future attempt needs its own
   investigate-then-plan cycle, live-verified against the exact stuck-Next/Prev bug this constant
   was built to fix, same as before.
-
-- **[2026-07-15] Undo doesn't return to the true origin after rapid repeat Next/Prev within
-  `undo_duration` — narrowed live to Next/Prev specifically, not general undo/restore.**
-  `save_seek_position(old_pos, duration_limit)` (`player.py`) only writes `_undo_pos` when it's
-  unset or when more than `duration_limit`s (default 3s, `config.get_undo_duration()`) have passed
-  since the last capture — a rapid second capture within that window is skipped, which by reading
-  the code should leave `_undo_pos` pointing at the FIRST departure point (chapter 3), not the most
-  recent one (chapter 4). Concrete repro, live-tested by the user: in chapter 3 with ~30s left,
-  click Next twice in quick succession (chapter 3 → 4 → 5), then click Undo — **actually lands at
-  the chapter 3/4 boundary ("beginning of chapter 4"), not back in chapter 3.** Further live
-  testing (2026-07-15) narrowed this to Next/Prev specifically — every other undo/restore path
-  (seeking, smart-rewind, chapter-slider clicks) correctly returns to the true origin position;
-  only rapid repeated Next/Prev clicks fail to chain back past the most recent hop. Root cause NOT
-  yet diagnosed — the shared `_last_undo_click_time`/skip logic described above doesn't obviously
-  explain why Next/Prev's call path would behave differently from every other `save_seek_position`
-  caller; needs live tracing of `_undo_pos` across both Next calls (not just code reading) and a
-  diff against how the other, correctly-behaving call sites invoke `save_seek_position`, before
-  attempting a fix.
 
 - **[2026-07-31] DESIGN: `ScrollHoverTracker.suspend()` is the coexistence hook for mouse vs.
   keyboard highlighting.** `ui/hover_tracker.py` keeps the hovered row as explicit state

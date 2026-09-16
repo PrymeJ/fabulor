@@ -1,4 +1,32 @@
-## Session Summary — 2026-09-16 Session 1 — Fixed two smart-rewind bugs and three Undo bugs (spree anchoring, boundary no-ops, wheel-scrub noise), all live-verified, `1cffb90`/`3fe85a0`/`693274f`/`651c557`/`1a6e633`. Also removed the dead "dot"/"gradient" traveling-focus-marker paint styles, `8f6e24b`.
+## Session Summary — 2026-09-16 Session 1 — Fixed two smart-rewind bugs and four Undo bugs (spree anchoring, boundary no-ops, wheel-scrub noise, and a coverage gap on regular skip), all live-verified, `1cffb90`/`3fe85a0`/`693274f`/`651c557`/`1a6e633`/`df1923e`. Also removed the dead "dot"/"gradient" traveling-focus-marker paint styles, `8f6e24b`.
+
+After the wheel-scrub fix landed, Pryme asked a forward-looking design question rather than
+reporting a new bug: should regular skip (`</>` button clicks/holds, Left/Right key
+presses/holds) get the same 60s-cumulative-distance treatment for Undo? Checking the code
+confirmed it was a real, live gap, not a hypothetical — `handle_rewind`/`handle_forward` only ever
+called `_trigger_undo` when `long_skip=True`; a regular-skip tap or a held button/key (both
+auto-repeat — the buttons at a 150ms interval, Left/Right via `allow_autorepeat=True`) never armed
+or showed Undo at all, no matter how much cumulative distance a hold or a burst of taps covered.
+Confirmed with Pryme (AskUserQuestion) that a single tap should stay silent, matching the original
+design intent for regular skip — and that behavior falls out of the existing mechanism for free
+with no special-casing: a lone default-10s tap is already under the 60s gate on its own.
+
+Fixed by removing the `if long_skip:` restriction in both methods — `_trigger_undo` is now called
+unconditionally, same standard gate and read-back-`time_pos` pattern as the three fixes below. Since
+`Action.SEEK_BACK`/`SEEK_FORWARD` (Left/Right) and `Action.LONG_SKIP_BACK`/`LONG_SKIP_FORWARD`
+(Shift+Left/Shift+Right) both already route through these same two methods, the keyboard side is
+covered with no separate change. This is the fourth and final input modality this session to gain
+the gate — Next/Prev, long-skip/restart, chapter-slider wheel, and now regular skip taps/holds all
+share one mechanism. Live-verified by Pryme: holding/repeatedly tapping past 60s now shows Undo;
+brief taps stay silent. Commit `df1923e`.
+
+**TODO.md housekeeping**: closed `[2026-07-15] Undo doesn't return to true origin after rapid repeat
+Next/Prev` and moved it to TODO_ARCHIVE.md with a correction — that entry had narrowed the bug's
+scope live to "Next/Prev specifically," concluding every other undo/restore path was unaffected.
+Today's root-cause work found the actual cause was general to every seek-driven call site sharing
+the same caller-side-gate shape; Next/Prev was simply the easiest repro (small chapter-to-chapter
+jumps make the "spree that individually never qualifies" case common), not a special case. The
+archive entry corrects this rather than silently closing over the original claim.
 
 Two more Undo bugs surfaced from Pryme's own live testing right after the spree-anchoring fix
 below shipped — both in the `threshold=0.0` ("always show Undo") call sites that fix's own writeup

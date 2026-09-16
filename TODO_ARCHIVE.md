@@ -5,6 +5,33 @@ list scannable. Kept, not deleted, per the project's normal practice of not thro
 that isn't fully duplicated in NOTES.md/SESSION.md/a commit message. Order is the same relative
 order these entries had in TODO.md before the split (2026-07-30).
 
+- **[2026-09-16] CLOSED (corrects the original 2026-07-15 entry's scope): Undo doesn't return to
+  the true origin after a rapid spree of small seeks.** The 2026-07-15 entry narrowed this live to
+  "Next/Prev specifically — every other undo/restore path correctly returns to the true origin" and
+  left the root cause undiagnosed. That narrowing turned out to be an artifact of which repro had
+  been tried, not the actual scope: the real root cause, found 2026-09-16, was general to EVERY
+  seek-driven call site that gated its own call to `save_seek_position` on that single seek's own
+  displacement exceeding a threshold (`60 * speed`) — `handle_next`/`handle_prev`, chapter-list
+  click, slider release/right-click, and chapter-slider release all shared the identical shape.
+  Next/Prev was simply the easiest to trigger (small chapter-to-chapter jumps make the "spree of
+  small seeks that individually never qualify" case common), not a special case. Root cause: a
+  caller-side gate that skips calling `save_seek_position` entirely when a single seek doesn't
+  qualify also skips capturing the coalescing anchor for that seek — so whichever LATER seek in the
+  same spree happens to individually qualify captures ITS OWN start position as the anchor, a
+  mid-spree position rather than where the spree began. Fixed by moving the distance decision INTO
+  `save_seek_position` itself: the anchor is now captured unconditionally on every call within a
+  live coalescing spree, and only the "show the overlay" decision is gated on CUMULATIVE distance
+  from that anchor. Two related follow-up bugs found and fixed the same session: the long-skip
+  buttons and `|<`-to-restart showed Undo for seeks that didn't actually move (near-EOF silent
+  refusal, or a trivial move already at the start) — fixed by reading `time_pos` back after
+  `seek_async` rather than trusting the pre-computed target; and the chapter-slider wheel scrub (and
+  later, on request, regular skip taps/holds too) showed Undo on every single tick regardless of
+  size — given the same standard distance gate, so a spree of small ticks now correctly earns Undo
+  only once cumulative distance crosses 60s. Full detail: CLAUDE.md's "Undo must anchor to a seek
+  spree's start" rule and its two follow-up rules; `tests/test_undo_position.py`. Commits `3fe85a0`,
+  `693274f`, `651c557`, `1a6e633`, `df1923e`. Live-verified by Pryme across all four input
+  modalities (Next/Prev, long-skip/restart, wheel scrub, regular skip taps/holds).
+
 - **[2026-09-10] CLOSED: Settings/Stats "⚙" tab Right-arrow inconsistency at a row's last
   button.** Reported live 2026-09-09 as "Right arrow is mostly no-op, from Look and Controls it
   goes to the tab" and initially scoped as needing a live `QApplication.focusWidget()` trace to
