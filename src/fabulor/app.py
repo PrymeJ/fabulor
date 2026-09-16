@@ -3988,8 +3988,14 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 else:
                     new_pos = current_pos - skip
             new_pos = max(0, min(self.player.duration or 0, new_pos))
-            self._trigger_undo(current_pos, new_pos, threshold=0.0)
             self.player.seek_async(new_pos)
+            # Standard distance gate (not threshold=0.0): this is a fine intra-chapter
+            # scrub, not a deliberate big jump — a single tick on a short chapter (e.g.
+            # a 4m04s chapter's 10%-of-length step is only ~24s) showed Undo for a
+            # trivial nudge. Read the position back rather than using new_pos, same
+            # reasoning as handle_rewind/handle_forward: a step clamped to within 2s of
+            # EOF is silently refused by seek_async and must not show Undo either.
+            self._trigger_undo(current_pos, self.player.time_pos or current_pos)
             event.accept()
         else:
             super().wheelEvent(event)
