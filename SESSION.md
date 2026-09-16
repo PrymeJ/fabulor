@@ -1,8 +1,49 @@
-## Session Summary — 2026-09-16 Session 1 — Fixed two smart-rewind bugs and a separate undo-anchoring bug, all live-verified, `1cffb90`/`3fe85a0`/`693274f`. Also removed the dead "dot"/"gradient" traveling-focus-marker paint styles, `8f6e24b`.
+## Session Summary — 2026-09-16 Session 1 — Fixed two smart-rewind bugs and three Undo bugs (spree anchoring, boundary no-ops, wheel-scrub noise), all live-verified, `1cffb90`/`3fe85a0`/`693274f`/`651c557`/`1a6e633`. Also removed the dead "dot"/"gradient" traveling-focus-marker paint styles, `8f6e24b`.
 
-Pryme reported a third, unrelated bug found while live-testing the smart-rewind fixes below:
-sitting in a short (e.g. 40s) chapter, pressing Next repeatedly through several chapters (some
-short, some long), then Undo, landed on the start of the first LONG chapter rather than the
+Two more Undo bugs surfaced from Pryme's own live testing right after the spree-anchoring fix
+below shipped — both in the `threshold=0.0` ("always show Undo") call sites that fix's own writeup
+had described as correct and untouched, which turned out to be wrong on closer live testing rather
+than just unexamined.
+
+**Bug 2: long-skip and restart-to-0 showed Undo for seeks that didn't meaningfully move playback.**
+Pryme's report named two shapes of this: a forward long-skip whose target lands within 2s of EOF is
+silently refused in full by `seek_async`'s own near-EOF guard — nothing moves, Undo showed anyway —
+and a backward long-skip or `|<`-right-click-to-restart while already sitting at/near 0:00 lands a
+real but trivial, undo-unworthy seek ("even if I am paused at 00:00:00 of the book, right clicking
+< or |< still triggers Undo, which is weird"). Fixed `handle_rewind`/`handle_forward`
+(`long_skip=True`) and `_on_prev_right_click` by dropping `threshold=0.0` for the standard
+`60 * speed` gate — but critically, measured against `self.player.time_pos` read back AFTER
+`seek_async` returns, not the pre-computed target. This matters because `time_pos` only updates
+(`_seek_target`/`_logical_pos` get set) when `seek_async` genuinely issues a seek; every one of its
+early-return no-op paths leaves those fields untouched, so the read-back correctly reads "zero
+displacement" for the near-EOF silent-refusal case in a way the requested target never could have.
+Commit `651c557`.
+
+**Bug 3: the chapter-slider wheel scrub showed Undo on every tick, including a trivial one.** Pryme:
+"Even if it is a very short chapter under a minute or a short chapter 4 minutes and 4 seconds which
+would trigger a 24 second jump with a flick, it still displays Undo." Traced to the commit that
+introduced this (`a3b74ac`, 2026-05-30), whose own message reasoned that `save_seek_position`'s
+existing timestamp/coalescing guard would "prevent spam during rapid scrolling" — a belief that was
+never actually true: that guard stabilizes the coalescing *anchor* across rapid calls, it never
+gated whether the overlay itself got shown. Fixed the same way as Bug 2 (standard gate, read-back
+position instead of the pre-computed, boundary-clamped target — this site clamps to the whole book's
+duration too, so it has the identical near-EOF silent-refusal risk). Because this really is a
+coalescing spree (rapid ticks inside the 3s window), the fix means individual ticks correctly stay
+quiet unless cumulative scroll distance crosses 60s, or one big step does on its own — the same
+anchoring behavior Bug 1 (below) gave Next/Prev, now extended to a third input modality. Commit
+`1a6e633`.
+
+Both fixes retract a claim the Bug 1 writeup (and its own CLAUDE.md entry) made in passing — that
+these three `threshold=0.0` sites "never had a distance gate before and must not gain one." That
+claim was accurate about the past (true, they never had one) but wrong as guidance for the future
+(they needed one); CLAUDE.md's rule for Bug 1 now carries an explicit correction note rather than
+leaving the superseded claim to mislead a later reader, per this file's own "never substitute a
+plausible explanation for a checked one" / retraction discipline.
+
+**Bug 1 (found first, chronologically — the other two build on its fix): the undo-anchoring bug.**
+Pryme reported this one first, found while live-testing the smart-rewind fixes below: sitting in a
+short (e.g. 40s) chapter, pressing Next repeatedly through several chapters (some short, some
+long), then Undo, landed on the start of the first LONG chapter rather than the
 position before the short chapter was ever left.
 
 Root cause: every seek-driven call site (`handle_next`/`handle_prev`, chapter-list click, slider
