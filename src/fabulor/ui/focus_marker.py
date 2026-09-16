@@ -4,33 +4,34 @@ A marker travels continuously along the *border* of whichever control currently 
 focus. One mechanism, one overlay, works for any widget with a traceable perimeter — a segmented
 `pattern_button`, a tab header, and (in future) a slider.
 
-Three interchangeable paint styles share the same phase/motion machinery below (see
-`_MARKER_STYLE`): "dot" draws a single filled circle at the current position; "gradient" draws a
-short trailing stretch of the border behind it, fading toward the tail (a "comet"); "rotate"
-(default) outlines the WHOLE border at all times with a color sweep continuously traveling around
+The marker outlines the WHOLE border at all times with a color sweep continuously traveling around
 it — no moving position or trail, every point on the perimeter is lit at once and only the COLOR
 travels ("a 1px border with rotating hues"). The sweep walks `focus_marker_palette` (a theme-driven
 list of 2+ colors, see themes.py GROUP 9), not an HSV hue rotation — hue rotation on this app's
 near-white/pale theme text colors is close to a visual no-op (near-zero saturation), so the marker
-blends between real, separately-saturated palette colors instead. Switching styles only changes
-`paintEvent` / `_marker_color` — the perimeter, phases, and timers (self._t as a moving position
-for "dot"/"gradient", or as a sweep phase offset for "rotate") are identical either way.
+blends between real, separately-saturated palette colors instead.
 
-Why an overlay (not a QSS `[focused]` rule or per-widget paintEvent): the dot must be drawn ON the
-control's border and reach even inline-styled buttons whose own stylesheet would override a panel
-QSS rule. A single mouse-transparent overlay child of MainWindow, mapping the focused widget's rect
-into its own coordinates, sidesteps all of that — the same approach the earlier (now discarded)
-ring/caret/pulse comparison build used, kept only at that structural level.
+(Two earlier alternate paint styles — "dot", a single filled circle, and "gradient", a fading
+trailing stretch — were tried during initial tuning and removed 2026-09-16 once "rotate" was
+settled on as the shipped default, alongside the separate QSS-driven `fill_highlight` marker style;
+see git history on this file if either is ever wanted again. self._t is still a normalized position
+along the perimeter — that's a rotate-only sweep phase offset now, not a moving dot position.)
+
+Why an overlay (not a QSS `[focused]` rule or per-widget paintEvent): the marker must be drawn ON
+the control's border and reach even inline-styled buttons whose own stylesheet would override a
+panel QSS rule. A single mouse-transparent overlay child of MainWindow, mapping the focused
+widget's rect into its own coordinates, sidesteps all of that — the same approach the earlier (now
+discarded) ring/caret/pulse comparison build used, kept only at that structural level.
 
 Scope for this pass (deliberately narrow): wired for the Settings panel's **Look tab only** — its
 `pattern_button` groups plus the Settings tab bar header. See app.py's `_update_focus_marker`.
 
 Lifecycle — a four-phase state machine, NOT Library's hold-then-fade or the tassel's sway/kick:
 
-    PATROL   dot moves along the border at a FIXED speed (px/sec, size-independent), indefinitely,
+    PATROL   the sweep phase advances at a FIXED speed (px/sec, size-independent), indefinitely,
              as long as focus stays put and no further Tab/Backtab arrives.
-    SLOWING  after `_IDLE_BEFORE_SLOWDOWN_MS` of no keyboard input, the dot decelerates smoothly to
-             a stop (it must NOT fade while still moving).
+    SLOWING  after `_IDLE_BEFORE_SLOWDOWN_MS` of no keyboard input, the sweep decelerates smoothly
+             to a stop (it must NOT fade while still moving).
     WAITING  once stopped, it sits fully visible and stationary for `_WAIT_MS`.
     FADING   only then does it fade out over `_FADE_MS`.
 
@@ -57,9 +58,6 @@ from PySide6.QtGui import QPainter, QColor, QPen
 # calm/idle, not urgent: "slow enough not to be annoying." Best-guess default, flagged for live
 # tuning.
 _PATROL_SPEED_PX_PER_SEC = 5.0
-
-# The dot itself.
-_DOT_RADIUS = 3.0        # px
 
 # Corner rounding, so the traced perimeter follows the widget's ACTUAL rendered shape (its QSS
 # border-radius) instead of a sharp-cornered box. Values match themes.py's QPushButton
@@ -95,7 +93,7 @@ _HALF_PIXEL = 0.5
 #
 # The traveling marker is a thin-border affordance. It reads well crawling a small
 # #pattern_button or a tab, where the border IS the visual edge of the control; on a large filled
-# button the border is not what the eye tracks, so a dot circling it reads as noise rather than
+# button the border is not what the eye tracks, so a marker circling it reads as noise rather than
 # as "you are here" (live judgement 2026-09-04, after the marker was tried on Audio's Reset
 # button and on Library's list boxes).
 #
@@ -137,15 +135,7 @@ _FILL_FOCUS_OBJECT_NAMES = frozenset((
 # simple and was specified directly rather than guessed further: shift the traced rect 1px right.
 _TAB_RECT_X_NUDGE = 1
 
-# Which paint style to use. "dot": a single filled circle (original). "gradient": a trailing
-# stretch of the border behind the current position, fading out toward the tail (a "comet").
-# "rotate": the ENTIRE border is always outlined; a color sweep travels continuously around it —
-# no moving position, no trail, the whole perimeter is lit at once and only the COLOR travels. All
-# three share the exact same phase/motion machinery below; only paintEvent's rendering differs.
-# Adjust-live, same convention as the other tunables here.
-_MARKER_STYLE = "rotate"   # "dot" | "gradient" | "rotate"
-
-# Fallback rotation palette for the "gradient"/"rotate" shimmer (see _marker_color/
+# Fallback rotation palette for the rotate sweep (see _marker_color/
 # TravelingFocusMarker.focus_marker_palette), used only until the first QSS qproperty- write
 # arrives (or if a theme's focus_marker_palette string is empty/unparseable). The real,
 # theme-aware default lives in themes.py's get_base_stylesheet: [accent_light, accent_dark] —
@@ -155,13 +145,7 @@ _MARKER_STYLE = "rotate"   # "dot" | "gradient" | "rotate"
 # so the widget has something valid to paint with before any stylesheet has been applied.
 _DEFAULT_ROTATE_PALETTE = (QColor(196, 206, 214), QColor(110, 120, 130))   # cool steel silver pair
 
-# Gradient-segment tunables (only used when _MARKER_STYLE == "gradient").
-_TRAIL_LENGTH_PX = 34.0      # arc-length of the trailing segment, in px along the perimeter
-_TRAIL_SAMPLES = 18          # points sampled along the trail; higher = smoother curve/fade
-_TRAIL_WIDTH = 1.0           # stroke width, px
-
-# Rotating-border tunables (only used when _MARKER_STYLE == "rotate"). Live-confirmed visible and
-# tuned against a real running app (2026-08-19) after an earlier silver-only version read as
+# Rotating-border tunables. Live-confirmed visible and
 # "static" — turned out to be a genuinely working mechanism paired with too-subtle a color choice,
 # confirmed by temporarily swapping in a full rainbow. Adjust-live like the rest of this file.
 _ROTATE_WIDTH = 1.0          # stroke width, px — "a 1px border"
@@ -182,7 +166,7 @@ _ROTATE_SPEED_PX_PER_SEC = 45.0
                               # faster constant instead.
 
 # Phase timings.
-_IDLE_BEFORE_SLOWDOWN_MS = 2600   # PATROL -> SLOWING: quiet time before the dot starts decelerating
+_IDLE_BEFORE_SLOWDOWN_MS = 2600   # PATROL -> SLOWING: quiet time before the sweep starts decelerating
 _SLOWDOWN_MS = 1200                # SLOWING duration: smooth decel to a full stop
 _WAIT_MS = 750                    # WAITING duration: stopped, fully visible, before the fade begins
 _FADE_MS = 750                    # FADING duration: alpha -> 0
@@ -367,10 +351,10 @@ def _tab_top_edge_perimeter(rect: QRect, inset: float = 0.0) -> _Perimeter:
     actually use (2026-09-04).
 
     Replaces the top+sides path (_tab_perimeter, kept below for reference) because the sides read
-    as noise: a tab is a small target, and three edges meant the dot spent most of its lap moving
-    vertically through the two short sides, drawing attention to the tab's outline rather than to
-    the tab. On some themes the side strokes also sat awkwardly against the neighbouring tab's
-    edge. One horizontal sweep across the top is calmer and unambiguous.
+    as noise: a tab is a small target, and three edges meant the marker spent most of its lap
+    moving vertically through the two short sides, drawing attention to the tab's outline rather
+    than to the tab. On some themes the side strokes also sat awkwardly against the neighbouring
+    tab's edge. One horizontal sweep across the top is calmer and unambiguous.
 
     A straight line, but INSET at each end by the tab's own corner radius, so it spans only the
     flat part of the top edge. Running the full width put the ends out where QTabBar::tab's
@@ -402,8 +386,8 @@ def _tab_perimeter(rect: QRect, inset: float = 0.0, radius: float = 0.0) -> _Per
     SUPERSEDED 2026-09-04 by _tab_top_edge_perimeter (see its docstring for why) and no longer
     called. Kept because it is the only worked example of an open path with rounded corners, and
     because the geometry bugs it exercised — the phantom wraparound segment and the endpoint
-    sampling short of the true end — are easy to reintroduce; both fixes live in
-    _paint_rotating_border and _paint_gradient_trail, keyed on _Perimeter.closed.
+    sampling short of the true end — are easy to reintroduce; the fix lives in
+    _paint_rotating_border, keyed on _Perimeter.closed.
 
     Uses `left() + width()` / `top() + height()` for the far edges, NOT `rect.right()` /
     `rect.bottom()` — see _rect_perimeter's docstring for why (the Qt QRect inclusive-edge trap,
@@ -426,8 +410,8 @@ def _tab_perimeter(rect: QRect, inset: float = 0.0, radius: float = 0.0) -> _Per
 
 
 class TravelingFocusMarker(QWidget):
-    """Mouse-transparent overlay child of MainWindow that draws the traveling focus dot around the
-    currently-focused control. Owns one motion QTimer and one fade QVariantAnimation, both idle
+    """Mouse-transparent overlay child of MainWindow that draws the traveling focus border around
+    the currently-focused control. Owns one motion QTimer and one fade QVariantAnimation, both idle
     unless a target is being shown."""
 
     def __init__(self, main_window):
@@ -478,7 +462,7 @@ class TravelingFocusMarker(QWidget):
         self._fade_anim.valueChanged.connect(self._on_fade_tick)
         self._fade_anim.finished.connect(self._on_fade_finished)
 
-        # Theme-driven dot color/ceiling-alpha, set via QSS qproperty- in get_base_stylesheet
+        # Theme-driven base color/ceiling-alpha, set via QSS qproperty- in get_base_stylesheet
         # (mirrors ClickSlider's bg_color/fill_color) so a theme change — including a live hover
         # preview, which calls mw.setStyleSheet(get_base_stylesheet(...)) on every tick — repaints
         # the marker automatically, the same way #overall_progress's fill_color does. Defaults
@@ -486,7 +470,7 @@ class TravelingFocusMarker(QWidget):
         # theme.get('focus_marker_alpha', 1.0)) so an unstyled widget still looks right.
         self._focus_marker_color = QColor("#ffffff")
         self._focus_marker_alpha = 1.0
-        # Theme-driven rotation palette for the "gradient"/"rotate" styles (see _marker_color).
+        # Theme-driven rotation palette for the sweep (see _marker_color).
         # Set via qproperty-focus_marker_palette, a comma-joined hex string (Qt properties can't
         # carry a Python list directly) — parsed once here into real QColors on every write.
         # Falls back to _DEFAULT_ROTATE_PALETTE if the string is empty/unparseable (e.g. before
@@ -820,15 +804,15 @@ class TravelingFocusMarker(QWidget):
     def _marker_color(self, palette_frac: float | None = None) -> QColor:
         """Marker color at the current fade strength. `focus_marker_color`/`focus_marker_alpha`
         (Qt Properties, set via QSS qproperty- in get_base_stylesheet — see __init__) are the
-        theme-driven ceiling color/opacity for the "dot" style; theme.py's own fallback for
-        focus_marker derives from `text` (contrasts against that theme's backgrounds by
-        construction, unlike accent, which can vanish into a segmented button's selected-state
-        fill). self._alpha (0-255, driven only during FADING) scales the ceiling down as the fade
-        runs — same ceiling-times-dynamic shape as library.py's _kbd_fill_color()/_kbd_alpha.
+        theme-driven ceiling color/opacity used as the plain base color when no palette position
+        is given; theme.py's own fallback for focus_marker derives from `text` (contrasts against
+        that theme's backgrounds by construction, unlike accent, which can vanish into a segmented
+        button's selected-state fill). self._alpha (0-255, driven only during FADING) scales the
+        ceiling down as the fade runs — same ceiling-times-dynamic shape as
+        library.py's _kbd_fill_color()/_kbd_alpha.
 
-        `palette_frac` (0..1, or None — the default, meaning "don't use the palette," used only by
-        the "gradient"/"rotate" per-sample shimmer, never by "dot") walks the palette
-        `_active_palette()` selects — a real, theme-driven list of 2+ colors (see the
+        `palette_frac` (0..1, or None — the default, meaning "don't use the palette") walks the
+        palette `_active_palette()` selects — a real, theme-driven list of 2+ colors (see the
         focus_marker_palette / focus_marker_tab_palette Qt Properties, set via QSS qproperty-
         from get_base_stylesheet) — wrapping smoothly from the
         last color back to the first so a continuous sweep has no seam. None is a deliberate
@@ -861,57 +845,9 @@ class TravelingFocusMarker(QWidget):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing, True)
         try:
-            if _MARKER_STYLE == "rotate":
-                self._paint_rotating_border(p)
-            elif _MARKER_STYLE == "gradient":
-                self._paint_gradient_trail(p)
-            else:
-                self._paint_dot(p)
+            self._paint_rotating_border(p)
         finally:
             p.end()
-
-    def _paint_dot(self, p: QPainter) -> None:
-        pos = self._perimeter.point_at(self._t)
-        p.setPen(Qt.NoPen)
-        p.setBrush(self._marker_color())
-        p.drawEllipse(pos, _DOT_RADIUS, _DOT_RADIUS)
-
-    def _paint_gradient_trail(self, p: QPainter) -> None:
-        """Short trailing stretch of the perimeter behind the current position (self._t), fading
-        toward the tail with a slow hue drift — drawn as _TRAIL_SAMPLES short connected segments
-        (each its own color/alpha) rather than one stroke, since QPen/QLinearGradient can't express
-        a fade *along* an arbitrary curved path. The leading sample (closest to self._t) is the
-        brightest/most opaque; the tail sample is dimmest, mirroring the "comet" look a plain dot
-        doesn't have.
-
-        `self._t - i * step_t` going negative is CLAMPED to 0.0 on an open perimeter, not wrapped.
-        `point_at` wraps any t into [0,1) unconditionally — correct for a closed loop (continuing
-        backward past the start just continues around the loop, which is real geometry there), but
-        on an open path (the tab's top+sides-only path) a negative t wraps to NEAR 1.0, i.e. the
-        FAR end of the path, not a smooth continuation off the near end. Near self._t≈0 (i.e. near
-        the tab's bottom-left start), this drew a stray line jumping most of the way across to the
-        other side — the same class of bug as _paint_rotating_border's phantom wraparound segment,
-        just triggered by a different sampling shape (backward-from-head vs. full-perimeter)."""
-        step_t = (_TRAIL_LENGTH_PX / _TRAIL_SAMPLES) / self._perimeter.length
-        if self._perimeter.closed:
-            pts = [self._perimeter.point_at(self._t - i * step_t) for i in range(_TRAIL_SAMPLES + 1)]
-        else:
-            pts = [self._perimeter.point_at(max(0.0, self._t - i * step_t))
-                   for i in range(_TRAIL_SAMPLES + 1)]
-        pen = QPen()
-        pen.setWidthF(_TRAIL_WIDTH)
-        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
-        for i in range(_TRAIL_SAMPLES):
-            frac = i / _TRAIL_SAMPLES              # 0 at the head, ~1 at the tail
-            fade = 1.0 - frac                       # opacity ceiling for this segment; also the
-                                                      # palette blend strength — pure palette[0] at
-                                                      # the head, fading to the plain base color at
-                                                      # the tail
-            color = self._marker_color(palette_frac=fade)
-            color.setAlpha(int(color.alpha() * fade))
-            pen.setColor(color)
-            p.setPen(pen)
-            p.drawLine(pts[i], pts[i + 1])
 
     def _paint_rotating_border(self, p: QPainter) -> None:
         """The ENTIRE perimeter outlined at once — no moving position, no trail. Split into
