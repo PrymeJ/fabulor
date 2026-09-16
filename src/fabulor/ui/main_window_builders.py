@@ -179,6 +179,11 @@ def build_title_bar(mw):
 def build_progress_bar(mw):
     mw.progress_slider = ClickSlider(Qt.Horizontal)
     mw.progress_slider.setObjectName("overall_progress")
+    # Matches chapter_progress_slider's PointingHandCursor (see _set_chapter_ui_active) —
+    # both sliders are equally clickable/draggable/right-clickable at all times (this one
+    # has no inactive/ghost state to toggle the cursor for), so a single cursor set here
+    # is enough, unlike the chapter slider's active/inactive toggle.
+    mw.progress_slider.setCursor(Qt.PointingHandCursor)
     mw.progress_slider.sliderPressed.connect(mw._hide_popups)
     mw.progress_slider.setRange(0, 1000)
     mw.progress_slider.setFixedHeight(24)
@@ -458,6 +463,18 @@ def build_secondary_controls(mw):
     # Shared between sleep and sprint display (see _settle_vol_stack) — dispatches to
     # whichever is actually active, not always sleep. See _on_indicator_label_clicked.
     mw.sleep_timer_label.clicked.connect(mw._on_indicator_label_clicked)
+    # The button's real geometry is a full 104x24 box with a fully transparent
+    # background (QSS), so only its centered TEXT is ever visibly drawn — reported live
+    # 2026-09-16 as a surprising hand-cursor/click zone reaching past the visible text.
+    # mousePressEvent is overridden to a no-op (never calling super()) outside the
+    # text's own rendered rect, so QPushButton's internal press-tracking never enters
+    # the pressed state for an off-text click — .clicked above is left untouched and
+    # still fires normally for any press that DOES land on the text. Mirrors
+    # _muted_icon_rect's approach (narrow the real hit zone to the visible content),
+    # applied to text metrics instead of a fixed icon size.
+    mw.sleep_timer_label.setMouseTracking(True)
+    mw.sleep_timer_label.mousePressEvent = lambda e: mw._on_indicator_label_pressed(e)
+    mw.sleep_timer_label.mouseMoveEvent = lambda e: mw._on_indicator_label_hover(e)
 
     for lbl in [mw.current_time_label, mw.total_time_label, mw.sleep_timer_label]:
         font = lbl.font()
@@ -466,6 +483,7 @@ def build_secondary_controls(mw):
 
     mw.volume_slider = ClickSlider(Qt.Horizontal)
     mw.volume_slider.setObjectName("volume_slider")
+    mw.volume_slider.setCursor(Qt.PointingHandCursor)
     mw.volume_slider.setRange(0, 100)
     mw.volume_slider.setValue(mw.config.get_volume())
     mw.volume_slider.setFixedHeight(9)
@@ -489,6 +507,14 @@ def build_secondary_controls(mw):
     mw.muted_icon_label = QLabel()
     mw.muted_icon_label.setObjectName("muted_icon_label")
     mw.muted_icon_label.setAlignment(Qt.AlignCenter)
+    # Cursor is set dynamically (mouseMoveEvent), not statically here — the label fills
+    # the whole vol_stack page but the icon it centers is much smaller; a static cursor
+    # would show the hand over the full page instead of just the icon. Needs
+    # setMouseTracking so mouseMoveEvent fires without a button held (see
+    # total_time_label's identical setup just above).
+    mw.muted_icon_label.setMouseTracking(True)
+    mw.muted_icon_label.mousePressEvent = lambda e: mw._on_muted_icon_clicked(e)
+    mw.muted_icon_label.mouseMoveEvent = lambda e: mw._on_muted_icon_hover(e)
     mw.vol_stack.addWidget(mw.muted_icon_label)
 
     book_info_layout.setSpacing(0)

@@ -1371,10 +1371,59 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # again on the NEXT panel open, which already re-queries has_sprint_data() fresh
         # in _start_sprint_entry.
 
+    @staticmethod
+    def _indicator_label_text_rect(lbl):
+        """sleep_timer_label's actual rendered TEXT rect, centered within its full
+        104x24 button geometry — the button's background is fully transparent (QSS), so
+        only the text is ever visibly drawn; the rest of the button is real, clickable
+        (QPushButton convention), but invisible. Reported live 2026-09-16: the hand
+        cursor/click zone reaching into that invisible space, left of the text, read as
+        a bug even though the button's full rect being clickable is correct by
+        QPushButton's own convention — narrowed to match what's actually on screen, same
+        shape as _muted_icon_rect but from text metrics instead of a fixed icon size.
+        Empty text (inactive) returns an empty rect — nothing to hit-test against, which
+        also naturally keeps the inactive state fully inert without a separate check."""
+        text = lbl.text()
+        if not text:
+            return QRect()
+        text_width = lbl.fontMetrics().horizontalAdvance(text)
+        text_height = lbl.fontMetrics().height()
+        x = (lbl.width() - text_width) // 2
+        y = (lbl.height() - text_height) // 2
+        return QRect(x, y, text_width, text_height)
+
+    def _on_indicator_label_pressed(self, event):
+        """Only lets a press that lands on the actual rendered text reach QPushButton's
+        real mousePressEvent (which starts its internal press-tracking, so .clicked
+        fires on release) — a press in the invisible surrounding space is swallowed
+        here and never becomes a click. See _indicator_label_text_rect."""
+        if self._indicator_label_text_rect(self.sleep_timer_label).contains(event.position().toPoint()):
+            QPushButton.mousePressEvent(self.sleep_timer_label, event)
+
+    def _on_indicator_label_hover(self, event):
+        """Hand cursor only over the actual rendered text — mirrors
+        _on_muted_icon_hover's pattern for the same reason."""
+        self._resync_indicator_label_cursor(event.position().toPoint())
+
+    def _resync_indicator_label_cursor(self, local_pos=None):
+        """Re-evaluates sleep_timer_label's cursor against `local_pos`, or against the
+        CURRENT real cursor position via QCursor.pos() when called from a text-change
+        handler rather than a real mouseMoveEvent — same reasoning as
+        _resync_muted_icon_cursor: the label's TEXT (and therefore its hit rect) can
+        change shape under a stationary mouse as the sleep/sprint countdown ticks, and
+        nothing else would re-evaluate the cursor for that case."""
+        if local_pos is None:
+            local_pos = self.sleep_timer_label.mapFromGlobal(QCursor.pos())
+        if self._indicator_label_text_rect(self.sleep_timer_label).contains(local_pos):
+            self.sleep_timer_label.setCursor(Qt.PointingHandCursor)
+        else:
+            self.sleep_timer_label.unsetCursor()
+
     def _on_sprint_display_text_updated(self, text):
         old_text = self.sleep_timer_label.text()
         was_armed = bool(old_text)
         self.sleep_timer_label.setText(text)
+        self._resync_indicator_label_cursor()
         newly_armed = bool(text) and not was_armed
         # Entering the grace countdown ("Grace MM:SS", shown while paused mid-sprint)
         # is its OWN transient-confirmation trigger while muted, same as arming —
@@ -3086,9 +3135,73 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self._pre_mute_volume = current
             self.volume_slider.setValue(0)  # -> _on_volume_changed + overlay
         else:
-            restore = self._pre_mute_volume if self._pre_mute_volume else 100
-            self._pre_mute_volume = None
-            self.volume_slider.setValue(restore)
+            self._restore_from_mute()
+
+    def _restore_from_mute(self):
+        """Shared restore-to-pre-mute-value step: `_toggle_mute`'s un-mute half,
+        scroll-up over the muted icon (wheelEvent), and a click on the muted icon
+        (_on_muted_icon_clicked). All three mean the same thing ("bring volume back to
+        what it was"), so all go through one place rather than duplicating the
+        `_pre_mute_volume`-or-100 fallback."""
+        restore = self._pre_mute_volume if self._pre_mute_volume else 100
+        self._pre_mute_volume = None
+        self.volume_slider.setValue(restore)  # -> _on_volume_changed + overlay
+
+    @staticmethod
+    def _muted_icon_rect(lbl):
+        """The icon's actual rendered rect within muted_icon_label — the label itself
+        fills the whole 104x24 vol_stack page (so QStackedWidget's pages stay uniformly
+        sized), but the pixmap it centers (AlignCenter, see the theme-apply site that
+        calls setPixmap) is a small 14x14 glyph. Click/wheel/cursor must all hit-test
+        against THIS rect, not the whole label, or the interactive zone reads as far
+        larger than what's visually there — reported live 2026-09-16, the wheel/click
+        fix's hit zone matched the slider page's full width instead of the icon."""
+        pm = lbl.pixmap()
+        if pm is None or pm.isNull():
+            return lbl.rect()  # no icon set yet — fall back to the full label
+        w, h = pm.width(), pm.height()
+        x = (lbl.width() - w) // 2
+        y = (lbl.height() - h) // 2
+        return QRect(x, y, w, h)
+
+    def _on_muted_icon_clicked(self, event):
+        """Click on the muted icon restores volume — same target as `m`/scroll-up (see
+        _restore_from_mute). Left-click only, same as every other clickable label in
+        this app (_toggle_remaining_time). Gated to the icon's own small rendered rect,
+        not the whole vol_stack-sized label — see _muted_icon_rect."""
+        if event.button() != Qt.LeftButton:
+            return
+        if not self.current_file:  # no book loaded — matches volume inertness
+            return
+        if not self._muted_icon_rect(self.muted_icon_label).contains(event.position().toPoint()):
+            return
+        self._restore_from_mute()
+
+    def _on_muted_icon_hover(self, event):
+        """Hand cursor only over the icon's own small rect, not the whole label —
+        mirrors _on_remaining_time_label_hover's pattern for the same reason."""
+        self._resync_muted_icon_cursor(event.position().toPoint())
+
+    def _resync_muted_icon_cursor(self, local_pos=None):
+        """Re-evaluates muted_icon_label's cursor against `local_pos` (its own local
+        coordinates), or against the CURRENT real cursor position via QCursor.pos() when
+        no event supplied it. The event-driven path (_on_muted_icon_hover) only runs on
+        an actual mouseMoveEvent — but _settle_vol_stack can swap the muted-icon page in
+        under a perfectly STATIONARY mouse (e.g. scrolling the slider down to 0 mutes it
+        without the cursor moving at all), so the label's cursor property is left stale
+        from whenever it was last explicitly set, with nothing to correct it. Reported
+        live 2026-09-16: the hand cursor stayed lit at the SLIDER's last cursor position
+        after a scroll-to-mute, well outside the icon's small rect on the new page.
+        Called from _settle_vol_stack right after switching TO the muted-icon page, per
+        this app's own documented QCursor.pos()-poll pattern for exactly this class of
+        'a page/state changed under a stationary mouse' gap (see CLAUDE.md's
+        sidebar-hotspot MouseMove-generation rule)."""
+        if local_pos is None:
+            local_pos = self.muted_icon_label.mapFromGlobal(QCursor.pos())
+        if self._muted_icon_rect(self.muted_icon_label).contains(local_pos):
+            self.muted_icon_label.setCursor(Qt.PointingHandCursor)
+        else:
+            self.muted_icon_label.unsetCursor()
 
     def _undo_shortcut(self):
         """Undo (u): reuses the on-screen undo affordance's exact path and its visibility
@@ -3917,6 +4030,30 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 return
             self._nudge_volume(1 if event.angleDelta().y() > 0 else -1)
             event.accept()
+        elif self.volume_slider.underMouse():
+            # underMouse() is only True while this specific vol_stack page is the one
+            # actually showing (QStackedWidget only shows one page at a time), so this
+            # deliberately does NOT also catch scroll over the empty vol_stack area when
+            # the slider isn't visible — see the TODO entry this closes for why that
+            # distinction was made on purpose (scrolling nothing shouldn't change volume).
+            if not self.current_file:
+                return
+            self._nudge_volume(1 if event.angleDelta().y() > 0 else -1)
+            event.accept()
+        elif (self.muted_icon_label.underMouse()
+                and self._muted_icon_rect(self.muted_icon_label).contains(
+                    self.muted_icon_label.mapFrom(self, event.position().toPoint()))):
+            # Scroll up restores to the pre-mute value (same target _toggle_mute's 'm'
+            # restore uses — see _restore_from_mute). Scroll down is a deliberate no-op:
+            # there's nothing to decrease from 0, and un-muting on a DOWN scroll would
+            # read backwards (see CLAUDE.md/this TODO entry for the design decision).
+            # Gated to the icon's own small rendered rect, not the whole vol_stack-sized
+            # label — see _muted_icon_rect (the click/cursor handlers use the same gate).
+            if not self.current_file:
+                return
+            if event.angleDelta().y() > 0:
+                self._restore_from_mute()
+            event.accept()
         elif self.speed_button.underMouse():
             if not self.player: return
             self.panel_manager.dismiss_sidebar()
@@ -4051,12 +4188,17 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         muted = self.volume_slider.value() == 0
         if muted and not self._sleep_just_set and not self._sprint_just_set:
             self.vol_stack.setCurrentIndex(2)
+            # The page can swap in under a stationary mouse (e.g. wheel-scrolling the
+            # slider down to 0) — nothing else re-evaluates the icon's cursor in that
+            # case. See _resync_muted_icon_cursor's docstring.
+            self._resync_muted_icon_cursor()
         else:
             self.vol_stack.setCurrentIndex(0)
 
     def _on_sleep_display_text_updated(self, text):
         was_armed = bool(self.sleep_timer_label.text())
         self.sleep_timer_label.setText(text)
+        self._resync_indicator_label_cursor()
         newly_armed = bool(text) and not was_armed
         if newly_armed and self.volume_slider.value() == 0:
             # Sleep was just (re)armed while muted — show the sleep text as a

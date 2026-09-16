@@ -123,6 +123,12 @@ class _FakeMW:
     def handle_forward(self, long_skip=False):
         self.handle_forward_calls.append(long_skip)
 
+    def _restore_from_mute(self):
+        # _toggle_mute's un-mute half now delegates to the real MainWindow method (shared
+        # with scroll-up over the muted icon in wheelEvent) — bind the REAL unbound method
+        # here too, same reuse-contract approach as every other collaborator in this class.
+        MainWindow._restore_from_mute(self)
+
 
 # ── _nudge_volume: reuse the slider path ─────────────────────────────────────────
 
