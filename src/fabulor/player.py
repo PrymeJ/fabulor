@@ -1406,17 +1406,40 @@ class Player(QObject):
             return True
         return False
 
-    def save_seek_position(self, old_pos: float, duration_limit: int) -> bool:
+    def save_seek_position(self, old_pos: float, new_pos: float, duration_limit: int,
+                            threshold: float = 0.0) -> bool:
         """
-        Saves the current position as an undo point if conditions are met.
-        Returns True if an undo point was set/updated.
+        Tracks the position to undo back to, and reports whether the undo
+        affordance should be shown for this seek.
+
+        The anchor (`_undo_pos`) is captured on every call within a coalescing
+        spree, REGARDLESS of whether this individual seek clears `threshold` —
+        only the decision to show the overlay is gated on distance. This is
+        what lets a spree of small seeks (e.g. repeatedly hitting Next through
+        several short chapters) that individually never cross `threshold`
+        still register a single undo point at the spree's true start, once
+        their CUMULATIVE distance from that start does. Without this, a caller
+        gating its own call to this method on the single seek's displacement
+        (the pre-2026-09-17 shape) could skip capturing the anchor on every
+        press of a short-chapter spree, so the anchor a later, qualifying
+        press captured was some mid-spree position, not the position before
+        the spree began — undo then landed on the wrong chapter. See
+        CLAUDE.md's "Undo must anchor to a seek spree's start" rule for the
+        live repro (this is unrelated to smart rewind — a separate feature
+        fixed in the same session).
+
+        Returns True if the undo affordance should be shown/refreshed for
+        `new_pos`.
         """
         if duration_limit == 0: return False
         now = time.time()
-        if self._undo_pos is None or (now - self._last_undo_click_time > duration_limit):
+        anchor_is_live = self._undo_pos is not None and (now - self._last_undo_click_time <= duration_limit)
+        if not anchor_is_live:
+            # Spree just starting (or the prior one expired) — this seek's own
+            # start position becomes the new anchor, captured unconditionally.
             self._undo_pos = old_pos
         self._last_undo_click_time = now
-        return True
+        return abs(new_pos - self._undo_pos) > threshold
 
     def undo_seek(self):
         """Seeks back to the last saved undo position."""

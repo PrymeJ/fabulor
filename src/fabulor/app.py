@@ -2918,9 +2918,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             try:
                 old_pos = self.player.time_pos or 0.0
                 new_pos = (self.progress_slider.value() / 1000) * self.player.duration
-                speed = self.player.speed or 1.0
-                if abs(new_pos - old_pos) > 60 * speed:
-                    self._trigger_undo(old_pos)
+                self._trigger_undo(old_pos, new_pos)
                 self.player.seek_async(new_pos)
                 self.session_recorder.notify_seek(new_pos)
                 # Immediately sync for library reactivity
@@ -2945,10 +2943,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             # Calculate new position and add a tiny nudge (0.1s) to ensure
             # we land inside the intended chapter boundary.
             new_pos = min(self.player.duration, (ratio * self.player.duration) + 0.1)
-            speed = self.player.speed or 1.0
 
-            if abs(new_pos - old_pos) > 60 * speed:
-                self._trigger_undo(old_pos)
+            self._trigger_undo(old_pos, new_pos)
 
             self.player.seek_async(new_pos)
 
@@ -2975,9 +2971,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 if new_pos is None:
                     return
 
-                speed = self.player.speed or 1.0
-                if abs(new_pos - old_pos) > 60 * speed:
-                    self._trigger_undo(old_pos)
+                self._trigger_undo(old_pos, new_pos)
 
                 self.session_recorder.notify_seek(new_pos)
 
@@ -3723,7 +3717,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             new_pos = max(0, old_pos - skip)
             self.player.seek_async(new_pos)
             if long_skip:
-                self._trigger_undo(old_pos)
+                self._trigger_undo(old_pos, new_pos, threshold=0.0)
 
     def handle_forward(self, long_skip=False):
         self.panel_manager.hide_all_panels()
@@ -3739,7 +3733,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             new_pos = min(self.player.duration or 0, old_pos + skip)
             self.player.seek_async(new_pos)
             if long_skip:
-                self._trigger_undo(old_pos)
+                self._trigger_undo(old_pos, new_pos, threshold=0.0)
 
     def _on_prev_right_click(self):
         self.panel_manager.hide_all_panels()
@@ -3752,7 +3746,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             # with _seek_target=None whenever the seek is a no-op (boundary), which
             # the settle can never clear -> permanent freeze. (Same class as the
             # chapter-list-click fix; see _on_chapter_list_selected.)
-            self._trigger_undo(old_pos)
+            self._trigger_undo(old_pos, 0.0, threshold=0.0)
 
     def handle_prev(self):
         self.panel_manager.hide_all_panels()
@@ -3768,9 +3762,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             # settle could never clear it -> permanent chapter-UI freeze (captured
             # 2026-06-15, M4B + VT). Let seek_async own the flag.
             if target is not None:
-                speed = self.player.speed or 1.0
-                if abs(target - old_pos) > 60 * speed:
-                    self._trigger_undo(old_pos)
+                self._trigger_undo(old_pos, target)
 
     def handle_next(self):
         self.panel_manager.hide_all_panels()
@@ -3783,9 +3775,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             # seeks only when it advances; at the last-chapter boundary it no-ops, and
             # an unconditional is_seeking = True would strand the flag -> freeze.
             if target is not None:
-                speed = self.player.speed or 1.0
-                if abs(target - old_pos) > 60 * speed:
-                    self._trigger_undo(old_pos)
+                self._trigger_undo(old_pos, target)
 
     def _on_chapter_list_selected(self, title, old_pos, force_play):
         # No is_seeking set here: activate_chapter_index -> seek_async (called in
@@ -3799,15 +3789,36 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                     self.session_recorder.open()
                 else:
                     self.session_recorder.resume()
-        speed = self.player.speed or 1.0
-        if abs((self.player.time_pos or 0) - old_pos) > 60 * speed:
-            self._trigger_undo(old_pos)
+        self._trigger_undo(old_pos, self.player.time_pos or 0)
 
-    def _trigger_undo(self, old_pos):
-        """Slides in the floating undo button."""
+    def _trigger_undo(self, old_pos, new_pos, threshold=None):
+        """Slides in the floating undo button.
+
+        Always calls save_seek_position — it decides internally, from the
+        CUMULATIVE distance since the current undo anchor, whether this seek
+        is worth showing the overlay for; it is not gated by the caller on
+        this single seek's own displacement. See save_seek_position's
+        docstring for why: a caller-side gate on the single seek's own
+        displacement was the 2026-09-17 bug (a spree of small seeks, e.g.
+        Next through several short chapters, could clear the threshold in
+        aggregate while never once qualifying individually — the anchor
+        captured by the first qualifying press was a mid-spree position, not
+        the position before the spree began).
+
+        `threshold` defaults to the standard 60s-at-speed distance gate used
+        by every seek-driven call site (slider release/right-click, chapter
+        nav, chapter-slider release/wheel). Pass `threshold=0.0` for a call
+        site whose own semantics are already "always show undo regardless of
+        distance" (the long-skip buttons) — passing 0.0 here still routes
+        through save_seek_position so the anchor-capture/coalescing behavior
+        stays identical, it just never suppresses the overlay.
+        """
         duration = self.config.get_undo_duration()
+        if threshold is None:
+            speed = self.player.speed or 1.0
+            threshold = 60 * speed
 
-        if not self.player.save_seek_position(old_pos, duration):
+        if not self.player.save_seek_position(old_pos, new_pos, duration, threshold=threshold):
             return
 
         width = self.width()
@@ -3960,7 +3971,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 else:
                     new_pos = current_pos - skip
             new_pos = max(0, min(self.player.duration or 0, new_pos))
-            self._trigger_undo(current_pos)
+            self._trigger_undo(current_pos, new_pos, threshold=0.0)
             self.player.seek_async(new_pos)
             event.accept()
         else:
