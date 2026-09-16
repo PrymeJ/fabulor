@@ -377,7 +377,6 @@ correctly — the contrast is what made these visible, so they are not regressio
 - [2026-06-19] Remove theme inheritance from "The Color Purple"
 
 ### Chapter list / library click
-- [2026-07-22] Intermittent chapter-number flicker on backward seek to a boundary
 - [2026-07-21] Chapter list highlight fluctuates and scrolls to bottom on click
 - [2026-07-21] `SUSPECT_MASKED_STASH` diagnostic marker has a false-positive gap (diagnostic-only)
 
@@ -385,9 +384,35 @@ correctly — the contrast is what made these visible, so they are not regressio
 - [2026-07-18] `closeEvent` can save near-zero progress on a SIGTERM race (narrow, not confirmed to matter)
 - [2026-07-14] VT progress restore silently resets on book-switch — root cause confirmed, not fixed
 - [2026-07-14] VT missing-file handling — consolidated design, not yet implemented
+
+### Seek-landing precision at chapter boundaries — GROUPED, deliberately not picked up piecemeal
+**Read [SEEK_CONSTANTS.md](SEEK_CONSTANTS.md) and NOTES.md's 2026-07-14
+`_PAUSED_SEEK_UNDERSHOOT_COMP` boundary-crossing-gate writeup FIRST, before touching any entry
+below.** All six items share one underlying fact: mpv's seek landing is imprecise at a chapter
+boundary (overshoots ~0.09s while playing, undershoots ~0.37s while paused — see
+`SEEK_CONSTANTS.md`'s measurement table), and every attempted fix so far has been a per-symptom
+epsilon/offset patch rather than a fix to the underlying imprecision. One such patch
+(`_PAUSED_SEEK_UNDERSHOOT_COMP` boundary-gating, 2026-07-14) was implemented, unit-tested, and
+found STRUCTURALLY WRONG before being fully reverted — not a tuning miss, a category error (it
+checked the inflated mpv *command* against a boundary instead of tracking the caller's actual
+*intent*, discarding information — "was this seek meant to land exactly, or is approximate fine"
+— that only exists at the call site). The corrected direction that investigation converged on:
+pass an explicit intent signal into `seek_async` at the call site, not infer it from arithmetic
+after the fact. Decided 2026-09-16 (Pryme): this whole cluster should be picked up as ONE
+dedicated investigation against that corrected direction, not fixed symptom-by-symptom — grouping
+these entries here is prep for that session, not a signal any one of them is ready to fix in
+isolation.
+- [2026-09-16] Chapter-start narration clipping ("apter two" instead of "Chapter two") — likely the
+  same root cause as the entry below, corroborating 2026-09-16 sighting via smart rewind/Prev
+- [2026-07-22] Intermittent chapter-number flicker on backward seek to a boundary — possibly a
+  distinct undershoot magnitude (~0.435s) from the characterized 0.37s; more captures needed
 - [2026-07-13] Chapter-elapsed label reads ~1s short near a chapter boundary
 - [2026-07-12] Chapter-slider load-time retrace disagrees with the restore seek by 0.35s
-- [2026-07-12] `_PAUSED_SEEK_UNDERSHOOT_COMP` applied unconditionally, not gated on boundary proximity
+- [2026-07-12] `_PAUSED_SEEK_UNDERSHOOT_COMP` applied unconditionally, not gated on boundary
+  proximity — the 2026-07-14 reverted attempt; canonical writeup, read before re-attempting
+- [2026-07-14] Right-click a chapter notch while paused can leave a small residual clip (notch-click
+  starts playback, so the paused-undershoot compensation's benefit is only partial) — minor,
+  deferred; see TESTING.md's "Undo / right-click notch (paused embedded)" checklist
 
 ### Panel focus / keyboard navigation
 - [2026-07-31] ScrollHoverTracker.suspend() is the hook for mouse/keyboard highlight coexistence
@@ -679,7 +704,8 @@ correctly — the contrast is what made these visible, so they are not regressio
   `_CHAPTER_BOUNDARY_EPSILON`). Do not fix speculatively — needs more captures first.**
   **May be distinct from the `787bfaa` fix — the 2026-07-22 working theory was settle undershoot
   (landing short of the boundary), not the stale post-settle sample `787bfaa` targets. Monitor; do
-  not assume closed.**
+  not assume closed.** Part of the "Seek-landing precision at chapter boundaries" group (see that
+  heading in the summary index) — read `SEEK_CONSTANTS.md` before touching this.
 
 - **[2026-07-21] Chapter list: clicking a chapter sometimes makes the current-chapter highlight
   fluctuate between chapter rows and scrolls the list to the bottom — visual bug, not yet
@@ -849,6 +875,8 @@ correctly — the contrast is what made these visible, so they are not regressio
   reintroducing that; a display-only fix (e.g. resolve the chapter-elapsed label's chapter without
   the tolerance, or clamp `c_elapsed` differently at the seam) is the likely direction but needs
   its own repro + verification against the stuck-Next/Prev symptom. Not blocking the drift fix.
+  Part of the "Seek-landing precision at chapter boundaries" group (see that heading in the summary
+  index) — read `SEEK_CONSTANTS.md` before touching this.
 
 - **[2026-07-12] Chapter-slider load-time retrace: the flow-animation target and the actual
   restore seek disagree by `_CHAPTER_BOUNDARY_EPSILON` (0.35s).** Found while investigating the
@@ -874,9 +902,14 @@ correctly — the contrast is what made these visible, so they are not regressio
   reads `player.time_pos`, so nothing about the drift-fix branch's `time_pos`-getter change touches
   this at all. If revisited: `_on_file_loaded_populate_chapters` should not apply
   `_CHAPTER_BOUNDARY_EPSILON` when computing the load/restore animation target, mirroring
-  `_restore_position`'s own no-epsilon reasoning. Full trace (Finding 5, corrected, and Finding 5b)
-  in `SEEK_DRIFT_MEASUREMENTS.md` on the `fix/seek-drift-logical-position` branch — branch-local,
-  re-derive from `app.py:1574` vs `app.py:1665` if that branch is ever discarded before merge.
+  `_restore_position`'s own no-epsilon reasoning. **Correction (2026-09-16): the "Finding 5" trace
+  this cited (`SEEK_DRIFT_MEASUREMENTS.md` on branch `fix/seek-drift-logical-position`) is a dead
+  reference — that branch is already merged and deleted, and the file has no commit history
+  anywhere in the repo (`git log --all -- SEEK_DRIFT_MEASUREMENTS.md` returns nothing; confirmed
+  via `git branch -a`). Re-derive from `app.py:1574` vs `app.py:1665` (the two line numbers cited
+  above) rather than looking for that file — see `SEEK_CONSTANTS.md`'s own "dead link" note on the
+  same file for the parallel case.** Part of the "Seek-landing precision at chapter boundaries"
+  group (see that heading in the summary index).
 
 - **[2026-07-12] `_PAUSED_SEEK_UNDERSHOOT_COMP` (0.37s) is applied unconditionally to every paused
   embedded-M4B seek, not gated on chapter-boundary proximity. Still UNFIXED — a fix attempt was
@@ -914,7 +947,31 @@ correctly — the contrast is what made these visible, so they are not regressio
   exactly the heavily-scarred, repeatedly-reverted function the "Seek/position tracking — VT+Undo
   is the known-fragile zone" CLAUDE.md rule is about; any future attempt needs its own
   investigate-then-plan cycle, live-verified against the exact stuck-Next/Prev bug this constant
-  was built to fix, same as before.
+  was built to fix, same as before. **This is the anchor entry for the "Seek-landing precision at
+  chapter boundaries" group** (see that heading in the summary index) — the other entries in that
+  group are downstream symptoms/sightings of the same underlying imprecision, and a future
+  investigation should tackle all of them together against the corrected "explicit intent signal"
+  direction above, not just re-attempt this one constant's gating in isolation. Also read
+  `SEEK_CONSTANTS.md` for the full constant-interaction map before changing anything in this area.
+
+- **[2026-09-16] Chapter-start narration clipping — corroborating sighting, part of the "Seek-landing
+  precision at chapter boundaries" group above, no new information beyond confirming the issue is
+  still live.** Surfaced during live testing of an unrelated smart-rewind fix (see CLAUDE.md's
+  "Smart rewind on resume" section, 2026-09-16): landing exactly at a chapter's nominal start —
+  via smart rewind's chapter-start clamp, the `|<`/Prev button, or ordinary chapter nav through
+  `_chapter_seek_offset()` — can clip the first fraction of a second of narration (e.g. "apter two"
+  instead of "Chapter two"). Confirmed to reproduce identically via plain Prev with smart rewind not
+  involved, so it is not a smart-rewind bug. This matches the ORIGINAL purpose statement of
+  `_PAUSED_SEEK_UNDERSHOOT_COMP` in the entry directly above ("Prev/Next skipping a chapter's first
+  word") almost exactly — very likely the same root cause, not a new issue. No fix attempted; folded
+  into this group rather than opened as a separate investigation.
+
+- **[2026-07-14] Right-click a chapter notch while paused can leave a small residual clip on books
+  with audio at the very chapter start — minor, deferred.** Notch-click starts playback as part of
+  the seek, so `_PAUSED_SEEK_UNDERSHOOT_COMP`'s paused-seek compensation only partially covers the
+  landing (by the time compensation would fully apply, playback has already begun). See TESTING.md's
+  "Undo / right-click notch (paused embedded)" checklist, which marks this as a known, accepted gap
+  rather than a checklist failure. Part of the "Seek-landing precision at chapter boundaries" group.
 
 - **[2026-07-31] DESIGN: `ScrollHoverTracker.suspend()` is the coexistence hook for mouse vs.
   keyboard highlighting.** `ui/hover_tracker.py` keeps the hovered row as explicit state
