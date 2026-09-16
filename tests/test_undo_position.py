@@ -1,6 +1,6 @@
 """Regression net for ``Player.save_seek_position`` / ``undo_seek``.
 
-Live bug (2026-09-17): sitting in a short (e.g. 40s) chapter and hitting Next
+Live bug (2026-09-16): sitting in a short (e.g. 40s) chapter and hitting Next
 repeatedly through several chapters, then Undo, landed on the first LONG
 chapter's start rather than the position before the short chapter was left.
 

@@ -3799,7 +3799,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         is worth showing the overlay for; it is not gated by the caller on
         this single seek's own displacement. See save_seek_position's
         docstring for why: a caller-side gate on the single seek's own
-        displacement was the 2026-09-17 bug (a spree of small seeks, e.g.
+        displacement was the 2026-09-16 bug (a spree of small seeks, e.g.
         Next through several short chapters, could clear the threshold in
         aggregate while never once qualifying individually — the anchor
         captured by the first qualifying press was a mid-spree position, not

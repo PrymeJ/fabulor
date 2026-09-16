@@ -1420,7 +1420,7 @@ class Player(QObject):
         still register a single undo point at the spree's true start, once
         their CUMULATIVE distance from that start does. Without this, a caller
         gating its own call to this method on the single seek's displacement
-        (the pre-2026-09-17 shape) could skip capturing the anchor on every
+        (the pre-2026-09-16 shape) could skip capturing the anchor on every
         press of a short-chapter spree, so the anchor a later, qualifying
         press captured was some mid-spree position, not the position before
         the spree began — undo then landed on the wrong chapter. See
