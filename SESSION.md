@@ -1,3 +1,48 @@
+## Session Summary — 2026-09-16 Session 1 — Fixed two smart-rewind bugs (cross-book leak, wrong chapter-boundary clamp), live-verified, `1cffb90`. Also removed the dead "dot"/"gradient" traveling-focus-marker paint styles, `8f6e24b`.
+
+Pryme reported two smart-rewind bugs: it was affecting the NEXT book on load instead of staying
+scoped to the book it armed on, and it wasn't confining the rewind to the chapter it was triggered
+from (should land at 0:00 of the paused chapter, not drift into the previous one).
+
+Root causes, both confirmed by reading the code before fixing (not guessed):
+
+- `MainWindow._last_pause_timestamp` lives on `MainWindow`, not `Player`, so `Player.load_book`'s
+  per-book state reset never touched it — a pause armed on one book could fire its rewind against
+  whatever book got loaded next, using the OLD book's pause duration against the NEW book's chapter
+  boundaries. Fixed by clearing it at every point that tears down or replaces the current book:
+  `_on_book_selected_from_library`, the EOF-restart branch of `toggle_play_pause`, and
+  `_on_book_removed`.
+- `Player.apply_smart_rewind`'s chapter-boundary clamp read `self.chapter` — exactly the property
+  CLAUDE.md's existing "DO NOT use `self.player.chapter`" rule already forbids for this class of
+  question, for exactly the reason that rule states (mpv's native property is async and can be
+  ahead of or behind `time_pos`). Fixed to walk `chapter_list` with `_CHAPTER_WALK_TOLERANCE`, the
+  same pattern `previous_chapter`/`next_chapter`/`activate_chapter_index`/`seek_within_chapter`
+  already use.
+
+Added `tests/test_smart_rewind.py` (7 tests, pure logic — a fake mpv `instance`, no QApplication)
+covering the clamp at/near/within a chapter boundary for both VT and non-VT, plus the pre-existing
+not-yet-due/disabled no-op cases. Full 529-test suite green.
+
+Pryme asked to temporarily shorten the 5-minute wait option to 30 seconds so he could test live
+without a real 5-minute wait, with no visual change to the button. Added a one-line, clearly
+commented `TEMPORARY` override in `apply_smart_rewind` (`wait_seconds = 30 if wait_min == 5 else
+wait_min * 60`), tested live, then reverted it to the plain `wait_min * 60` before committing —
+confirmed via `git diff` that no trace of the shortcut remained in the committed code.
+
+Live verification (Pryme, both confirmed fixed): no cross-book leak, and a same-book rewind near a
+chapter start now clamps correctly to that chapter's own 0:00.
+
+**Separate, pre-existing issue surfaced during this testing, not actioned:** landing exactly at a
+chapter's nominal start — via smart rewind's clamp, or via the `|<`/Prev button, which lands on the
+same boundary — can clip the first fraction of a second of narration ("apter two" instead of
+"Chapter two"). Pryme identified this himself as unrelated to smart rewind (reproduces identically
+via Prev with smart rewind never involved) and as the same long-chased mpv seek-landing drift class
+that `_CHAPTER_WALK_TOLERANCE`/`_EMBEDDED_CHAPTER_SEEK_OFFSET`/`_PAUSED_SEEK_UNDERSHOOT_COMP`/
+`_CHAPTER_BOUNDARY_EPSILON` already exist to compensate for — not a new bug, nothing to do for now.
+Documented in CLAUDE.md so it isn't mistaken for a smart-rewind regression later.
+
+---
+
 ## Session Summary — 2026-09-16 Session 1 — Removed the dead "dot" and "gradient" traveling-focus-marker paint styles from `focus_marker.py`, keeping only the shipped "rotate" style (plus the separate `fill_highlight` config option, untouched). `8f6e24b`.
 
 Pryme asked whether any dead code remained from the marker's original "dot" implementation, after
