@@ -2129,7 +2129,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             for lbl in (self.current_chapter_label, self.chap_elapsed_label,
                         self.chap_duration_label):
                 lbl.setStyleSheet("color: transparent;")
-            self.current_chapter_label.setCursor(Qt.ArrowCursor)
+            self.current_chapter_label.set_clickable(False)
             self.chap_duration_label.setCursor(Qt.ArrowCursor)
             self._chapter_label_clickable = False
 
@@ -2490,12 +2490,13 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self._mark_book_missing(self.current_file)
 
     def _update_chapter_label_clickability(self):
-        """Enable the chapter label as a clickable link only when there are 2+ chapters."""
+        """Enable the chapter label as a clickable link only when there are 2+ chapters.
+        ScrollingLabel.set_clickable owns the cursor now (hand only over the actual
+        rendered/scrolling text, not the whole widget — see its docstring); this no
+        longer sets the cursor directly."""
         chaps = self.player.chapter_list or [] if self.player else []
         clickable = len(chaps) >= 2
-        self.current_chapter_label.setCursor(
-            Qt.PointingHandCursor if clickable else Qt.ArrowCursor
-        )
+        self.current_chapter_label.set_clickable(clickable)
         self._chapter_label_clickable = clickable
 
     def _refresh_notches(self, skip_animation=False):

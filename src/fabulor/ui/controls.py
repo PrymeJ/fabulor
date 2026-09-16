@@ -1,6 +1,6 @@
 from PySide6.QtWidgets import QWidget, QLabel, QPushButton
-from PySide6.QtCore import Qt, Signal, Property, QTimer, QPropertyAnimation, QEasingCurve, QPointF
-from PySide6.QtGui import QColor, QPainter, QLinearGradient, QPainterPath, QPolygonF, QPixmap
+from PySide6.QtCore import Qt, Signal, Property, QTimer, QPropertyAnimation, QEasingCurve, QPointF, QRect
+from PySide6.QtGui import QColor, QPainter, QLinearGradient, QPainterPath, QPolygonF, QPixmap, QCursor
 import os, time, logging  # [STUTTER-PROBE] temporary — remove when the narrowing change is verified
 _stutter_log = logging.getLogger("fabulor.ui.controls")  # [STUTTER-PROBE]
 
@@ -339,8 +339,25 @@ class ScrollingLabel(FreezableLabel):
         self._text_color = QColor()
         self._timer.timeout.connect(self._update_scroll)
         self._timer.setInterval(120)
-        self.setCursor(Qt.PointingHandCursor)
+        # Whether this instance's click/hover-cursor behavior is currently meaningful at
+        # all (e.g. the chapter label: only when 2+ chapters exist — see
+        # MainWindow._update_chapter_label_clickability). True by default so a bare
+        # ScrollingLabel with no external gating keeps its original always-clickable
+        # behavior. The cursor is NOT set statically here anymore — see mouseMoveEvent;
+        # a static cursor would cover the whole widget, but the actual click zone is
+        # narrowed to the rendered text (_text_rect), which is very often much smaller
+        # than the widget (e.g. the chapter label sits in a stretch=1 layout cell).
+        self._clickable = True
+        self.setMouseTracking(True)
         self.setWordWrap(False)
+
+    def set_clickable(self, clickable: bool):
+        """Gates BOTH whether a click can fire and whether the hand cursor ever shows —
+        set False for e.g. fewer than 2 chapters, where hovering/clicking the label
+        should do nothing at all, not just narrow the zone."""
+        self._clickable = clickable
+        if not clickable:
+            self.unsetCursor()
 
     def set_scroll_mode(self, mode):
         self._scroll_mode = mode
@@ -367,6 +384,24 @@ class ScrollingLabel(FreezableLabel):
             return
         QLabel.setText(self, text)
         self._update_scrolling_state()
+        self._resync_cursor()
+
+    def _resync_cursor(self):
+        """Re-evaluates the hand cursor against the CURRENT real cursor position
+        (QCursor.pos(), mapped to local coordinates), not just on the next
+        mouseMoveEvent. New text can change _text_rect()'s shape/position under a
+        perfectly STATIONARY mouse — e.g. hovering near the edge of a scrolling chapter
+        title, then advancing to a chapter short enough not to scroll: the mouse never
+        moves, but the text (and its rect) does, and mouseMoveEvent alone would never
+        fire to catch that. Reported live 2026-09-17. Same pattern as
+        MainWindow._resync_muted_icon_cursor / _resync_indicator_label_cursor — this one
+        lives inside the class itself (not the caller) since setText is the one choke
+        point every text change already routes through, so it can't be forgotten by a
+        future call site the way an external caller-side resync could be."""
+        if self._clickable and self._text_rect().contains(self.mapFromGlobal(QCursor.pos())):
+            self.setCursor(Qt.PointingHandCursor)
+        else:
+            self.unsetCursor()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -456,9 +491,45 @@ class ScrollingLabel(FreezableLabel):
         super().showEvent(event)
         self._update_scrolling_state()
 
+    def _text_rect(self):
+        """The actual rendered text's rect, in the same three cases paintEvent draws —
+        this label is often given far more width than its text needs (e.g. the chapter
+        label sits in a stretch=1 layout cell between two fixed-width time labels), so a
+        click/hand-cursor gated on the widget's own full bounds reaches well past what's
+        visually there. Reported live 2026-09-16 on the chapter label specifically, but
+        this fix lives here since every ScrollingLabel instance shares the same gap."""
+        text = self.text()
+        metrics = self.fontMetrics()
+        text_height = metrics.height()
+        y = (self.height() - text_height) // 2
+        if self._timer.isActive():
+            # Scrolling: text starts at _scroll_pos + 2 (often negative — most of it is
+            # off-widget) and spans its own full width; clip to the widget's own bounds,
+            # same as what actually paints.
+            text_width = metrics.horizontalAdvance(text)
+            x = self._scroll_pos + 2
+            return QRect(x, y, text_width, text_height).intersected(self.rect())
+        if self._scroll_mode == "Off":
+            elided = metrics.elidedText(text, Qt.ElideRight, self.width())
+            elided_width = metrics.horizontalAdvance(elided)
+            x = max(0, (self.width() - elided_width) // 2)
+            return QRect(x, y, elided_width, text_height)
+        text_width = metrics.horizontalAdvance(text)
+        x = max(0, (self.width() - text_width) // 2)
+        return QRect(x, y, text_width, text_height)
+
     def mousePressEvent(self, event):
-        if event.button() == Qt.LeftButton:
+        if (self._clickable and event.button() == Qt.LeftButton
+                and self._text_rect().contains(event.position().toPoint())):
             self.clicked.emit()
+
+    def mouseMoveEvent(self, event):
+        """Hand cursor only while hovering the actual rendered text, and only when
+        set_clickable(True) — mirrors the muted-icon/sleep-label fixes' pattern."""
+        if self._clickable and self._text_rect().contains(event.position().toPoint()):
+            self.setCursor(Qt.PointingHandCursor)
+        else:
+            self.unsetCursor()
 
 class HoverButton(QPushButton):
     """A button that emits signals on mouse enter/leave for hover effects."""
