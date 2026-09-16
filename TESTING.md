@@ -1,3 +1,82 @@
+## Smart rewind: per-book scoping and chapter confinement — 2026-09-16 Session 1
+
+Two bugs, both live-verified this session. Background/full mechanism: CLAUDE.md's "Smart rewind
+must be reset per book" and "DO NOT use `self.player.chapter`" rules; `tests/test_smart_rewind.py`
+covers the chapter-clamp logic in isolation (no mpv/QApplication).
+
+### Per-book scoping (no cross-book leak)
+- [x] Enable smart rewind (Speed panel), pause a book long enough to arm the wait threshold, then
+  switch to a DIFFERENT book before resuming — the new book's first resume must NOT rewind at all
+- [ ] Same check via the EOF-restart path: arm smart rewind, let a book reach EOF, press
+  Play/Restart — the restart-from-0 must not itself trigger a stale rewind
+- [ ] Same check via book removal: arm smart rewind on a book, remove it from the library (trash
+  button or scan-location removal) before resuming, then select and play a different book — no
+  stale rewind should fire
+
+### Chapter confinement (clamps to the paused chapter's own start)
+- [x] Pause a few seconds into a chapter, wait past the smart-rewind threshold, resume — rewind
+  lands at 0:00 of THAT chapter, never crosses into the previous chapter
+- [ ] Same check on a VT (multi-file MP3) book — chapter boundaries are file boundaries there;
+  confirm the clamp still respects the file/chapter start correctly
+- [ ] Same check paused exactly AT (or within a second of) a chapter's own start — should stay put
+  at that chapter's 0:00, not drift backward into the previous chapter
+
+### Known, separate, NOT fixed — do not mistake this for a smart-rewind regression
+- [ ] Landing exactly at a chapter start (via smart rewind's clamp, `|<`/Prev, or ordinary chapter
+  nav) can clip the first fraction of a second of narration (e.g. "apter two" instead of "Chapter
+  two"). This is the pre-existing mpv seek-landing-precision issue tracked in TODO.md's
+  "Seek-landing precision at chapter boundaries" group — reproduces identically via plain Prev with
+  smart rewind never involved. Confirm it's still present (expected) rather than treating it as a
+  new bug introduced by this session's fixes.
+
+## Undo: spree anchoring, boundary no-ops, and coverage across all seek inputs — 2026-09-16 Session 1
+
+Four fixes, all live-verified this session, all sharing one mechanism: `Player.save_seek_position`
+now captures the undo anchor unconditionally within a coalescing spree (rapid calls inside
+`undo_duration`, default 3s) and gates only whether the overlay SHOWS on cumulative distance from
+that anchor (`60s * speed` for most call sites). Background: CLAUDE.md's "Undo must anchor to a
+seek spree's start" rule and its two follow-up rules; `tests/test_undo_position.py` covers the
+anchor/threshold logic in isolation (no mpv/QApplication).
+
+### Spree anchoring (Next/Prev, chapter-list click, slider release, chapter-slider release)
+- [x] Sit in a short chapter (well under a minute), press Next through it into a longer chapter
+  (repeat a couple more times if needed), then click Undo — lands back at the position BEFORE the
+  first Next, not at the start of the first long chapter
+- [ ] Same check via rapid chapter-list clicks (click chapter 3, then chapter 4, then chapter 5 in
+  quick succession) — Undo returns to the position before the first click, not chapter 4's start
+- [ ] Same check via rapid progress-slider drags/releases in quick succession — Undo returns to the
+  position before the FIRST release in the spree
+- [ ] A single Next/Prev press on its own, far enough to individually exceed the 60s threshold
+  (e.g. a very long chapter) — Undo still shows immediately and correctly, single-press behavior
+  unaffected by the spree-anchoring change
+
+### Long-skip / restart boundary no-ops (must NOT show Undo for a seek that didn't move)
+- [x] Right-click `>` (long skip forward) when the remaining time is less than the configured
+  long-skip duration (target would land within ~2s of EOF) — no Undo shown, since `seek_async`
+  silently refuses to seek that close to EOF
+- [x] Right-click `<` (long skip backward) or right-click `|<` (restart to 0:00) while already
+  sitting at/near 0:00 — no Undo shown (the move is real but trivially small)
+- [ ] A genuine long skip mid-book (well clear of both EOF and the start) — Undo still shows
+  correctly, only the boundary cases are suppressed
+
+### Chapter-slider wheel scrub (no Undo for a single small tick)
+- [x] Scroll the chapter progress slider once on a short chapter (under a minute, or e.g. a 4m04s
+  chapter whose 10%-of-length step is ~24s) — no Undo shown for that single tick
+- [ ] Scroll the chapter progress slider repeatedly/rapidly until cumulative distance exceeds 60s
+  — Undo now shows, anchored to the position before the FIRST tick in the scroll spree
+- [ ] Scroll near the chapter's own end/start boundary (clamped step) — no Undo for a step that
+  lands exactly on the boundary with negligible net movement
+
+### Regular skip taps/holds (`</>` buttons and Left/Right keys) — extended to the same gate
+- [x] Hold the `>` or `<` button (auto-repeats every ~150ms) past ~60s of cumulative skip in one
+  direction — Undo now shows, anchored to the position before the hold began
+- [ ] Same check holding Left or Right arrow keys instead of the buttons
+- [ ] A single tap of `>`/`<`, or a single Left/Right press, at the default skip duration (10s) —
+  no Undo shown (stays silent, matching the original single-tap design intent)
+- [ ] Rapid repeated taps (not a held key) past 60s cumulative — Undo shows, same as a held key
+- [ ] Shift+Left / Shift+Right (keyboard long-skip) near EOF/start — same boundary no-op check as
+  the long-skip buttons above, since both route through the same `handle_rewind`/`handle_forward`
+
 ## Hover-pickup keyboard navigation + tab-bar mouse-reclaim — 2026-09-15 Session 1
 
 Two directions on each surface: keys picking up from wherever the mouse is hovering (no keyboard
