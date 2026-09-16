@@ -3716,18 +3716,23 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 skip = self.config.get_skip_duration() * speed
             new_pos = max(0, old_pos - skip)
             self.player.seek_async(new_pos)
-            # Read the position BACK from the player rather than using the pre-computed
-            # new_pos: seek_async silently no-ops within 2s of EOF/near a VT file's own
-            # end (see "DO NOT seek within 2 seconds of a file's duration"), and near the
-            # start-of-book floor here it still seeks, just to a small, undo-unworthy
-            # distance. Either way, the ACTUAL resulting position (time_pos, which only
-            # updates when seek_async genuinely set _seek_target/_logical_pos) is what
-            # the undo-worthiness distance check must be measured against, not the
-            # requested target — using the target would show Undo for a skip that never
-            # moved playback at all. Standard distance gate (not threshold=0.0): see
-            # _trigger_undo's docstring.
-            if long_skip:
-                self._trigger_undo(old_pos, self.player.time_pos or old_pos)
+            # Called unconditionally (not just for long_skip): a single regular-skip
+            # tap stays silent on its own (default 10s < the 60s gate), but repeated
+            # taps or a held button/key (both auto-repeat — see the button/Binding
+            # setup) accumulate via save_seek_position's coalescing anchor exactly
+            # like the chapter-slider wheel scrub, so a spree of regular skips now
+            # also earns Undo once it crosses 60s cumulative. Read the position BACK
+            # from the player rather than using the pre-computed new_pos: seek_async
+            # silently no-ops within 2s of EOF/near a VT file's own end (see "DO NOT
+            # seek within 2 seconds of a file's duration"), and near the start-of-book
+            # floor here it still seeks, just to a small, undo-unworthy distance.
+            # Either way, the ACTUAL resulting position (time_pos, which only updates
+            # when seek_async genuinely set _seek_target/_logical_pos) is what the
+            # undo-worthiness distance check must be measured against, not the
+            # requested target — using the target would show Undo for a skip that
+            # never moved playback at all. Standard distance gate (not threshold=0.0):
+            # see _trigger_undo's docstring.
+            self._trigger_undo(old_pos, self.player.time_pos or old_pos)
 
     def handle_forward(self, long_skip=False):
         self.panel_manager.hide_all_panels()
@@ -3742,11 +3747,12 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 skip = self.config.get_skip_duration() * speed
             new_pos = min(self.player.duration or 0, old_pos + skip)
             self.player.seek_async(new_pos)
-            # See handle_rewind's matching comment: read the position back rather than
-            # using new_pos, so a long skip that seek_async silently refused (within 2s
-            # of EOF) doesn't show Undo for a jump that never happened.
-            if long_skip:
-                self._trigger_undo(old_pos, self.player.time_pos or old_pos)
+            # See handle_rewind's matching comment: called unconditionally now (a
+            # spree of regular-skip taps/holds earns Undo the same way a wheel scrub
+            # spree does), and reads the position back rather than using new_pos, so a
+            # skip that seek_async silently refused (within 2s of EOF) doesn't show
+            # Undo for a jump that never happened.
+            self._trigger_undo(old_pos, self.player.time_pos or old_pos)
 
     def _on_prev_right_click(self):
         self.panel_manager.hide_all_panels()
