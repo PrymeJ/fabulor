@@ -3716,8 +3716,18 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 skip = self.config.get_skip_duration() * speed
             new_pos = max(0, old_pos - skip)
             self.player.seek_async(new_pos)
+            # Read the position BACK from the player rather than using the pre-computed
+            # new_pos: seek_async silently no-ops within 2s of EOF/near a VT file's own
+            # end (see "DO NOT seek within 2 seconds of a file's duration"), and near the
+            # start-of-book floor here it still seeks, just to a small, undo-unworthy
+            # distance. Either way, the ACTUAL resulting position (time_pos, which only
+            # updates when seek_async genuinely set _seek_target/_logical_pos) is what
+            # the undo-worthiness distance check must be measured against, not the
+            # requested target — using the target would show Undo for a skip that never
+            # moved playback at all. Standard distance gate (not threshold=0.0): see
+            # _trigger_undo's docstring.
             if long_skip:
-                self._trigger_undo(old_pos, new_pos, threshold=0.0)
+                self._trigger_undo(old_pos, self.player.time_pos or old_pos)
 
     def handle_forward(self, long_skip=False):
         self.panel_manager.hide_all_panels()
@@ -3732,8 +3742,11 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 skip = self.config.get_skip_duration() * speed
             new_pos = min(self.player.duration or 0, old_pos + skip)
             self.player.seek_async(new_pos)
+            # See handle_rewind's matching comment: read the position back rather than
+            # using new_pos, so a long skip that seek_async silently refused (within 2s
+            # of EOF) doesn't show Undo for a jump that never happened.
             if long_skip:
-                self._trigger_undo(old_pos, new_pos, threshold=0.0)
+                self._trigger_undo(old_pos, self.player.time_pos or old_pos)
 
     def _on_prev_right_click(self):
         self.panel_manager.hide_all_panels()
@@ -3746,7 +3759,11 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             # with _seek_target=None whenever the seek is a no-op (boundary), which
             # the settle can never clear -> permanent freeze. (Same class as the
             # chapter-list-click fix; see _on_chapter_list_selected.)
-            self._trigger_undo(old_pos, 0.0, threshold=0.0)
+            # Standard distance gate (not threshold=0.0): restarting from a position
+            # already at/near 0:00 is a genuine but undo-unworthy no-op-ish seek —
+            # showing Undo there is confusing since there's nothing meaningful to
+            # undo back to. See handle_rewind/handle_forward's matching fix.
+            self._trigger_undo(old_pos, 0.0)
 
     def handle_prev(self):
         self.panel_manager.hide_all_panels()
