@@ -90,6 +90,162 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
     worth checking whether this is literally the same underlying defect surfacing a third time,
     or a separate, unrelated row-ordering bug specific to how Speed's rows list was built.
 
+### Sidebar mouse-wheel conflict over the cover art area
+- [2026-09-17] FIXED — scrolling over `visual_area` while the sidebar is open both closed the
+  sidebar AND changed volume on the same flick, an inconsistency with the other two wheel-active
+  zones (`speed_button`, `chapter_progress_slider`), both of which already call
+  `panel_manager.dismiss_sidebar()` before their own action on the same event. Pryme's own lean:
+  close on this flick, let volume behave normally on the very next one, and leave the existing
+  no-op over neutral space (not over any wheel zone) alone — it's already sidebar-state-independent
+  today and was never actually inconsistent, just untouched by the sidebar question. Fixed by adding
+  the same `dismiss_sidebar()` call to `visual_area`'s wheel branch (`app.py:4031`), matching the
+  other two zones exactly. `pytest tests/ -k "volume or sidebar or wheel"` green.
+
+### Small visual/cosmetic bugs (batch logged 2026-09-17, mostly not yet reproduced in detail)
+- [2026-09-17] Restart button has jagged edges — visual, minor. Not yet investigated.
+- [2026-09-17] Chapter label scroll has a 2px gap on the left before scrolling starts — visual,
+  very minor. Likely the same or a sibling issue to the already-tracked "ScrollingLabel first-glyph
+  clipping" entry (see "Misc UI polish" below) — check whether this is that entry's own 2px gap
+  described from a different angle, or a genuinely separate artifact, before starting work on
+  either.
+- [2026-09-17] Settings' Off/On toggle button order is inconsistent across the panel — visual,
+  minor. Needs an audit of every Off/On pair, a check of what each one's default value actually is,
+  and a decision on a single consistent left-to-right (or top-to-bottom) order before fixing any of
+  them individually.
+- [2026-09-17] No-cover-art placeholder's "author - title" text: font, style, and position need a
+  visual pass — flagged VISUAL, MAJOR (the strongest severity in this batch). Not yet scoped
+  further than "needs a look."
+- [2026-09-17] FIXED — no-cover-art placeholder showed the literal text "None - Book Title" instead
+  of blank/just-the-title when a book's author field was empty. `app.py:3602`'s `metadata_label`
+  text built `f"{book.author} - {book.title}"` with no guard for `book.author` being `None`, unlike
+  every other author-display site in the codebase (`library.py`, which uses `book.author or ""`
+  throughout). Pryme's own note when logging this: "BUG no author - none > just blank. I am not
+  sure what I meant when I wrote this. I'll wipe author and title fields to check" — found and
+  fixed from the code alone before he could reproduce it live; matches his description exactly.
+  Fixed to fall back to just the title (no dangling " - ") when author is empty.
+
+### Cover/metadata scan gaps (batch logged 2026-09-17, need reproduction)
+- [2026-09-17] POSSIBLE BUG, needs repro: changing a book's cover image file outside the app is not
+  reflected in the library after a rescan — only after a full app restart. Suggests the cover cache
+  (`_cover_cache`/`_sized_cover_cache`, see CLAUDE.md's cover-caching rules) isn't being invalidated
+  on a rescan-detected cover change, only ever read fresh at process start. Needs a live repro
+  (change a cover file, rescan, observe) before diagnosing further.
+- [2026-09-17] BUG, needs repro for full detail: moving a book's folder to a different path is not
+  picked up by the scanner — the book has to be manually deleted from the library and rescanned
+  from the new location. Open question, explicitly flagged by Pryme: do tags and listening
+  sessions survive that manual delete-and-rescan, or are they lost? Needs to be checked as part of
+  reproducing this, since if they're lost that raises the severity considerably (data loss, not
+  just an inconvenience).
+- [2026-09-17] TEST, minor: add a deliberately corrupted image file as a book's cover and confirm
+  the app handles it gracefully (no crash, some sane fallback) rather than assuming it does. Not a
+  known bug — a gap in test coverage to close.
+
+### Carousel/blur edge cases around book removal (batch logged 2026-09-17, need reproduction)
+- [2026-09-17] BUG, visual, minor, needs repro: the no-book carousel's blur shows half-static/
+  half-scrolling when the currently-active book is deleted. Also check what happens if that book's
+  path is later rescanned (does the carousel recover cleanly, or does the stale-half persist).
+  Possibly related to the already-tracked "Garbled backdrop after excluding the playing book from
+  Book Detail" entry (see "Blur grab hide/show side effects" above) — that entry's own symptom
+  (frosted region half-stale, half-live after excluding the playing book) sounds similar enough
+  that these may be the same underlying issue reached via a different removal path (deleted outright
+  vs. excluded from Book Detail); check for overlap before treating as fully separate.
+- [2026-09-17] BUG, visual, needs repro/confirmation: finishing a book to 100%, switching to another
+  book, then switching back can show 0.0% progress text while both the overall and chapter sliders
+  sit all the way to the right (visually 100%). A display/state mismatch between the percentage
+  label and the sliders' own position — needs to be reproduced and confirmed before diagnosing.
+
+### VT missing-file handling — design already covers most of this (see "VT / seek / progress tracking")
+- [2026-09-17] Pryme's own restated version of the already-designed-but-unimplemented VT
+  missing-file handling: count and compare audio files before loading, show a sticky banner on
+  discovery, enter no-book mode, offer to rescan-and-rebuild or remove. This matches the existing
+  "VT missing-file handling — consolidated design" entry's three parts almost exactly (load-time
+  count comparison, sticky banner with Dismiss/Rescan actions, unload-on-discovery) — see that
+  entry (VT / seek / progress tracking, and its fuller Pending write-up) rather than duplicating a
+  second design here. Logged as a pointer, not a new entry, so the existing design stays the single
+  source of truth for this feature.
+
+### Not-yet-decided small features (batch logged 2026-09-17)
+- [2026-09-17] Play button on the Book Detail panel — feature, minor, not decided whether/how to add
+  it. No design yet (where it goes, what it does that the main transport doesn't already cover from
+  outside the panel).
+- [2026-09-17] Custom mouse pointers — feature, visual, minor. No design yet.
+- [2026-09-17] A fourth theme-shuffle mode that updates the theme pool based on the current book's
+  cover colors (distinct from the existing "Cover art based theme" Off/With pool/Exclusive modes,
+  which apply the cover's colors directly rather than using them to pick pool members) — feature,
+  visual, minor, not decided.
+- [2026-09-17] Hide the Themes-tab interval row entirely when only one theme is selected in the
+  pool (an interval is meaningless with nothing to rotate to) — feature, visual, minor, not decided.
+- [2026-09-17] If the longest streak is also the currently-active streak, remove the outline and
+  show the cells bare (today the longest run always gets a border via `streak_grid_outline`,
+  computed in `StreakGrid._compute_longest_run`/rendered around `stats_panel.py:3645`, regardless of
+  whether it's still ongoing) — feature, visual, minor, not decided. Would need a way to tell
+  "longest run" and "currently active run" apart in that rendering path, which doesn't exist today.
+- [2026-09-17] Volume slider color steps based on the current volume level (e.g. color shifts as
+  volume increases) — feature, visual, minor, not decided.
+- [2026-09-17] Series information in Book Detail, after the Year field — feature, QOL, not decided.
+  Library has the horizontal space; Book Detail's Year field is fixed-width and short enough that it
+  works invisibly-until-populated, but Series would face the same "empty most of the time" problem
+  without an obvious place to hide when unused. Needs feasibility/layout thinking before deciding,
+  not just a yes/no.
+- [2026-09-17] A working parametric EQ in the Audio tab — feature, minor, not decided. Pryme's own
+  caveat: the existing audio-processing controls (mono/swap/balance) are already broken — see the
+  "Audio tab: mono/swap/balance throw a console error and do nothing" entry (Cleanup/process area,
+  Pending section) — so it's unclear whether a new EQ feature would even work correctly given
+  those pre-existing issues. Investigate that bug first; this is downstream of it, not independent.
+
+### Keyboard/mouse focus quality-of-life gaps (batch logged 2026-09-17)
+- [2026-09-17] In Book Detail's metadata edit mode, if the Year or Narrator field is empty, it can't
+  be tabbed/arrowed to directly — another field has to be clicked first before keyboard navigation
+  can reach the empty one. QOL, minor. Not yet traced to a specific mechanism (candidate: an empty
+  field's edit-mode widget may not be constructed/shown until some other field interaction triggers
+  it — needs checking against `_cycle_metadata_field`/`_enter_edit_mode` in `book_detail_panel.py`).
+
+### Theme-pass-adjacent items (batch logged 2026-09-17 — group with the eventual full theme pass)
+- [2026-09-17] Add an optional per-theme dict key providing two colors for the Speed/Sleep/Sprint
+  grid ramp buttons, to be done BEFORE the full theme pass (not after) since it changes what that
+  pass will actually be tuning. Relates to the existing "Some themes need a preset-ramp colour
+  override" entry (Theme color/data) — check whether this generalizes that entry's fix (a per-theme
+  ramp-endpoint override) rather than being a separate mechanism; if so, fold together rather than
+  building two overlapping override systems.
+- [2026-09-17] Check ramp-button-vs-label text contrast specifically when a cover-based theme is
+  selected (not just the fixed theme palette) — to be done BEFORE the full theme pass. Pryme's own
+  example: book cover "2666" produces a low-contrast case. Needs automated testing across a range of
+  real covers, not just the one example, to find the actual worst cases before designing a fix.
+- [2026-09-17] Book Detail's session-history row colors are wrong when a cover-based theme is
+  selected — they need to be derived from the theme's background colors rather than using whatever
+  they currently use, which apparently doesn't account for the cover-theme case. To be done AFTER
+  the same row colors are manually fixed for all the FIXED (non-cover-based) themes first, not
+  before — per Pryme, the derivation formula should be reverse-engineered by analyzing the
+  already-correct fixed-theme values once those exist, not designed from scratch. Blocked on that
+  manual fixed-theme pass landing first.
+
+### Sleep timer end-of-chapter mode doesn't fade out
+- [2026-09-17] BUG: when the sleep timer's end-of-chapter mode fires, it doesn't invoke the
+  fade-out — the timed mode's fade-out (governed by `sleep_fade_duration`) apparently isn't wired
+  into the end-of-chapter firing path the way it is for the timed path. Not yet investigated further
+  than the symptom.
+
+### Tags panel: count display and widget-per-row architecture
+- [2026-09-17] FEAT + possible refactor: show "N/50 tags" at the top right of the tag list, and when
+  the list is already at 50 and the user tries to add another, show a real notification in addition
+  to the existing red-field-edge indication. Pryme's own architectural flag, confirmed by reading
+  the source: both the tag list (`TagManagerWidget`'s `_tag_list_container`, a `QVBoxLayout` of
+  individual row widgets inside a scroll area) and the per-tag book grid (`_TagBookThumb`/
+  `_TagBookGrid`) are widget-per-item, not a model/delegate pair — the same shape Stats used to have
+  before its 2026-08-05/09 migration to `StatsRowModel`/`StatsRowDelegate` for exactly this kind of
+  scaling concern. Raising the 50-tag cap (a real possibility this feature invites people to ask
+  for) would multiply that cost. Before implementing the count display itself (cheap, no
+  architecture question): check the feasibility of migrating Tags to the same model/delegate
+  pattern Stats already proved out, as its own scoped investigation — don't let the display feature
+  quietly justify or block on a full rewrite without that being a deliberate decision.
+
+### Filter issues while adding tags — priority but not yet reproduced
+- [2026-09-17] BUG, priority (although not a release blocker). Logged as a bare placeholder at
+  Pryme's own request — he flagged this as priority but explicitly has no specifics captured yet
+  ("needs to be reproduced and the issues need to be fully documented first"). Fill in with real
+  detail (which field, which filter, what the wrong behavior looks like) the next time it's hit,
+  rather than guessing at a mechanism now.
+
 ### Listening Sprint backward-seek compensation doesn't net forward+backward excursions
 - [2026-08-11] The pure tick-to-tick `_last_known_pos` diff in `SprintPanel.update_sprint_state`
   can't tell a genuine rewind from "seeked forward then came back" — seeking forward 20 minutes then
