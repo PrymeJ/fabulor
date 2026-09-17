@@ -14,7 +14,7 @@ from PySide6.QtCore import (
     Qt, QRect, QRectF, Signal, QSize, QPoint, QPointF, QEvent, QThreadPool, QTimer, Property,
     QPropertyAnimation, QEasingCurve, QAbstractListModel, QModelIndex, QObject, QRunnable, Slot,
 )
-from PySide6.QtGui import QPainter, QColor, QFont, QPixmap, QImage, QIcon, QEnterEvent, QPen, QPainterPath, QKeyEvent, QCursor, QPolygon
+from PySide6.QtGui import QPainter, QColor, QFont, QFontMetrics, QPixmap, QImage, QIcon, QEnterEvent, QPen, QPainterPath, QKeyEvent, QCursor, QPolygon
 from PySide6.QtWidgets import QAbstractScrollArea
 from .cover_loader import CoverLoaderWorker, to_grayscale
 from .library import _cover_cache
@@ -1151,8 +1151,16 @@ class StatsRowDelegate(QStyledItemDelegate):
         block_h = line_h * 2 + row_spacing
         block_y = content_y + max(0, (content_h - block_h) // 2)
 
-        # Row 0: title (left, elided, fixed width budget) + clock time (right).
-        title_w = min(_STATS_TITLE_WIDTH, max(0, content_w - self.SPACING - self.CLOCK_W))
+        # Row 0: title (left, elided) + clock time (right). Width is the real text
+        # width (capped at _STATS_TITLE_WIDTH so a short title doesn't visually
+        # stretch the row's layout rhythm), but never less than the old fixed
+        # budget would have given it — so a long title can use genuine free space
+        # in a wider row instead of truncating at a column width sized for the
+        # narrowest tab. See TODO.md [2026-08-09] / TODO_ARCHIVE.md for why this
+        # was a fixed constant before.
+        title_max = max(0, content_w - self.SPACING - self.CLOCK_W)
+        title_text_w = QFontMetrics(title_font).horizontalAdvance(row.get("book_title", "Unknown"))
+        title_w = min(title_max, max(_STATS_TITLE_WIDTH, title_text_w))
         clock_w = self.CLOCK_W
         row0_h = line_h
         # +1px live-measured nudge vs. Week/Month (2026-08-08 side-by-side
@@ -1177,9 +1185,12 @@ class StatsRowDelegate(QStyledItemDelegate):
         painter.drawText(clock_rect, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
                           StatsPanel._format_duration(clock_seconds))
 
-        # Row 1: author (left, elided) + progress delta (right).
+        # Row 1: author (left, elided) + progress delta (right). Same real-width-
+        # with-a-floor approach as the title above.
         author_font = QFont(title_font)
-        author_w = min(_STATS_AUTHOR_WIDTH, max(0, content_w - self.SPACING - self.PROG_W))
+        author_max = max(0, content_w - self.SPACING - self.PROG_W)
+        author_text_w = QFontMetrics(author_font).horizontalAdvance(row.get("book_author", ""))
+        author_w = min(author_max, max(_STATS_AUTHOR_WIDTH, author_text_w))
         prog_w = self.PROG_W
         # -2px live-measured nudge vs. Week/Month (2026-08-08, same overlay
         # check as the title nudge above) — not uniform with the title's

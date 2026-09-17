@@ -593,18 +593,6 @@ isolation.
 
 ## Pending
 
-- **[2026-08-09] Stats Day/Week/Month row title elision truncates at a fixed column width,
-  regardless of real free space in the row.** Confirmed visually by Pryme comparing Week and Month
-  side by side: "Blood of Amber: The Chronicl..." (Week) vs. "...Chronicle..." (Month), "David
-  Foster Wall..." — both cut off well before the row's actual right edge, even when nothing else on
-  that line needs the space. Not a migration regression — `_STATS_TITLE_WIDTH` (a fixed pixel budget,
-  `stats_panel.py`) predates the Day/Week delegate migration and Month's `BookDayRow`/`ElidedLabel`
-  path has the exact same fixed-width limitation; it only became visible from direct side-by-side
-  comparison once multiple tabs were showing the same books. Correct fix is adopting Library's
-  list-mode invasive elision logic (title borrows unused space from the row instead of truncating at
-  a fixed column) — a separate pass, not a quick fix folded into the delegate migration. Deliberately
-  not attempted during the Week-tab migration per direct instruction.
-
 
 - **[2026-08-08] Stats Day-tab archived/deleted-book cover dimming alpha needs tuning.**
   `StatsRowDelegate.paint()` dims archived-book covers via `painter.setOpacity(0.4)` — confirmed

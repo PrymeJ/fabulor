@@ -5,6 +5,37 @@ list scannable. Kept, not deleted, per the project's normal practice of not thro
 that isn't fully duplicated in NOTES.md/SESSION.md/a commit message. Order is the same relative
 order these entries had in TODO.md before the split (2026-07-30).
 
+- **[2026-08-09, FIXED 2026-09-18, not yet live-verified by Pryme] Stats Day/Week/Month row title
+  elision truncated at a fixed column width, regardless of real free space in the row.** Confirmed
+  visually by Pryme comparing Week and Month side by side: "Blood of Amber: The Chronicl..." (Week)
+  vs. "...Chronicle..." (Month), "David Foster Wall..." — both cut off well before the row's actual
+  right edge, even when nothing else on that line needed the space. Not a migration regression —
+  `_STATS_TITLE_WIDTH`/`_STATS_AUTHOR_WIDTH` (fixed pixel budgets, `stats_panel.py`) predate the
+  Day/Week delegate migration; it only became visible from direct side-by-side comparison once
+  multiple tabs were showing the same books.
+
+  The TODO entry originally called for porting Library's full invasive elision (title/author share
+  space dynamically, with a further hover-expand interaction). Asked Pryme directly whether he
+  wanted that full mechanism or a simpler fix scoped to just the truncation complaint — he chose
+  the simpler option: no hover-invade added to Stats rows, just let title/author use real free
+  space instead of a fixed cap.
+
+  Fix (`StatsRowDelegate.paint`, `stats_panel.py`): `title_w`/`author_w` used to be
+  `min(_STATS_TITLE_WIDTH/_STATS_AUTHOR_WIDTH, max(0, content_w - trailing_budget))` — a hard cap
+  at 134px/86px regardless of how much wider `content_w` actually was. Now each is
+  `min(content_w - trailing_budget, max(_STATS_TITLE_WIDTH/_STATS_AUTHOR_WIDTH, real_text_width))`
+  — the fixed constants become a *floor* (so a short title/author doesn't shrink the row's layout
+  rhythm below the old baseline) rather than a *ceiling*, and the real measured text width (via
+  `QFontMetrics(title_font).horizontalAdvance(...)`) can claim genuine free space up to whatever
+  the row's actual content width allows. `QFontMetrics` added to the module's top-level Qt import.
+  No new state, no hover interaction, no change to row height/spacing — only how much of the
+  already-existing free space each field is allowed to use.
+
+  Full pytest suite green, no regressions. **Not yet live-verified by Pryme** — this is a
+  Stats-panel visual layout change, which per CLAUDE.md's own rule cannot be confirmed correct by
+  headless testing alone; next Stats session should compare Week/Month against the earlier
+  screenshots to confirm titles now extend to the row's real free space instead of truncating early.
+
 - **[2026-09-17, FIXED 2026-09-18] Sleep timer's end-of-chapter mode never faded out — timed
   mode's fade ratio is a function of wall-clock time remaining; end-of-chapter mode had no
   equivalent at all, snapping straight from full volume to pause the instant it fired.**
