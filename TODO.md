@@ -9,25 +9,6 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
 
 ## Summary index
 
-### Library — keys don't pick up from mouse hover, pagination jumps to the mouse
-- [2026-09-08] Reported by Pryme as the next instance of the hover-pickup/most-recent-input-wins
-  principle (see TODO_ARCHIVE.md, "[2026-09-15] CLOSED: Hover-pickup keyboard navigation..." for
-  the now-shipped version of this principle on Settings/Speed/Sleep/Sprint/Stats/Tags —
-  deliberately NOT extended to Library in that pass): "Library doesn't get it correctly either.
-  Pagination makes it jump to the mouse." Library's `_on_keyboard_nav_moved`/
-  `_flash_keyboard_selection[_list]` (`ui/library.py`) currently has NO poll/anchor arbitration at
-  all — mouse `entered` (`_on_view_entered`) unconditionally wins the instant it fires, including a
-  synthetic re-evaluation from the keyboard's own `scrollTo()` call, the exact mechanism class the
-  2026-09-15 pass's `GridHoverTracker`/`_pickup_hover_target` work addressed elsewhere. Likely the
-  most direct next target for the same poll/anchor-discipline design, once picked back up — start
-  from the shipped `_pickup_cursor_anchor` design (a DEDICATED anchor, never shared with
-  `_kbdnav_cursor_anchor`/`_set_keyboard_nav_active`) rather than re-deriving it from scratch; see
-  the archive entry for exactly why a shared anchor fails.
-- Pryme's own framing of the underlying principle, worth keeping verbatim for whichever session
-  picks this back up: "Make the keys pickup from where the mouse is, and make the keys win unless
-  the mouse hovered over something else. This principle should be observed throughout the app with
-  a holistic approach."
-
 ### Book Detail panel's Tags tab — thinner keyboard nav than its History tab sibling
 - [2026-09-15, scope corrected 2026-09-17] The 2026-09-15 framing of this entry ("Book Detail...
   ZERO keyboard-arrow-nav... nothing") overstated the gap — Pryme corrected it directly: "mostly
@@ -562,9 +543,6 @@ isolation.
   — worth confirming the shipped Stats/Tags hover-pickup mechanism (`_pickup_cursor_anchor`/
   `GridHoverTracker`, 2026-09-15) actually routes through `suspend()` as this entry predicted,
   or used a different mechanism instead.
-- [2026-09-08] Stats Day/Week/Month `‹`/`›` sub-navigation buttons specifically still lack
-  arrow-key focus (narrower than the original "Stats/Tags keyboard nav" framing — Tags panel nav
-  and Stats' own "⚙" tab both shipped; see TODO_ARCHIVE.md for that closure)
 - [2026-07-11] History tab delete-session animation still pauses near the end — the viewport-
   quantization item it was blocked on shipped (`b20a1ff`, 2026-08-12); unblocked, not yet resumed
 - [2026-07-10] PageUp/PageDown jump distance in the library list — undecided
@@ -1071,12 +1049,13 @@ isolation.
   mechanism (`_pickup_cursor_anchor`/`GridHoverTracker`, 2026-09-15) — worth confirming whether
   that mechanism actually routes through `suspend()` as this entry predicted, or supersedes it.
 
-  The same problem already exists in the LIBRARY panel today and is a known gap: with the mouse
-  resting over a row, PageUp/PageDown produce **two** highlights (mouse hover plus keyboard
-  selection), and `Alt+Enter` opens the book under the MOUSE rather than the keyboard-selected one.
-  Moving the pointer outside the window avoids it. Whatever coexistence rule is chosen should be
-  applied to Library (see the Library hover-pickup entry in the summary index above) so the
-  behaviour is uniform with what Stats/Tags now do.
+  The Library-specific instance of this same problem (mouse resting over a row producing two
+  highlights during PageUp/PageDown, and `Alt+Enter` opening the mouse's book instead of the
+  keyboard-selected one) is now FIXED — see TODO_ARCHIVE.md, "[2026-09-08, FIXED 2026-09-18]
+  Library keyboard nav didn't yield to mouse hover during pagination." The remaining open question
+  here is narrower: whether `ScrollHoverTracker.suspend()` itself is the mechanism other panels
+  should converge on, or whether the poll-based design Stats/Library both ended up using instead
+  should be considered the standard going forward.
 
 - **[2026-07-10] DECIDE: PageUp/PageDown jump distance in the library list.** `52b7abb` fixed
   PageUp/PageDown/Home/End so the viewport actually follows the selection (they were never

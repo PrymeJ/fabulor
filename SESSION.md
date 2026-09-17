@@ -1,3 +1,68 @@
+## Session Summary — 2026-09-18 Session 1 — Sleep timer end-of-chapter fade-out, a two-round Stats row-title elision fix, closed a false-lead TODO item, and unified/fixed Library's keyboard-selection highlight and pagination hover-jump. `523f432`, `9ba1665`, `9f4f6f1`, `e308c47`, `9058136`.
+
+**Sleep timer end-of-chapter mode now fades out**, mirroring timed mode. Designed against two
+concerns Pryme raised directly: seeking within the anchor chapter while a fade is showing (fade
+recomputes fresh every tick from live position, tolerant of seeks in both directions — no
+one-way ratchet), and a chapter shorter than the configured fade duration (the fade window is
+capped at the distance actually available at arm time, frozen for the whole arm cycle, never
+reopening on a later backward seek). New `_sleep_eoc_distance_at_arm` state field on
+`SleepTimerPanel`; `tests/test_sleep_eoc_fade.py` (5 tests, no Qt/mpv) pins all three decisions.
+Full suite green. Not yet live-verified by Pryme in a real sleep-timer session.
+
+**Stats Day/Week/Month row titles were truncating well before the row's real edge — took two
+attempts to actually fix, the first being a live-confirmed no-op.** Attempt 1 widened
+`title_w`/`author_w`'s own cap from a fixed constant to a floor-not-ceiling — reported back as
+producing zero visible change. Root cause was mis-scoped: in a real row, `content_w - CLOCK_W`
+was already BELOW the old fixed title cap, so `min(title_max, ...)` clamped everything down
+before the new floor logic had anything to expand — the real waste was `CLOCK_W`/`PROG_W`
+themselves reserving their full fixed budget (50px/98px) regardless of how little the actual
+clock/prog text ("14m" vs. a budget sized for "23h 59m") needed. Attempt 2 sized the trailing
+columns to their REAL text width (floored so they can't collapse to near-zero), letting
+title/author reclaim whatever slack that freed. Confirmed safe against the original fixed-width
+rationale (numeric columns' right edge is anchored, so no jitter is reintroduced — only the
+title's own elision boundary now varies row to row, which is the point). Live-confirmed by Pryme
+after the second fix. **Standing lesson for future visual fixes on this codebase: verify the
+actual bottleneck value in the real numbers before claiming a fix, not just that the code compiles
+and tests pass — the first attempt was syntactically fine and fully tested green while being a
+complete no-op live.**
+
+**Closed a TODO item that never should have been escalated in the first place** — "Stats
+Day/Week/Month `‹`/`›` sub-navigation buttons lack arrow-key focus." Traced the actual code path
+(`StatsRowListView.keyPressEvent` explicitly `ignore()`s Left/Right so they bubble to
+`StatsPanel.keyPressEvent`'s `_NAV_METHODS`) and initially concluded this was a real functional
+gap — wrong. Pryme corrected directly: Tab moves focus between the tab bar and the row list; once
+on the row list, arrows already reach period-cycling exactly as designed, and the buttons are
+DELIBERATELY never given a focus highlight (their own dedicated keyboard path already covers the
+action). Removed from TODO.md outright, not archived — there was never a bug here.
+
+**Library's keyboard-selection highlight unified with mouse hover, and a real pagination bug
+fixed.** Per Pryme's framing ("make the keys pick up from where the mouse is, and make the keys
+win unless the mouse hovered over something else — this principle should be observed throughout
+the app"), Library was the one panel left out of the 2026-09-15 hover-pickup pass.
+
+- *Highlight unification*: 1-per-row was the only view mode left with its own separate keyboard
+  tint (`library_item_keyboard_color`/`_alpha`, default `accent`/0.25) — List already reuses the
+  mouse's own hover-fade mechanism, and 2/3-per-row/Square dropped their separate tint back in
+  2026-07-09 in favor of the same duration/progress overlay mouse hover already shows. Confirmed
+  by Pryme directly ("2, 3 and 4 modes don't actually have similar highlights. They activate the
+  overlay, which works as the focus indicator") that only 1-per-row's tint was actually the
+  target. Its `_kbd_base_color` now derives from `library_item_hover_color`/`_alpha` instead —
+  no theme dict ever set the keyboard-specific keys, so they were pure dead fallback-to-`accent`
+  the whole time. Removed from `themes.py`'s doc block.
+- *Pagination hover-jump*: reported precisely — "if the mouse is hovering and stationary over any
+  row that is not the first or last, that row is visited after pressing up or down... the same
+  for PgUp and PgDn... [elsewhere] making you have to press PgDn twice." Root cause: Qt's
+  `QListView.entered` signal re-fires when `scrollTo()` moves content underneath a physically
+  stationary cursor — exactly what every keyboard page/line move does — and `_on_view_entered`
+  was treating every `entered` call as real mouse intent, snapping `currentIndex` back to
+  whatever row the mouse geometrically ended up over. Fixed by porting `StatsRowListView`'s
+  already-proven jitter-tolerant poll mechanism verbatim in shape (not reinvented): every
+  keyboard move arms a poll and silences `_on_view_entered` until the mouse has genuinely moved
+  past a small jitter threshold AND rests over a real, different row. Both fixes committed
+  together (`9058136`); not yet independently confirmed by Pryme in the running app as of this
+  writing (the highlight-color change is a visual call his eyes settle, per CLAUDE.md's own rule
+  on visual matters).
+
 ## Session Summary — 2026-09-17 Session 1 — Full TODO.md staleness audit against git history and CLAUDE.md, closing 13 already-fixed entries never moved to TODO_ARCHIVE.md, plus one real fix (cover-art-theme right-click-from-Off) and several corrections from Pryme's live testing. `c78ace5`, `3946a17`.
 
 Ran a background research agent to cross-check every entry in TODO.md against actual git log,

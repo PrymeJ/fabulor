@@ -5,14 +5,69 @@ list scannable. Kept, not deleted, per the project's normal practice of not thro
 that isn't fully duplicated in NOTES.md/SESSION.md/a commit message. Order is the same relative
 order these entries had in TODO.md before the split (2026-07-30).
 
-- **[2026-08-09, FIXED 2026-09-18, not yet live-verified by Pryme] Stats Day/Week/Month row title
-  elision truncated at a fixed column width, regardless of real free space in the row.** Confirmed
-  visually by Pryme comparing Week and Month side by side: "Blood of Amber: The Chronicl..." (Week)
-  vs. "...Chronicle..." (Month), "David Foster Wall..." — both cut off well before the row's actual
-  right edge, even when nothing else on that line needed the space. Not a migration regression —
-  `_STATS_TITLE_WIDTH`/`_STATS_AUTHOR_WIDTH` (fixed pixel budgets, `stats_panel.py`) predate the
-  Day/Week delegate migration; it only became visible from direct side-by-side comparison once
-  multiple tabs were showing the same books.
+- **[2026-09-08, FIXED 2026-09-18, not yet live-verified by Pryme] Library keyboard nav didn't
+  yield to mouse hover during pagination, and its 1-per-row keyboard-selection tint used its own
+  separate color instead of matching mouse hover.** Reported as the Library-specific instance of
+  the 2026-09-15 hover-pickup/most-recent-input-wins pass, which had deliberately NOT extended to
+  Library: "Library doesn't get it correctly either. Pagination makes it jump to the mouse."
+  Pryme's own framing of the underlying principle, worth keeping on record: "Make the keys pickup
+  from where the mouse is, and make the keys win unless the mouse hovered over something else.
+  This principle should be observed throughout the app with a holistic approach."
+
+  Precise symptom, from Pryme directly: "if the mouse is hovering and stationary over any row
+  that is not the first or the last row, that row is visited after pressing up or down keys
+  depending on the direction. The same for PgUp and PgDn. Mouse already on the last row, going
+  down is smooth and straightforward. Some other row, it jumps there, making you have to press
+  PgDn twice." Root cause: `LibraryPanel._on_view_entered` (Qt's `entered` signal) treated every
+  call as genuine mouse intent and unconditionally reassigned `currentIndex()` — but `entered`
+  also re-fires when `scrollTo()` moves content underneath a PHYSICALLY STATIONARY cursor, which
+  is exactly what every keyboard page/line move does (`_flash_keyboard_selection`/
+  `_flash_keyboard_selection_list`'s own `scrollTo(index)` call). A keyboard PageDown would move
+  `currentIndex` correctly via Qt's native handler, then immediately have it silently overwritten
+  by a synthetic `entered` call resolving to whatever row the mouse geometrically ended up over
+  after the scroll — explaining both "jumps to a mid-list row" and "press PgDn twice" (the first
+  press's real effect was immediately clobbered).
+
+  Fixed by porting `StatsRowListView`'s already-proven jitter-tolerant poll mechanism
+  (`stats_panel.py`, itself built for this exact bug shape) to `LibraryPanel`, in shape rather
+  than reinvented: `_enter_kbdnav_hover_mode()` (called once, from `_on_keyboard_nav_moved` — the
+  single choke point every keyboard-driven `currentIndex` change already routes through) arms an
+  anchor at the cursor's current position and silences `_on_view_entered` entirely; a repeating
+  60ms poll (`_on_kbdnav_hover_poll`) is the ONLY path that can hand hover back to the mouse, and
+  only once the cursor has moved past a 3px jitter tolerance AND rests over a real, different row.
+  Confirmed the ordering is safe: native `QListView.keyPressEvent` (which does NOT itself scroll,
+  since `setAutoScroll(False)` is set) runs before the poll is armed, but the actual `scrollTo()`
+  call — the thing that can trigger a spurious `entered` — happens inside
+  `_flash_keyboard_selection[_list]`, called from `_on_keyboard_nav_moved` AFTER the poll is
+  already armed. This also resolves a second symptom filed nearby in TODO.md ("`Alt+Enter` opens
+  the book under the mouse rather than the keyboard-selected one" and "PageUp/PageDown produce two
+  highlights") — both were the same root cause (`currentIndex` being silently stolen by a stray
+  `entered` call), not separate bugs.
+
+  **Second, smaller fix bundled into the same investigation, confirmed by Pryme directly**: of the
+  five view modes, only 1-per-row still had its own separate keyboard-selection tint
+  (`library_item_keyboard_color`/`_alpha`, default `accent`/0.25) — List already reuses the
+  mouse's own hover-fade mechanism, and 2-per-row/3-per-row/Square dropped their own tint back in
+  2026-07-09 in favor of reusing the same duration/progress overlay mouse hover already shows
+  ("2, 3 and 4 modes don't actually have similar highlights. They activate the overlay, which
+  works as the focus indicator" — Pryme's own confirmation this session). 1-per-row's
+  `_kbd_base_color` now derives from `library_item_hover_color`/`_alpha` (the SAME style/alpha
+  mouse hover uses) instead of the separate keyboard keys, which no theme dict ever actually set —
+  they were pure dead fallback-to-`accent` the whole time. The two dead keys were removed from
+  `themes.py`'s doc block; no theme dict entries existed to remove.
+
+  Both fixes committed together (`9058136`). Full pytest suite green. **Not yet live-verified by
+  Pryme** — both are exactly the class of change (visual color, and a live mouse/keyboard
+  interaction bug) that needs eyes on the real running app, not just tests, per CLAUDE.md's own
+  rule on visual/interaction matters.
+
+- **[2026-08-09, FIXED 2026-09-18, live-confirmed by Pryme] Stats Day/Week/Month row title elision
+  truncated well before the row's real right edge, even when nothing else on that line needed the
+  space.** Confirmed visually by Pryme comparing Week and Month side by side: "Blood of Amber: The
+  Chronicl..." (Week) vs. "...Chronicle..." (Month), "David Foster Wall...". Not a migration
+  regression — `_STATS_TITLE_WIDTH`/`_STATS_AUTHOR_WIDTH` (fixed pixel budgets, `stats_panel.py`)
+  predate the Day/Week delegate migration; it only became visible from direct side-by-side
+  comparison once multiple tabs were showing the same books.
 
   The TODO entry originally called for porting Library's full invasive elision (title/author share
   space dynamically, with a further hover-expand interaction). Asked Pryme directly whether he
@@ -20,21 +75,31 @@ order these entries had in TODO.md before the split (2026-07-30).
   the simpler option: no hover-invade added to Stats rows, just let title/author use real free
   space instead of a fixed cap.
 
-  Fix (`StatsRowDelegate.paint`, `stats_panel.py`): `title_w`/`author_w` used to be
-  `min(_STATS_TITLE_WIDTH/_STATS_AUTHOR_WIDTH, max(0, content_w - trailing_budget))` — a hard cap
-  at 134px/86px regardless of how much wider `content_w` actually was. Now each is
+  **First attempt was a live-confirmed no-op — root cause was mis-scoped.** `title_w`/`author_w`
+  were widened from `min(_STATS_TITLE_WIDTH/_STATS_AUTHOR_WIDTH, ...)` to
   `min(content_w - trailing_budget, max(_STATS_TITLE_WIDTH/_STATS_AUTHOR_WIDTH, real_text_width))`
-  — the fixed constants become a *floor* (so a short title/author doesn't shrink the row's layout
-  rhythm below the old baseline) rather than a *ceiling*, and the real measured text width (via
-  `QFontMetrics(title_font).horizontalAdvance(...)`) can claim genuine free space up to whatever
-  the row's actual content width allows. `QFontMetrics` added to the module's top-level Qt import.
-  No new state, no hover interaction, no change to row height/spacing — only how much of the
-  already-existing free space each field is allowed to use.
+  — the fixed constants became a floor instead of a ceiling. Pryme reported no visible change.
+  Root cause: `trailing_budget` was still the fixed `CLOCK_W`(50px)/`PROG_W`(98px) constants, and in
+  a real row (measured 186px `content_w`) `content_w - SPACING - CLOCK_W` (130px) was already *below*
+  the old fixed title cap (134px) — so `min(title_max, ...)` was clamped down by `title_max` before
+  the new floor logic ever had anything to expand. The actual waste was never the title's own cap;
+  it was `CLOCK_W`/`PROG_W` reserving their full fixed budget regardless of how much space the real
+  clock/prog text ("14m" vs. the 50px budget sized for "23h 59m") actually needed.
 
-  Full pytest suite green, no regressions. **Not yet live-verified by Pryme** — this is a
-  Stats-panel visual layout change, which per CLAUDE.md's own rule cannot be confirmed correct by
-  headless testing alone; next Stats session should compare Week/Month against the earlier
-  screenshots to confirm titles now extend to the row's real free space instead of truncating early.
+  **Real fix**: `clock_w`/`prog_w` are now `min(CLOCK_W/PROG_W, max(floor, real_text_width + 2))` —
+  sized to the row's ACTUAL clock/prog text, floored (`_STATS_CLOCK_MIN_WIDTH=30`,
+  `_STATS_PROG_MIN_WIDTH=40`) so a short/empty string can't collapse the column to near-zero and
+  crowd the title against the row edge — and `title_max`/`author_max` are computed from these real
+  (not fixed) trailing widths. Confirmed safe against the original 2026-08-09 anti-jitter rationale
+  for the fixed constants: `clock_rect`/`prog_rect` are always anchored so their RIGHT edge sits at
+  `content_x + content_w` regardless of `clock_w`/`prog_w` (right-aligned text within a
+  variable-width, fixed-right rect), so the numeric columns' visible right edge never shifts row to
+  row — only the title/author's own elision boundary varies, which is the intended effect. Also
+  removed a duplicate `clock_seconds`/`prog_text` computation that existed twice in the original
+  code (once for layout, once for painting) by computing each once and reusing it.
+  `QFontMetrics` added to the module's top-level Qt import.
+
+  Full pytest suite green, no regressions. **Live-confirmed by Pryme** after the second fix.
 
 - **[2026-09-17, FIXED 2026-09-18] Sleep timer's end-of-chapter mode never faded out — timed
   mode's fade ratio is a function of wall-clock time remaining; end-of-chapter mode had no

@@ -1,3 +1,48 @@
+## Library keyboard-selection highlight unification + pagination hover-jump fix — 2026-09-18 Session 1
+
+Two changes shipped together (`9058136`), neither yet independently confirmed live in the running
+app as of this writing. Background: CLAUDE.md's "Keyboard-selection visual, per view mode" note
+and the `StatsRowListView` hover-poll mechanism this was ported from.
+
+### Keyboard highlight color (1-per-row only)
+- [ ] 1-per-row view mode: arrow-navigate to a book with the mouse elsewhere — the keyboard
+  highlight should now look like a mouse-hover highlight (same color/opacity as hovering that row
+  with the mouse), not the old separate, more subtle tint
+- [ ] Confirm List, 2-per-row, 3-per-row, and Square modes look UNCHANGED — this fix only touches
+  1-per-row's own tint
+
+### Pagination no longer jumps to a stationary mouse's row
+- [ ] Rest the mouse over some row in the middle of the list (not the first or last visible row),
+  then press Down or Up repeatedly with the mouse NOT moving — the keyboard selection should
+  advance one row at a time from wherever it already was, never snapping to the row under the
+  mouse
+- [ ] Same check with PageDown/PageUp — this was the original reported symptom ("making you have
+  to press PgDn twice") — a single PageDown should move a full page, not appear to consume one
+  press just resolving the mouse's row first
+- [ ] Same check with Home/End
+- [ ] With the mouse already resting on the LAST visible row, press Down — should still feel
+  smooth (this case was already reported working correctly before the fix; confirm it's still
+  fine, not regressed)
+- [ ] After a keyboard move, physically move the mouse onto a genuinely different row — the
+  keyboard highlight should yield to mouse hover normally, same as before this fix (mouse
+  reclaim itself must still work, only the false-positive "mouse never moved" case was broken)
+
+## Sleep timer end-of-chapter mode fade-out — 2026-09-18 Session 1
+
+Not yet live-verified by Pryme. Background: TODO_ARCHIVE.md's 2026-09-18 closure entry;
+`tests/test_sleep_eoc_fade.py` pins the math in isolation.
+
+- [ ] Arm sleep timer in end-of-chapter mode with a fade duration configured, let it play down
+  toward the chapter's end — volume should audibly fade out approaching the boundary, not snap
+  straight from full to paused
+- [ ] While the fade is audibly running, seek FORWARD within the same chapter (e.g. skip ahead) —
+  the fade should become MORE pronounced on the next tick, not stay at the pre-seek ratio
+- [ ] While faded, seek BACKWARD within the same chapter (e.g. undo or skip back) — volume should
+  audibly recover, not stay faded or snap back to full instantly
+- [ ] Arm end-of-chapter mode very close to a chapter's own end (or on a chapter shorter than the
+  configured fade duration) — the fade should still sound graceful over whatever time is actually
+  left, not jump straight to near-silent
+
 ## Smart rewind: per-book scoping and chapter confinement — 2026-09-16 Session 1
 
 Two bugs, both live-verified this session. Background/full mechanism: CLAUDE.md's "Smart rewind
@@ -129,7 +174,9 @@ most-recent input. All confirmed live in this session except where noted.
 ### Explicitly NOT in scope for this session — confirm these still show their PRE-EXISTING behavior, unchanged
 - [ ] Book Detail's own tab bar: no keyboard arrow-nav, no mouse-reclaim styling change (never
   wired into this system at all — confirm nothing broke, not that it now works)
-- [ ] Library: keyboard nav does NOT yet pick up from mouse hover (open TODO item, unchanged)
+
+(Library's own keyboard/mouse hover coexistence shipped 2026-09-18 — see that entry below; it is
+no longer an open gap as of this session.)
 
 ## Confirmation-dialog keyboard consistency — Escape/Delete/swallow-and-dismiss — 2026-09-09 Session 1
 
