@@ -5,6 +5,54 @@ list scannable. Kept, not deleted, per the project's normal practice of not thro
 that isn't fully duplicated in NOTES.md/SESSION.md/a commit message. Order is the same relative
 order these entries had in TODO.md before the split (2026-07-30).
 
+- **[2026-09-17, FIXED 2026-09-18] Sleep timer's end-of-chapter mode never faded out — timed
+  mode's fade ratio is a function of wall-clock time remaining; end-of-chapter mode had no
+  equivalent at all, snapping straight from full volume to pause the instant it fired.**
+  Design worked through with Pryme before writing any code, specifically around the friction he
+  raised directly: what happens if the user seeks within the anchor chapter WHILE a fade is
+  already showing (e.g. skips from 5 minutes left to 1 minute left) — the naive answer ("nothing,
+  the fade just wasn't tracking position at all") was the actual bug.
+
+  **Design, three decisions made explicitly before implementing:**
+  1. The fade ratio recomputes fresh every 200ms tick from live `player_pos` vs. the anchor
+     chapter's own end — mirrors timed mode's `remaining / effective_fade` exactly, just measured
+     in playback position instead of wall-clock seconds. This makes both seek directions correct
+     by construction: a forward seek within the chapter (Pryme's exact scenario) makes the very
+     next tick more faded; Pryme confirmed a backward seek should let the volume recover too,
+     rather than being a one-way ratchet once dipping starts.
+  2. Pryme's own follow-up question surfaced a second real gap: what if the chapter is shorter
+     than the configured fade duration, or end-of-chapter is armed with very little of the
+     chapter left? Timed mode already has an answer for the equivalent case —
+     `effective_fade = min(_current_sleep_fade, _total_timer_duration)`, capping the fade window
+     at the timer's own total length so an over-long fade setting can't produce a below-zero or
+     instant-near-silent start. End-of-chapter mode needed the same cap, but there's no fixed
+     "total duration" — added `_sleep_eoc_distance_at_arm` (`anchor_end - player_pos` at the
+     moment Sleep is armed), the direct positional mirror of `_total_timer_duration`.
+  3. Whether a backward seek PAST the original arm point should reopen a wider fade window (a
+     fresh, larger cap) or leave the original cap frozen — decided to freeze it for the whole arm
+     cycle, exactly matching how `_total_timer_duration` itself is set once at arm time and never
+     recomputed for timed mode either. One consistent rule between the two modes.
+
+  **Implementation** (`sleep_timer.py`): `_sleep_eoc_distance_at_arm` set in
+  `_do_arm_sleep_timer`'s `end_of_chapter` branch (reusing `update_timer_state`'s own
+  `anchor_end` derivation — next chapter's start, or total duration if the anchor is the last
+  chapter), cleared in `disable_sleep_timer` alongside `_sleep_eoc_anchor`. `update_timer_state`'s
+  EOC branch gained an `else` off the existing `reached_end` check, computing
+  `remaining = anchor_end - player_pos` and `effective_fade = min(_current_sleep_fade,
+  _sleep_eoc_distance_at_arm)` then `set_fade_ratio(remaining / effective_fade)` when within the
+  window — same shape as timed mode's fade block, deliberately not a shared helper (the two
+  differ in what "remaining" and the cap actually are, and the existing code doesn't share one
+  between them either).
+
+  New regression test (`tests/test_sleep_eoc_fade.py`, 5 tests, no Qt/mpv — binds the real
+  unbound `update_timer_state`/`_do_arm_sleep_timer`/`disable_sleep_timer` methods to a
+  lightweight fake, the same pattern `test_book_detail_panel_keys.py` uses for widgets too
+  expensive to construct for real in a unit test) pins all three decisions: forward-seek fades
+  further, backward-seek recovers, the arm-time cap holds even against a backward seek past the
+  arm point. Full suite green (`pytest tests/`, no regressions). Not yet live-verified by Pryme —
+  next real sleep-timer session should confirm the fade sounds right, not just that the math
+  checks out.
+
 - **[2026-09-08, FIXED 2026-09-17, live-confirmed by Pryme] Library scan focus strand —
   root-caused and fixed; the ORIGINAL
   THEORY WAS WRONG.** Originally reported as "Rescan clicked, Esc closes Settings while the scan

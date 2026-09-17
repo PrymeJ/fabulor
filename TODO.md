@@ -187,12 +187,6 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
   already-correct fixed-theme values once those exist, not designed from scratch. Blocked on that
   manual fixed-theme pass landing first.
 
-### Sleep timer end-of-chapter mode doesn't fade out
-- [2026-09-17] BUG: when the sleep timer's end-of-chapter mode fires, it doesn't invoke the
-  fade-out — the timed mode's fade-out (governed by `sleep_fade_duration`) apparently isn't wired
-  into the end-of-chapter firing path the way it is for the timed path. Not yet investigated further
-  than the symptom.
-
 ### Tags panel: count display and widget-per-row architecture
 - [2026-09-17] FEAT + possible refactor: show "N/50 tags" at the top right of the tag list, and when
   the list is already at 50 and the user tries to add another, show a real notification in addition
