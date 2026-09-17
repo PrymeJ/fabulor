@@ -46,6 +46,16 @@ class SleepTimerPanel(QWidget):
         # seek SOURCE in Player.seek_async) from natural playback reaching it on
         # its own — see that method's docstring.
         self._sleep_eoc_anchor = None
+        # Playback-position distance from arm time to the anchor chapter's own
+        # end (anchor_end - player_pos at the moment Sleep was armed) — the
+        # end-of-chapter mirror of _total_timer_duration's role for timed mode:
+        # caps the fade window so arming close to a chapter's end (or a chapter
+        # shorter than the configured fade duration) doesn't produce an instant
+        # near-silent jump the way an uncapped ratio would. Fixed for the whole
+        # arm cycle, same as _total_timer_duration — a seek backward past the
+        # arm point does NOT widen this cap; the fade window stays whatever it
+        # was at arm time until disable_sleep_timer() clears it.
+        self._sleep_eoc_distance_at_arm = None
         # Previous tick's player.is_seeking, so update_timer_state can detect a
         # True->False transition (a seek settling) across 200ms polls — used to
         # consume a stale user_seek_pending flag left by a seek that stayed within
@@ -302,6 +312,20 @@ class SleepTimerPanel(QWidget):
             self._total_timer_duration = 0
             self._sleep_mode = mode
             self._sleep_eoc_anchor = self._current_chapter_index()
+            # Distance from right now to the anchor chapter's own end — same
+            # anchor_end derivation update_timer_state's boundary-fire check
+            # uses (next chapter's start, or total duration if the anchor is
+            # the last chapter). Fixed here, once, for the fade cap — see
+            # _sleep_eoc_distance_at_arm's own docstring in __init__.
+            chaps = self.player.chapter_list or []
+            pos = self.player.time_pos or 0.0
+            anchor = self._sleep_eoc_anchor
+            player_dur = self.player.duration or 0.0
+            if chaps and anchor < len(chaps) - 1:
+                anchor_end = chaps[anchor + 1].get('time', player_dur)
+            else:
+                anchor_end = player_dur
+            self._sleep_eoc_distance_at_arm = max(0.0, anchor_end - pos)
             # A seek right before arming shouldn't count toward the first post-arm
             # transition.
             self.player.user_seek_pending = False
@@ -346,6 +370,7 @@ class SleepTimerPanel(QWidget):
         self._sleep_timer_end_time = None
         self._sleep_mode = None
         self._sleep_eoc_anchor = None
+        self._sleep_eoc_distance_at_arm = None
         self.player.user_seek_pending = False
         self.player.sleep_fired = False
         self._was_seeking = False
@@ -661,6 +686,26 @@ class SleepTimerPanel(QWidget):
                     except (ShutdownError, AttributeError, SystemError):
                         pass
                     self.timer_expired.emit()
+                else:
+                    # Fade Logic — mirrors the timed-mode ratio above (remaining /
+                    # effective_fade), but "remaining" is playback DISTANCE to the
+                    # anchor's end rather than wall-clock seconds, and the cap is
+                    # _sleep_eoc_distance_at_arm (fixed at arm time) rather than
+                    # _total_timer_duration. Recomputed fresh every tick from live
+                    # player_pos, so it's naturally seek-tolerant both ways: a
+                    # forward seek within the anchor chapter yields a lower ratio
+                    # (more faded) on the very next tick, a backward seek yields a
+                    # higher one (recovers) — confirmed as the wanted behavior
+                    # (Pryme, 2026-09-18) rather than a one-way ratchet. The cap
+                    # itself does NOT reopen on a backward seek past the arm
+                    # point — deliberately frozen for the whole arm cycle, same
+                    # as timed mode's _total_timer_duration never changing either.
+                    remaining = anchor_end - player_pos
+                    effective_fade = min(self._current_sleep_fade,
+                                          self._sleep_eoc_distance_at_arm or 0.0)
+                    if effective_fade > 0 and remaining <= effective_fade:
+                        ratio = max(0.0, remaining / effective_fade)
+                        self.player.set_fade_ratio(ratio)
         # Gated on _sleep_mode, NOT unconditional: this used to fire every single
         # 200ms tick regardless of whether sleep was armed at all, always sending
         # "" when it wasn't. That's harmless in isolation (disable_sleep_timer()
