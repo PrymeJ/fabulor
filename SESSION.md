@@ -1,3 +1,94 @@
+## Session Summary — 2026-09-17 Session 1 — Full TODO.md staleness audit against git history and CLAUDE.md, closing 13 already-fixed entries never moved to TODO_ARCHIVE.md, plus one real fix (cover-art-theme right-click-from-Off) and several corrections from Pryme's live testing. `c78ace5`, `3946a17`.
+
+Ran a background research agent to cross-check every entry in TODO.md against actual git log,
+current source, and CLAUDE.md's changelog — this project's stated convention is that closed work
+moves to TODO_ARCHIVE.md rather than being deleted, but several sessions' worth of shipped fixes
+had never made that move, leaving stale "not yet implemented" claims sitting next to work that was
+long done. The agent's report split findings into confirmed-stale, likely-stale, and worth-a-second-
+look buckets.
+
+**Closed 13 entries with direct commit/source evidence**, moved to TODO_ARCHIVE.md as one batch:
+diacritic-insensitive library search (`612a946`); three stale "not merged" references to
+`feature/traveling-focus-marker`, which merged via `c2023e1` on 2026-09-10; the traveling-focus-
+marker's keyboard-only design (implemented, matches CLAUDE.md's 2026-09-03/04 entry); the "keyboard
+focus indicator is nearly invisible" entry (solved by that same shipped marker); "Stats/Tags
+keyboard nav deferred" (Tags shipped via `_handle_tag_list_keys`/`_handle_thumb_grid_keys`, Stats'
+own tab via `_handle_stats_arrows` — narrowed the residual to just the Day/Week/Month prev/next
+buttons rather than closing outright); History tab's row-height viewport quantization (`b20a1ff`,
+shipped without the tags-gutter dependency the entry said blocked it); three Book Detail blur
+timing entries addressed by the park/unpark rework (`a9dfb06` for the stale-parked-frame case,
+the rest per `park_for_panel`'s own docstring); the three-state panel background's click-lag
+complaint (`149c647` cut it from ~1040ms to ~555ms, days after the entry was filed as "not yet
+investigated"); and two of three volume/muted-icon entries (wheel-scroll and click-to-restore both
+fully implemented in `app.py`, confirmed via `wheelEvent`/`_restore_from_mute`).
+
+**Reworded four entries in place** rather than closing them: the Stats sub-nav item, narrowed to
+the specific still-missing piece; the restyle "depth is the multiplier" framing, flagged against
+`review/Investigation_260802_restyle_cost_depth_and_narrowing.md` finding depth flat over two
+months — needs re-verifying rather than trusted as written; a "blocked on" framing whose blocker had
+already shipped; and the cover-art-theme hover/right-click entry, split so its two halves could be
+tracked separately.
+
+**Pryme then reviewed the report directly and corrected several things the audit got wrong or
+left too vague** — each handled on the spot rather than deferred:
+
+- **The cover-art-theme right-click fix was wrongly reported as already shipped.** Pryme corrected
+  this directly ("Not fully implemented. Left click selects the cover art theme, right click
+  doesn't set it") and explained the design gap himself: right-click doesn't know whether the user
+  wants "With pool" or "Exclusive" when starting from Off. Re-reading `_on_cover_pool_btn_right_
+  clicked` confirmed his report exactly — `apply_cover_theme` bare-returns via `clear_cover_theme()`
+  while mode is Off, so `self._cover_theme` stays `None` for that whole session, and the handler's
+  own `if not self._cover_theme: return` guard made right-click silently do nothing. Fixed per
+  Pryme's own proposed resolution: right-click from Off now selects "With pool" (reusing
+  `set_cover_art_mode`'s existing on-demand build path) rather than trying to guess between the two
+  modes. `pytest tests/ -k "theme or cover"` green; not yet live-verified. The wrong claim and its
+  correction are both recorded in TODO_ARCHIVE.md rather than silently overwritten — the audit
+  process itself needs the same "verify before trusting" discipline CLAUDE.md's top section
+  describes for any other claim.
+- **The punch-through-flash collision, open since 2026-07-21 through several "still not fixed"
+  updates, closed on Pryme's direct report:** "Never seen once since the blur branch was done with.
+  More than a month." Git history confirms the transport-bar blur rework (park/unpark, manual
+  hover-paint into the frost) concluded around 2026-08-18, consistent with his timeline — no further
+  changes to `transport_bar_blur.py` until an unrelated focus fix on 2026-09-08. This was never
+  decisively proven via the restyle-and-grab-coincidence capture the entry always called for; closed
+  on sustained real-use observation instead, with the original open question (which layer the flash
+  actually painted from) recorded as still unanswered if it ever resurfaces.
+- **Theme-bleed, both entries, closed on Pryme's own soak testing:** "Theme bleed is closed. I have
+  been soaking it for weeks." Both had been left pending specifically for a longer soak beyond the
+  original short/targeted verification sessions.
+- **VT progress-restore race — Pryme pushed back on treating his own manual re-test as sufficient
+  evidence:** "not much evidence, needs an automated test later." His re-test (repeated VT book
+  switches with cover-theme on, no resets observed) is recorded as circumstantial, not closing,
+  evidence — the entry now points at extending the existing `tools/fs_race_harness.py`/
+  `vt_restore_race_harness.py` harnesses (built for the earlier P1↔P2 race work) to deliberately
+  force the race window, rather than relying on manual testing happening to hit it.
+- **VT missing-file handling — Pryme reproduced the documented-but-unimplemented gap live:**
+  deleting a file mid-VT-book shows the missing-file banner correctly, but navigating directly to
+  the now-missing chapter resets to the book's start instead of erroring, while skipping past it via
+  the chapter list works. This matches the design doc's part 2 exactly — confirmed at the exact
+  code level (`player.py`'s VT cross-file branch, lines 992-1006, has no `os.path.exists` check
+  before committing `_current_vt_index`/`_file_offset` and calling `instance.play()`, unlike the
+  same-file branch's existing check at line 975).
+- **General responsiveness (reported slow after the theme-bleed fix) stays open, explicitly not
+  closed by the bleed closure above** — Pryme's plan: "We can measure it at some point to determine
+  if it is responsive enough," recorded as a not-yet-scheduled profiling task rather than assumed
+  fine now that the bleed itself is gone.
+- **Two smaller clarifications:** the "Book Detail frost" TODO entry (about `frost_panel_backdrop`'s
+  one-shot static snapshot) was confirmed via AskUserQuestion to be a DIFFERENT, already-closed
+  mechanism than what Pryme had in mind (the shared transport-bar overlay's manual hover-paint
+  work) — left unchanged, since it's still accurate for the mechanism it actually describes. The
+  pyflakes/dead-imports entry was re-run against current source and found to have drifted (line
+  numbers moved, three previously-flagged names in `panels.py` are no longer unused, one new one
+  appeared) — corrected in place rather than left to mislead the next person who tries to reproduce
+  it from stale line numbers.
+
+**Net result:** TODO.md's Summary index now holds 58 distinct dated entries across 21 topic
+headings, down from a file that had been silently accumulating already-closed work for weeks. The
+recurring lesson, consistent with CLAUDE.md's standing rules: an audit's own findings need the same
+"verify before trusting" discipline as any other claim — one of this session's own conclusions
+(cover-art right-click "already shipped") was wrong and only caught because Pryme checked it
+against his own recent experience of the app, not because anything in the process flagged it first.
+
 ## Session Summary — 2026-09-16 Session 2 — Volume wheel-scroll, mute click-to-restore, and a chain of hand-cursor/hitzone fixes across the vol_stack area and the chapter label, all live-verified. `f2526d7`, `0370816`.
 
 Pryme picked up two of the "isolated TODO items" surfaced at the end of Session 1: the volume
