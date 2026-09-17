@@ -32,6 +32,137 @@ order these entries had in TODO.md before the split (2026-07-30).
   `693274f`, `651c557`, `1a6e633`, `df1923e`. Live-verified by Pryme across all four input
   modalities (Next/Prev, long-skip/restart, wheel scrub, regular skip taps/holds).
 
+- **[2026-09-17] CLOSED by Pryme's own report (a month of real use, zero recurrence): the
+  punch-through-FLASH collision.** The spurious-`enterEvent` heartbeat's two triggers were fixed
+  2026-07-21 (`1a00abd`) and verified live at the time. The underlying punch-through-FLASH itself —
+  a real, event-driven `main_window.grab()` landing right after a restyle against Qt's
+  post-restyle repaint/repolish backlog, measured live with outliers up to 357ms — stayed open
+  through several rounds because it was "never fixed, only reduced in frequency and de-amplified,"
+  and the decisive restyle-and-grab-coinciding capture this item always called for was never
+  actually run (a 2026-07-27 13s idle capture was explicitly noted as inconclusive — too short,
+  too idle to have a real chance of catching it). Closed 2026-09-17 on Pryme's direct report: "Never
+  seen once since the blur branch was done with. More than a month." The transport-bar blur overlay
+  went through a substantial rework across 2026-08-01 through 2026-08-18 (park/unpark, manual
+  hover-paint into the frost — see the "CLOSED: transport-bar frost hover/pressed/tooltip saga"
+  entry below) that concluded around 2026-08-18; git history confirms no further changes to
+  `transport_bar_blur.py` until 2026-09-08 (an unrelated focus fix), consistent with "the blur
+  branch was done with" over a month before this closure. This is sustained real-use observation,
+  not a targeted capture — the open question this entry always carried (whether a recurring flash
+  would be the live main window or the overlay's grabbed pixmap) was never answered and would need
+  re-investigating from scratch if this ever resurfaces.
+
+- **[2026-09-17] CLOSED by Pryme's own soak testing: theme-bleed, both halves.** Two entries
+  (2026-07-21) each said "verified fixed with blur ON, not yet soak-tested" and were held open
+  pending a longer soak: (1) hovering a swatch to preview then closing the panel, repeatedly,
+  bleeding the preview color into the whole live main window instead of reverting — fixed
+  2026-07-20 via two independent causes closed the same day (state-read bypass in
+  `_set_bg_suppressed`, hover-unaware blur grab in `refresh_dirty`; NOTES.md "Theme-bleed Pass 1 +
+  Pass 2"); (2) the `complete_main_fade()` fix for the same underlying symptom, verified separately
+  since the bug's own reproduction was inconsistent (sometimes immediate, sometimes ~5 minutes).
+  Pryme confirmed 2026-09-17: "Theme bleed is closed. I have been soaking it for weeks." Both
+  closed on that basis. Explicitly distinct from, and does NOT close, the punch-through-FLASH
+  collision (`main_window.grab()` landing right after a restyle against Qt's repaint/repolish
+  backlog) — that item is separate, was never fixed (only reduced in frequency), and stays open in
+  TODO.md under "Right-click / theme-restyle performance." Also does not resolve the untriaged
+  "general responsiveness reported slow after this fix landed" follow-up, kept open separately.
+
+- **[2026-09-17] CLOSED: "Cover art based theme" right-click doesn't activate from Off mode when no
+  cover theme has been built yet.** Reported by Pryme directly, correcting a wrong "already
+  shipped" claim from the same day's staleness audit (see the correction note above). Root cause:
+  `apply_cover_theme` (`theme_manager.py`) bare-returns via `clear_cover_theme()` whenever mode is
+  Off, without ever building `theme_dict`/setting `self._cover_theme` — so for a book that's been
+  Off the whole session, `self._cover_theme` stays `None`. `_on_cover_pool_btn_right_clicked`'s
+  `if not self._cover_theme: return` guard then made right-click silently do nothing in exactly
+  that state, even though left-click (`_on_cover_pool_btn_clicked` → `set_cover_art_mode`) already
+  builds the theme on-demand via `apply_cover_theme(pixmap, user_initiated=True)` when switching
+  Off → With pool. Pryme's own framing of the fix: "it is not clear if the user wants to set With
+  pool or Exclusive [when right-clicking from Off]... We can make the right click on cover art
+  theme label select the With pool option if Off is selected." Fixed by having
+  `_on_cover_pool_btn_right_clicked` call `set_cover_art_mode("with_pool")` when `_cover_theme` is
+  None and mode is Off, before its existing activation logic — reuses the same on-demand build path
+  left-click already uses rather than duplicating it. `pytest tests/ -k "theme or cover"` green
+  (no dedicated test existed for this handler; none added, per no test infra covering it was found
+  to extend). Live UI verification not yet done by Pryme.
+
+- **[2026-09-17] CLOSED, staleness-audit batch: eleven TODO.md entries found already fixed/shipped
+  by later commits, never moved out.** Found via a full audit of TODO.md against git history and
+  CLAUDE.md's changelog (2026-09-17). Grouped here as one batch since each was independently
+  confirmed against a specific commit or current source, not against each other:
+
+  1. **Diacritic-insensitive library search** [2026-09-08] — fully implemented by `612a946` ("feat:
+     add diacritic-aware search and sort to the library", 2026-09-10): `_diacritic_aware_find`/
+     `_diacritic_char_matches` in `ui/library.py`, wired into `_apply_filter_and_sort`. The branch
+     this entry said to wait for (`feature/traveling-focus-marker`) merged the same day.
+  2. **`feature/traveling-focus-marker` "not merged" references** (three places in TODO.md) —
+     merged via `c2023e1` on 2026-09-10 (`git log main..feature/traveling-focus-marker` is empty).
+     Further keyboard-nav work shipped directly on `main` afterward (`513631e`, 2026-09-15).
+  3. **"Traveling focus marker must be keyboard-only, not mouse-activated"** [2026-07-10] —
+     implemented; `app.py`'s `_set_keyboard_nav_active`/`_update_focus_marker` has the full
+     `TabFocusReason`/`MouseFocusReason` modality-ownership design, matching CLAUDE.md's
+     2026-09-03/04 changelog entry.
+  4. **"Keyboard-selection focus indicator is nearly invisible"** [2026-07-09] — solved by the
+     now-shipped traveling-focus-marker feature (`ui/focus_marker.py`, wired app-wide).
+  5. **"Stats Day/Week/Month sub-nav and Tags panel keyboard nav — deferred, larger scope"**
+     [2026-07-12] — Tags panel nav shipped (`_handle_tag_list_keys`/`_handle_thumb_grid_keys` in
+     `tag_manager.py`, 2026-09-13/15 per CLAUDE.md); Stats' own "⚙" tab got `_handle_stats_arrows`
+     (2026-09-08). Narrower residual (Day/Week/Month `‹`/`›` prev/next buttons specifically) kept
+     open in TODO.md under "Panel focus / keyboard navigation," reworded to reflect only that gap.
+  6. **History tab `_history_scroll` row-height viewport quantization** [2026-07-11] — fixed by
+     `b20a1ff` ("fix: eliminate History tab row clipping and keyboard-nav scroll drift",
+     2026-08-12) via `layout.addSpacing(3)` making the viewport an exact multiple of the row
+     height (`book_detail_panel.py`) — shipped without the tags-gutter-work dependency the entry
+     said blocked it.
+  7. **Book Detail blur "stale parked frame while parked and book excluded/cover changed"**
+     [2026-08-14] — fixed same day by `a9dfb06` ("fix: invalidate a parked frame when content
+     changes beneath it"), implementing the `_parked_frame_invalid` flag the entry proposed almost
+     verbatim; confirmed present in `transport_bar_blur.py`.
+  8. **Book Detail blur "opening slide drops blurred window too early"** [2026-08-01] — fixed by
+     the park/unpark mechanism; `park_for_panel`'s own docstring in `transport_bar_blur.py`
+     explicitly states it fixes "a visible crisp frame on both the open and the close."
+  9. **Book Detail blur "closing reveal-scanner is intermittent"** [2026-08-01] — the
+     reveal-scanner mechanism no longer exists in source at all (superseded outright by park/
+     unpark, which the "Book Detail panel blur timing" section of TODO.md already noted does not
+     use it).
+  10. **Three-state panel background "clicking an option has perceptible lag, not yet
+      investigated"** [2026-07-28] — investigated and partially fixed by `149c647` ("perf: scope
+      the backdrop-mode restyle to the surfaces that read the panel alpha", 2026-08-02, days after
+      the entry was written): cut from ~1040ms to ~555ms by scoping the restyle instead of running
+      a full pass. A further ~140ms residual (skip-hidden-panels) was deliberately not bundled;
+      kept open in TODO.md's Pending section, reworded to describe only that residual. The entry's
+      own open question about `blur_enabled` migration is also resolved — `config.py` confirms
+      full migration to the three-state `panel_backdrop` key, with the old boolean kept only as a
+      one-time backward-compatibility read.
+  11. **Volume/muted-icon "don't accept wheel-scroll while visible" and "clicking the muted icon
+      should restore volume"** [2026-06-23, both] — both fully implemented in `app.py`:
+      `wheelEvent` explicitly handles `volume_slider.underMouse()`/`muted_icon_label.underMouse()`
+      (with an inline comment referencing this exact TODO closure), and `_restore_from_mute()`
+      implements the "value before manipulation started" capture design (`_pre_mute_volume`),
+      wired to `_toggle_mute` (the `m` key), `_on_muted_icon_clicked` (click), and wheel-scroll-up.
+      The third sibling entry, "Slider→muted-icon transition is abrupt," is NOT closed by this —
+      `_show_volume_overlay` still jumps directly with no transition — and stays open in TODO.md.
+
+  **Correction, retracted the same day it was written:** item 4 of this batch (originally covering
+  the "cover art based theme" hover/right-click entry) claimed the right-click-from-Off half was
+  "already implemented" via `_on_cover_pool_btn_right_clicked`. That was wrong — Pryme corrected it
+  directly: "Not fully implemented. Left click selects the cover art theme, right click doesn't set
+  it." Re-reading the handler confirmed Pryme's report, not the original claim: with mode Off,
+  `apply_cover_theme` bare-returns via `clear_cover_theme()` and never builds `self._cover_theme`
+  for that book, so `_on_cover_pool_btn_right_clicked`'s `if not self._cover_theme: return` guard
+  made right-click a no-op from Off whenever no cover theme had been built yet — exactly the
+  reported symptom, not a false report. See the separate 2026-09-17 entry below for the actual fix
+  applied in response. The lesson: a function existing and being reachable is not the same as it
+  producing the claimed behavior in the state the report describes — this should have been
+  verified against the specific Off-mode-with-no-prior-cover-theme case, not just confirmed to
+  exist.
+
+  Also reworded in place (not archived, since the underlying work is still partially open):
+  the "Stats refactor... depth reduction" restyle-perf entry (a same-day-but-later investigation,
+  `review/Investigation_260802_restyle_cost_depth_and_narrowing.md`, found depth flat over 2
+  months — the depth-reduction framing needs re-verifying against current widget-tree depth,
+  possibly already covered by the Stats delegate migration); and the History-tab delete-animation
+  "blocked on the above" framing (its blocker, item 6 above, shipped — the animation itself was
+  never re-tuned, so it's unblocked-but-not-resumed, not stale in substance).
+
 - **[2026-09-10] CLOSED: Settings/Stats "⚙" tab Right-arrow inconsistency at a row's last
   button.** Reported live 2026-09-09 as "Right arrow is mostly no-op, from Look and Controls it
   goes to the tab" and initially scoped as needing a live `QApplication.focusWidget()` trace to
