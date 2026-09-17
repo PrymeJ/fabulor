@@ -494,7 +494,66 @@ correctly — the contrast is what made these visible, so they are not regressio
   cross-file jump in `seek_async` commits `_current_vt_index`/`_file_offset` and calls
   `instance.play()` with no `os.path.exists` pre-check — confirmed at player.py:992-1006, unlike
   the same-file branch's existing check at :975); using the chapter list to skip PAST the missing
-  chapter works. This matches part 2 of the design below exactly.
+  chapter works. This matches part 2 of the design below exactly. **This remains the eventual/
+  bigger design (load-time check, sticky banner, Dismiss/Rescan) — see the separate INTERIM fix
+  entry below for a smaller, immediately-shippable fix to just the corruption/reset symptom,
+  worked out in a follow-up conversation the same night.**
+
+- [2026-09-17] **INTERIM FIX (smaller than the consolidated design above, not a replacement for
+  it) — "never load a missing file; always skip forward to the next present one, always notify."**
+  Worked out with Pryme specifically because he's "not keen on refusing to play the whole book"
+  for what could be an unimportant missing chapter (author's note, biography, end credits), and
+  explicitly rejected silent skip-ahead as worse than an alarming-but-honest stop (a listener not
+  looking at the screen could miss a whole chapter with no idea it happened). Unifies FOUR distinct
+  code paths under one rule — three of them currently uncovered by any existence check at all, and
+  the fourth (the same-file case, already shipped) currently does something more drastic
+  (whole-book exclusion) than this design calls for:
+  1. **Load-time, first VT file missing** (`_resolve_playlist`, `player.py:404-450`) — currently no
+     existence check on `db_files[0]['file_path']` before returning it as the file to load.
+  2. **Natural end-of-file advance** (`_advance_or_finish`, `player.py:367-390`) — currently no
+     existence check on `next_file['file_path']` before `self.instance.play(...)`. The MORE
+     common trigger than a deliberate jump (every listener who reaches that point hits it, not
+     just someone who clicks ahead) — was nearly designed to "stop at the boundary" instead of
+     skip, then unified to match the other three call sites for consistency rather than leaving an
+     inconsistent exception; flagged here in case that unification is revisited.
+  3. **Deliberate jump onto a missing file** (`seek_async` VT cross-file branch, `player.py:992-
+     1007`) — the originally-reported bug. Unlike the other three, this one has a genuine "stay
+     put" option: refuse the jump, leave `_current_vt_index`/`_file_offset`/playback state
+     completely untouched (per Pryme: "leave playback state as-is" — paused stays paused, playing
+     keeps playing from the old position), just show the notice. Does NOT reset to book start.
+  4. **Same-file seek onto a missing file** (`seek_async` same-file branch, `player.py:975`,
+     ALREADY SHIPPED as of July) — currently routes through `_abandon_seek_missing_file()` →
+     `load_failed("File missing.")` → `_mark_book_missing()`, which excludes the WHOLE BOOK from
+     the library for one missing file. Explicitly brought into the same "skip forward + notify,
+     book stays loaded" rule rather than left as the more drastic pre-existing behavior — confirmed
+     with Pryme directly rather than assumed, since it means changing already-shipped behavior.
+
+  **Shared primitive needed:** a `_find_next_present_vt_file(start_idx) -> int | None` walk over
+  `_virtual_timeline`, returning the first index at/after `start_idx` whose file passes
+  `os.path.exists`, or `None` if nothing from there on exists (book effectively ends at that
+  point — needs its own decision on what happens then, not yet worked out).
+
+  **Notice mechanism:** reuse the `load_failed` signal but with a NEW reason string distinct from
+  the existing `"File missing."` (which `_on_load_failed` in app.py currently routes to
+  `_mark_book_missing` — that routing must NOT fire for this new reason, or it reintroduces the
+  exact whole-book exclusion this fix removes). Needs to be a persistent banner naming the skipped
+  chapter, not a transient toast — deliberately per Pryme's "never silently skip" requirement.
+
+  **Scope note, said plainly by Pryme:** this is explicitly NOT the fully-designed load-time
+  count-and-compare check from part 1 of the consolidated design above ("not keen on" a bigger
+  overhaul right now) — this fix never proactively checks for missing files before they're
+  actually about to be loaded; it only ensures that whenever the normal playback flow is ABOUT to
+  load one, it skips forward instead. A VT book with every file already gone before the user ever
+  opens it still behaves however case 1 above resolves (skip forward through the whole book,
+  eventually finding nothing — see the shared primitive's own open "what then" question).
+
+  **This touches `seek_async`/`_advance_or_finish`/`_resolve_playlist` — the exact "Seek/position
+  tracking — VT+Undo is the known-fragile zone" CLAUDE.md rule.** Four independently-reverted
+  attempts in this same zone are already on record. Needs its own investigate-then-plan session,
+  not a quick patch, and must be live-verified against VT cross-file seeking, Undo, and the
+  existing missing-file live repro (delete a file mid-VT-book) specifically — not just a clean
+  unit-test pass — before being considered done. NOT started; design only, worked out via
+  conversation, not yet reduced to a concrete implementation plan.
 
 ### Seek-landing precision at chapter boundaries — GROUPED, deliberately not picked up piecemeal
 **Read [SEEK_CONSTANTS.md](SEEK_CONSTANTS.md) and NOTES.md's 2026-07-14
