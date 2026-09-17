@@ -28,16 +28,23 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
   the mouse hovered over something else. This principle should be observed throughout the app with
   a holistic approach."
 
-### Book Detail panel — never wired into the keyboard-modality system at all
-- [2026-09-15] Confirmed directly while investigating a separate Stats tab-bar bug: Book Detail's
-  own tab bar (`self.tabs`, `book_detail_panel.py`) has ZERO keyboard-arrow-nav or mouse/keyboard
-  hover reconciliation — `MainWindow._kbdnav_active_panel_key()` only recognizes
-  settings/speed/sleep/sprint/stats, so Book Detail gets no `kbdnav` property, no arrow-key
-  handler, nothing. This is a pre-existing gap, not a regression from the 2026-09-15 hover-pickup
-  consolidation pass (see TODO_ARCHIVE.md for that pass's full writeup) — explicitly deferred by
-  Pryme's own call ("Fix Stats first, Book Detail later") rather than built out in the same
-  session. Building this out is a real, from-scratch feature addition of similar scope to what
-  exists for Settings/Stats today, not a small follow-up fix.
+### Book Detail panel's Tags tab — thinner keyboard nav than its History tab sibling
+- [2026-09-15, scope corrected 2026-09-17] The 2026-09-15 framing of this entry ("Book Detail...
+  ZERO keyboard-arrow-nav... nothing") overstated the gap — Pryme corrected it directly: "mostly
+  wrong, only the Tags tab there needs some work, and that's minor." Book Detail in fact has real
+  keyboard handling app-wide: `keyPressEvent`/`eventFilter` (`book_detail_panel.py`) own
+  Tab/Backtab/Escape, Left/Right cycles Stats→History→Tags→Cover (wrapping both ways), and
+  `_history_key_event` gives the History tab full Up/Down/Delete row navigation. What's actually
+  missing, narrowly: the Tags tab's own tag chips have no Up/Down/Delete row navigation the way
+  History's session rows do — Tab there only toggles focus into/out of the tag-add input
+  (`_on_tags_tab` branch, `keyPressEvent`), so a keyboard user can add a tag but can't navigate to
+  or remove an existing chip without a mouse. Also still true and unrelated to the above: the
+  panel's tab bar itself was never wired into the shared `_kbdnav_active_panel_key` mechanism
+  (`MainWindow`) the way Settings/Speed/Sleep/Sprint/Stats were, so it gets no `kbdnav` property or
+  arrow-key handler for switching tabs by arrow key specifically (Left/Right via
+  `keyPressEvent` still works, just not through the shared mechanism) — cosmetic/consistency gap,
+  not a functional block. Originally deferred by Pryme's own call ("Fix Stats first, Book Detail
+  later"); scope is now understood to be much smaller than a from-scratch feature addition.
 
 ### Settings keyboard-focus regressions found while testing Tags (check after Tags is done)
 - [2026-09-08] Library scan focus strand — NOT YET ROOT-CAUSED, intermittent, diagnostic tracing
@@ -309,14 +316,6 @@ correctly — the contrast is what made these visible, so they are not regressio
   complaint; they point at different fixes.
 - Acceptable target per Pryme: does not have to be fully live, just not visibly stuck.
 
-### Book Detail panel blur timing
-- [2026-08-14] The park/unpark change (branch `fix/book-detail-blur-park`, since merged) addressed
-  both original 2026-08-01 opening/closing-slide entries here — `hide_for_panel` split into
-  `_disarm_grabbing` + display teardown, so the underlay's blurred frame persists into the opening
-  slide and stays on screen while Book Detail covers it, instead of being dropped/rebuilt. The
-  stale-parked-frame follow-up (book excluded/cover changed while parked) was also fixed same-day
-  via `a9dfb06` (`_parked_frame_invalid`). See TODO_ARCHIVE.md for the closure record.
-
 ### Theme color/data
 - [2026-07-07] Per-theme library color pass only covers A–S alphabetically (`library_bg`/`library_row_one`/`_two`/`library_item_hover_color`/`_alpha`/`library_title`/`_author`/`_narrator`/`_elapsed`/`_total`/`_percentage`/`library_slider_bg`/`_fill`/`library_input_bg`/`_text`) — letters T onward still need the same tuning pass (`ae4441c`)
 - [2026-07-28] Some themes need a preset-ramp colour override (known theme-data issue)
@@ -327,7 +326,9 @@ correctly — the contrast is what made these visible, so they are not regressio
 - [2026-06-19] Remove theme inheritance from "The Color Purple"
 
 ### Chapter list / library click
-- [2026-07-21] Chapter list highlight fluctuates and scrolls to bottom on click
+- [2026-07-21, not reproduced in a long time as of 2026-09-17] Chapter list highlight fluctuates
+  and scrolls to bottom on click — likely already fixed by `787bfaa`, per Pryme's own report; not
+  formally re-verified under instrumentation
 - [2026-07-21] `SUSPECT_MASKED_STASH` diagnostic marker has a false-positive gap (diagnostic-only)
 
 ### VT / seek / progress tracking
@@ -613,19 +614,21 @@ isolation.
   not assume closed.** Part of the "Seek-landing precision at chapter boundaries" group (see that
   heading in the summary index) — read `SEEK_CONSTANTS.md` before touching this.
 
-- **[2026-07-21] Chapter list: clicking a chapter sometimes makes the current-chapter highlight
-  fluctuate between chapter rows and scrolls the list to the bottom — visual bug, not yet
-  investigated.** User-reported, intermittent ("sometimes"), not yet reproduced under
-  instrumentation. Not root-caused — no hypothesis yet on mechanism (candidate areas to check when
-  picked up: `chapter_list.py`'s selection/scroll handling on click, and whether this interacts
-  with `_on_time_pos_change`'s chapter-walk-driven `chapter_changed` emits racing the click's own
-  selection, given how many other chapter-UI bugs in this codebase have come from exactly that kind
-  of race — see the CLAUDE.md chapter-navigation rules — but this is a guess, not confirmed).
-  Needs live instrumentation added first to catch an occurrence with real state, before any fix is
-  attempted — do not fix blind. Not started.
-  **Likely closed by the same fix (`787bfaa`) — same mechanism, same code path (chapter-list clicks
-  route through `activate_chapter_index` → `seek_async`, same as Prev/Next) confirmed in the
-  chapter-flicker investigation. Re-verify when next reproduced before removing this entry.**
+- **[2026-07-21, not reproduced in a long time as of 2026-09-17] Chapter list: clicking a chapter
+  sometimes made the current-chapter highlight fluctuate between chapter rows and scroll the list
+  to the bottom — visual bug, likely already fixed.** User-reported, intermittent ("sometimes"),
+  never reproduced under instrumentation, no confirmed root cause at the time (candidate areas
+  flagged for whenever it resurfaces: `chapter_list.py`'s selection/scroll handling on click, and
+  whether this interacts with `_on_time_pos_change`'s chapter-walk-driven `chapter_changed` emits
+  racing the click's own selection — see the CLAUDE.md chapter-navigation rules — but that was
+  always a guess, not confirmed). **Likely closed by `787bfaa`** — same mechanism, same code path
+  (chapter-list clicks route through `activate_chapter_index` → `seek_async`, same as Prev/Next)
+  confirmed in the chapter-flicker investigation. **2026-09-17: Pryme reports he "can't produce [it]
+  for a long time," probably fixed** — real evidence toward closing this, but not the formal
+  instrumented re-verification this entry has always asked for before removal (the bug was
+  intermittent enough originally that a stretch of non-reproduction isn't automatically proof).
+  Leave open one more round; if it still doesn't resurface, close outright rather than requiring a
+  deliberate repro attempt that may never come.
 
 - **[2026-07-21] `SUSPECT_MASKED_STASH` diagnostic marker has a false-positive gap — deal with
   later, not a functional bug.** Confirmed via a real 15-minute live session (03:00–03:15) after

@@ -101,6 +101,16 @@ order these entries had in TODO.md before the split (2026-07-30).
   itself stays open in TODO.md — its middle bullet (the Library-scan focus strand) is a genuine,
   still-unreproduced live bug — only these two flanking done-status bullets are archived here.
 
+- **[2026-09-17] CLOSED: "Book Detail panel blur timing" heading — a fourth instance of the same
+  gap, caught during a follow-up triage pass rather than by a fresh audit.** Its sole entry
+  described the park/unpark fix (`fix/book-detail-blur-park`, merged) addressing both original
+  2026-08-01 entries plus the same-day stale-parked-frame follow-up (`a9dfb06`), with nothing left
+  outstanding — the entry's own last sentence already pointed at TODO_ARCHIVE.md for the closure
+  record, which is what tipped this off as the same "done-status note sitting in the open-work
+  file" shape as the three above. Closed outright; the closure records it already pointed at
+  (`a9dfb06`, and the "[2026-08-14] Book Detail panel blur timing" original entries) remain
+  elsewhere in this file.
+
 - **[2026-09-17] CLOSED: "Keyboard navigation — remaining surfaces" status note — a pure done-status
   entry that was never actually open work, missed by the same-day staleness audit's own edit.** The
   2026-09-17 audit corrected this entry's stale "not merged" branch reference (`c2023e1` merged
