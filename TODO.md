@@ -40,15 +40,6 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
   exists for Settings/Stats today, not a small follow-up fix.
 
 ### Settings keyboard-focus regressions found while testing Tags (check after Tags is done)
-- [2026-09-08] Excluded Books focus strand — FIXED. Un-excluding the LAST remaining book drops
-  `ExcludedBooksPopup.book_count` to 0, and `reposition()` hides the popup entirely in that case.
-  If the popup itself held real Qt focus (the normal case — Enter/Space on its own focused row
-  triggered the restore), `hide()` stranded focus on the now-hidden widget with nothing to
-  reclaim it, permanently blocking global shortcuts (`_focus_allows_global_shortcuts()` reads
-  "a panel-local widget still owns this key") until a mouse click reset focus elsewhere. Fixed
-  in `_on_excluded_book_restored` (app.py) by redirecting to the same target
-  `_on_excluded_books_exit_upward` already uses on a normal Up-out-of-the-popup exit (Persist
-  search filter's row) whenever the popup held focus and reposition() just hid it.
 - [2026-09-08] Library scan focus strand — NOT YET ROOT-CAUSED, intermittent, diagnostic tracing
   added. Reported live: Rescan clicked, Esc closes Settings WHILE the scan is still running,
   then Space/arrow keys are no-ops on the main window. Neither side could reproduce this on
@@ -68,26 +59,6 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
   its full parent chain, and whether the scanner is still running at that moment. Purely
   diagnostic, no behavior change (`allowed`'s value and effect are untouched) — waiting for it
   to actually fire the next time this reproduces, rather than continuing to guess blind.
-- [2026-09-08] Speed/Sleep/Sprint "ramp-up" buttons' highlight not clearing — FIXED. Root cause:
-  each panel's per-instance ramp stylesheet (`_apply_preset_ramp_colors`) had a bare, unscoped
-  `QPushButton:focus` rule for the keyboard-cursor highlight. These buttons keep REAL Qt focus by
-  design even after the traveling marker itself stops being drawn (its own idle self-fade, or an
-  instant `clear()` when the mouse takes over — see `_set_keyboard_nav_active`/
-  `_update_focus_marker` in app.py), so the bare `:focus` rule kept matching and the highlight
-  stayed lit indefinitely. Fixed by scoping the rule to `[kbdnav="true"]` (same ancestor-scoped
-  pattern the adjacent `:hover`/`:focus:hover` suppression rules already used) in all three
-  panels — the highlight now disappears the instant `[kbdnav]` flips false, same timing as
-  `clear()`.
-
-
-### Keyboard navigation — remaining surfaces
-The whole Settings panel (Themes, Look, Controls, Audio, Library) plus Speed, Sleep, and Sprint
-are all arrow-navigable as of 2026-09-07 Session 1 (this work landed on
-`feature/traveling-focus-marker`, merged to `main` via `c2023e1` on 2026-09-10 — further
-keyboard-nav work, e.g. Stats/Tags hover-pickup, has since shipped directly on `main`).
-`disable_sleep_btn`'s and `disable_sprint_btn`'s missing-hover gaps (an ID selector outranks the
-generic `QPushButton:hover`, same root cause as `reset_audio_btn`'s original gap) were both
-closed this pass, since keyboard navigation made them directly relevant — no longer an open item.
 
 ### Three more keyboard-nav consistency gaps, found by Pryme's own live testing (not yet investigated)
 - [2026-09-09] All three reported together, none investigated yet — grouped here rather than as

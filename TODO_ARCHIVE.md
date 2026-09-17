@@ -84,6 +84,38 @@ order these entries had in TODO.md before the split (2026-07-30).
   (no dedicated test existed for this handler; none added, per no test infra covering it was found
   to extend). Live UI verification not yet done by Pryme.
 
+- **[2026-09-17] CLOSED: two "FIXED" bullets sitting under "Settings keyboard-focus regressions
+  found while testing Tags," same class of gap as the entry below (a done-status note left in the
+  open-work file).** Both were flagged `— FIXED` in their own text and had nothing outstanding:
+  (1) **Excluded Books focus strand.** Un-excluding the LAST remaining book drops
+  `ExcludedBooksPopup.book_count` to 0, and `reposition()` hides the popup entirely in that case —
+  if the popup itself held real Qt focus, `hide()` stranded it with nothing to reclaim it,
+  permanently blocking global shortcuts until a mouse click reset focus elsewhere. Fixed in
+  `_on_excluded_book_restored` (app.py) by redirecting to the same target
+  `_on_excluded_books_exit_upward` already uses on a normal Up-out-of-the-popup exit. (2)
+  **Speed/Sleep/Sprint "ramp-up" buttons' highlight not clearing.** Each panel's per-instance ramp
+  stylesheet (`_apply_preset_ramp_colors`) had a bare, unscoped `QPushButton:focus` rule for the
+  keyboard-cursor highlight; these buttons keep real Qt focus even after the traveling marker
+  itself stops being drawn, so the bare `:focus` rule kept matching and the highlight stayed lit
+  indefinitely. Fixed by scoping the rule to `[kbdnav="true"]` in all three panels. The heading
+  itself stays open in TODO.md — its middle bullet (the Library-scan focus strand) is a genuine,
+  still-unreproduced live bug — only these two flanking done-status bullets are archived here.
+
+- **[2026-09-17] CLOSED: "Keyboard navigation — remaining surfaces" status note — a pure done-status
+  entry that was never actually open work, missed by the same-day staleness audit's own edit.** The
+  2026-09-17 audit corrected this entry's stale "not merged" branch reference (`c2023e1` merged
+  `feature/traveling-focus-marker` on 2026-09-10) but left the whole heading sitting in TODO.md — an
+  "open work" file — describing something with nothing left outstanding: "The whole Settings panel
+  ... plus Speed, Sleep, and Sprint are all arrow-navigable ... `disable_sleep_btn`'s and
+  `disable_sprint_btn`'s missing-hover gaps ... were both closed this pass ... no longer an open
+  item." Pryme caught it directly: "From this wording, I can't see anything outstanding. What am I
+  missing?" — correctly, nothing. This is the same class of gap the audit was supposed to be
+  hunting for (an entry whose own text says "done" left un-archived), and the audit fixed the
+  factual claim inside the entry without asking whether the entry belonged in TODO.md at all.
+  Closed outright; the underlying facts (arrow-nav shipped 2026-09-07, hover-gap fixes bundled into
+  that pass) are already documented in CLAUDE.md's "What's Built" section, so nothing is lost by
+  removing this pointer.
+
 - **[2026-09-17] CLOSED, staleness-audit batch: eleven TODO.md entries found already fixed/shipped
   by later commits, never moved out.** Found via a full audit of TODO.md against git history and
   CLAUDE.md's changelog (2026-09-17). Grouped here as one batch since each was independently
