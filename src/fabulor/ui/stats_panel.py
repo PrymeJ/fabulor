@@ -410,6 +410,15 @@ _STATS_ROW_HEIGHT = 52
 _STATS_TITLE_WIDTH = 134
 _STATS_AUTHOR_WIDTH = 86
 
+# Floors for the right-hand clock/prog columns once they stop reserving their full
+# fixed CLOCK_W(50)/PROG_W(98) budget unconditionally and instead size to the real
+# text ("14m" vs "23h 59m", "0% · 0% | +0%" vs "12.3% · 45.6% | +33.3%") — see the
+# 2026-09-18 fix in StatsRowDelegate.paint. A floor keeps very short strings (e.g.
+# a book with no progress data at all, prog_text == "") from collapsing the column
+# to near-zero width, which would visually crowd the title against the row edge.
+_STATS_CLOCK_MIN_WIDTH = 30
+_STATS_PROG_MIN_WIDTH = 40
+
 
 def _fixup_scroll_policy(scroll):
     """Keep the vertical scrollbar's gutter reserved at a constant width at all
@@ -1151,17 +1160,22 @@ class StatsRowDelegate(QStyledItemDelegate):
         block_h = line_h * 2 + row_spacing
         block_y = content_y + max(0, (content_h - block_h) // 2)
 
-        # Row 0: title (left, elided) + clock time (right). Width is the real text
-        # width (capped at _STATS_TITLE_WIDTH so a short title doesn't visually
-        # stretch the row's layout rhythm), but never less than the old fixed
-        # budget would have given it — so a long title can use genuine free space
-        # in a wider row instead of truncating at a column width sized for the
-        # narrowest tab. See TODO.md [2026-08-09] / TODO_ARCHIVE.md for why this
-        # was a fixed constant before.
-        title_max = max(0, content_w - self.SPACING - self.CLOCK_W)
+        # Row 0: title (left, elided) + clock time (right). CLOCK_W (50px) is sized
+        # for the widest plausible clock string, but most real durations ("14m",
+        # "1h 3m") need far less than that — the first version of this fix only
+        # gave the title back slack from its OWN fixed cap and left CLOCK_W's
+        # reservation untouched, which is why it produced no visible change (see
+        # TODO_ARCHIVE.md — title_max was already <= the old fixed cap in a real
+        # row, so nothing changed). The real waste is CLOCK_W itself: reserve only
+        # what the actual clock text needs (never less than a floor so the column
+        # doesn't jitter row to row), and let the title claim the rest.
+        clock_seconds = row.get("clock_seconds") or 0.0
+        clock_text = StatsPanel._format_duration(clock_seconds)
+        clock_text_w = QFontMetrics(clock_font).horizontalAdvance(clock_text)
+        clock_w = min(self.CLOCK_W, max(_STATS_CLOCK_MIN_WIDTH, clock_text_w + 2))
+        title_max = max(0, content_w - self.SPACING - clock_w)
         title_text_w = QFontMetrics(title_font).horizontalAdvance(row.get("book_title", "Unknown"))
         title_w = min(title_max, max(_STATS_TITLE_WIDTH, title_text_w))
-        clock_w = self.CLOCK_W
         row0_h = line_h
         # +1px live-measured nudge vs. Week/Month (2026-08-08 side-by-side
         # screenshot overlay) — the font-metrics-derived block_y above gets
@@ -1179,19 +1193,38 @@ class StatsRowDelegate(QStyledItemDelegate):
         elided_title = painter.fontMetrics().elidedText(title_text, Qt.TextElideMode.ElideRight, title_rect.width())
         painter.drawText(title_rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, elided_title)
 
-        clock_seconds = row.get("clock_seconds") or 0.0
         painter.setFont(clock_font)
         painter.setPen(self._color_text)
-        painter.drawText(clock_rect, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
-                          StatsPanel._format_duration(clock_seconds))
+        painter.drawText(clock_rect, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, clock_text)
 
         # Row 1: author (left, elided) + progress delta (right). Same real-width-
-        # with-a-floor approach as the title above.
+        # with-a-floor approach as the title above — same fix shape as the clock
+        # column: PROG_W (98px) is sized for the widest plausible "NN% · NN% |
+        # +NN%" string, but reserve only what THIS row's actual prog text needs.
         author_font = QFont(title_font)
-        author_max = max(0, content_w - self.SPACING - self.PROG_W)
+
+        duration = row.get("book_duration")
+        pos_start = row.get("period_position_start")
+        pos_end = row.get("period_position_end")
+        prog_text = ""
+        prog_is_negative = False
+        if duration and duration > 0 and pos_start is not None and pos_end is not None:
+            pct_start = min(100.0, pos_start / duration * 100)
+            pct_end = min(100.0, pos_end / duration * 100)
+            delta = pct_end - pct_start
+
+            def fmt_pct(v):
+                return f"{v:.0f}%" if round(v, 1) % 1 == 0 else f"{v:.1f}%"
+
+            delta_str = f"+{fmt_pct(delta)}" if delta >= 0 else fmt_pct(delta)
+            prog_text = f"{fmt_pct(pct_start)} · {fmt_pct(pct_end)} | {delta_str}"
+            prog_is_negative = delta < 0
+
+        prog_text_w = QFontMetrics(author_font).horizontalAdvance(prog_text)
+        prog_w = min(self.PROG_W, max(_STATS_PROG_MIN_WIDTH, prog_text_w + 2)) if prog_text else _STATS_PROG_MIN_WIDTH
+        author_max = max(0, content_w - self.SPACING - prog_w)
         author_text_w = QFontMetrics(author_font).horizontalAdvance(row.get("book_author", ""))
         author_w = min(author_max, max(_STATS_AUTHOR_WIDTH, author_text_w))
-        prog_w = self.PROG_W
         # -2px live-measured nudge vs. Week/Month (2026-08-08, same overlay
         # check as the title nudge above) — not uniform with the title's
         # +1px, the two lines are not spaced symmetrically around block_y in
@@ -1208,21 +1241,9 @@ class StatsRowDelegate(QStyledItemDelegate):
         elided_author = painter.fontMetrics().elidedText(author_text, Qt.TextElideMode.ElideRight, author_rect.width())
         painter.drawText(author_rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, elided_author)
 
-        duration = row.get("book_duration")
-        pos_start = row.get("period_position_start")
-        pos_end = row.get("period_position_end")
-        if duration and duration > 0 and pos_start is not None and pos_end is not None:
-            pct_start = min(100.0, pos_start / duration * 100)
-            pct_end = min(100.0, pos_end / duration * 100)
-            delta = pct_end - pct_start
-
-            def fmt_pct(v):
-                return f"{v:.0f}%" if round(v, 1) % 1 == 0 else f"{v:.1f}%"
-
-            delta_str = f"+{fmt_pct(delta)}" if delta >= 0 else fmt_pct(delta)
-            prog_text = f"{fmt_pct(pct_start)} · {fmt_pct(pct_end)} | {delta_str}"
+        if prog_text:
             painter.setFont(author_font)
-            painter.setPen(self._color_dim if delta < 0 else self._color_text)
+            painter.setPen(self._color_dim if prog_is_negative else self._color_text)
             painter.drawText(prog_rect, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, prog_text)
 
         painter.restore()
