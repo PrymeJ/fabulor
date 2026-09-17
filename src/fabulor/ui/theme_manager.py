@@ -3050,6 +3050,22 @@ class ThemeManager(QObject):
         self._pending_hover_theme = None
         mode = self.config.get_cover_art_theme_mode()
         if not self._cover_theme:
+            if mode != "off":
+                # No cover theme built and mode isn't Off — nothing to activate
+                # (e.g. no cover art for this book). Matches the pre-existing
+                # early return.
+                return
+            # Mode is Off, so apply_cover_theme() has never built _cover_theme
+            # for this book (it bare-returns via clear_cover_theme() while Off —
+            # see apply_cover_theme's own comment). Right-click means "I want
+            # this," so build it now via the same on-demand path
+            # set_cover_art_mode("with_pool") already uses for a left-click out
+            # of Off (apply_cover_theme(pixmap, user_initiated=True)) — this
+            # also switches the mode and applies/activates the theme in one
+            # call, so nothing further is needed on this path.
+            self.set_cover_art_mode("with_pool")
+            self._update_cover_pool_btn()
+            self._update_theme_pool_buttons_enabled()
             return
         # Ensure it's in the pool
         if mode == "off":
