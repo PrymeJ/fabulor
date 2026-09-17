@@ -939,7 +939,21 @@ class TagManagerWidget(QWidget):
         super().hideEvent(event)
 
     def refresh_books(self) -> None:
-        if self._current_tag:
+        # Guarded on self.isVisible(), not just self._current_tag being set — the caller
+        # (_on_scan_finished -> app.refresh_tag_manager, and every other refresh_books
+        # caller in app.py) is unconditional and fires regardless of whether the Tags
+        # panel is even open. _current_tag is deliberately NOT cleared on close (a
+        # reopen should land back on the same tag), so a stale _current_tag from a
+        # PRIOR, already-closed visit made every later refresh call _open_tag() again —
+        # which has real side effects (installEventFilter on the whole QApplication,
+        # setFocus on _book_grid) even though the panel was genuinely hidden. Confirmed
+        # live 2026-09-17 ([TAG-FILTER-TRACE]): _open_tag fired with
+        # self.isVisible()=False right after a scan finished, leaking the app-wide
+        # filter and stranding every arrow key on the (invisible) book grid
+        # indefinitely, with no [FOCUS-STRAND-TRACE] hit either — MainWindow.
+        # keyPressEvent never even saw the key, since TagManagerWidget's own filter
+        # swallowed it first (Qt runs the most-recently-installed filter first).
+        if self._current_tag and self.isVisible():
             self._open_tag(self._current_tag)
 
     def tag_scroll_widget(self):
