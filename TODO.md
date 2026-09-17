@@ -90,17 +90,6 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
     worth checking whether this is literally the same underlying defect surfacing a third time,
     or a separate, unrelated row-ordering bug specific to how Speed's rows list was built.
 
-### Sidebar mouse-wheel conflict over the cover art area
-- [2026-09-17] FIXED — scrolling over `visual_area` while the sidebar is open both closed the
-  sidebar AND changed volume on the same flick, an inconsistency with the other two wheel-active
-  zones (`speed_button`, `chapter_progress_slider`), both of which already call
-  `panel_manager.dismiss_sidebar()` before their own action on the same event. Pryme's own lean:
-  close on this flick, let volume behave normally on the very next one, and leave the existing
-  no-op over neutral space (not over any wheel zone) alone — it's already sidebar-state-independent
-  today and was never actually inconsistent, just untouched by the sidebar question. Fixed by adding
-  the same `dismiss_sidebar()` call to `visual_area`'s wheel branch (`app.py:4031`), matching the
-  other two zones exactly. `pytest tests/ -k "volume or sidebar or wheel"` green.
-
 ### Small visual/cosmetic bugs (batch logged 2026-09-17, mostly not yet reproduced in detail)
 - [2026-09-17] Restart button has jagged edges — visual, minor. Not yet investigated.
 - [2026-09-17] Chapter label scroll has a 2px gap on the left before scrolling starts — visual,

@@ -5,6 +5,29 @@ list scannable. Kept, not deleted, per the project's normal practice of not thro
 that isn't fully duplicated in NOTES.md/SESSION.md/a commit message. Order is the same relative
 order these entries had in TODO.md before the split (2026-07-30).
 
+- **[2026-09-17] CLOSED: sidebar mouse-wheel conflict over the cover art area — turned out to be a
+  documentation/framing mistake, not a code bug needing further work.** Pryme originally logged:
+  "when the sidebar is open, mouse wheel over art area both closes it and hits the volume... behavior
+  to be decided," with a stated lean toward "closing the sidebar if it is over the art area, then
+  manipulating the volume as usual with the next flick." Investigation found `visual_area`'s wheel
+  branch (`app.py:4031`) was the one wheel-active zone missing the `panel_manager.dismiss_sidebar()`
+  call the other two (`speed_button`, `chapter_progress_slider`) already had before their own action,
+  same event — added it to match, **same-flick** (dismiss then nudge volume, no `return` in between,
+  identical to those two zones' existing pattern). The fix was scoped and confirmed with Pryme via
+  AskUserQuestion at build time as "same-flick, matching the pattern" — but the TODO.md entry
+  recording it was written sloppily, restating the ORIGINAL "close now, volume on the next flick"
+  lean as if that were what got built, when only the same-flick version was ever implemented.
+  Pryme tested live post-fix (confirmed fresh app launch, not a stale process) and reported "same
+  behavior as before" — correctly, since `_nudge_volume` always ran regardless of sidebar state both
+  before and after this change; only the (functionally invisible in this exact repro)
+  `dismiss_sidebar()` call was new. On reflection, asked directly, Pryme said he has no strong
+  preference between "close-then-volume-on-next-flick" and "close-and-volume-same-flick" — the
+  same-flick behavior as built is fine. Closed on "acceptable as built and live-tested," not on
+  "matches the original ask," since the original ask was itself mis-scoped in the entry's own first
+  draft. Lesson for next time: when an entry's own text later gets contradicted by a live report,
+  re-derive what was ACTUALLY built and ACTUALLY confirmed with the user at build time, rather than
+  trusting the entry's own retrospective summary of itself.
+
 - **[2026-09-16] CLOSED (corrects the original 2026-07-15 entry's scope): Undo doesn't return to
   the true origin after a rapid spree of small seeks.** The 2026-07-15 entry narrowed this live to
   "Next/Prev specifically — every other undo/restore path correctly returns to the true origin" and
