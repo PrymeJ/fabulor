@@ -15,7 +15,7 @@ from ..models.book import Book
 from .icon_utils import render_logo_placeholder, render_logo_placeholder_bordered
 from .line_edit_dragfix import DragSafeLineEdit
 from . import scrollbar_jump
-from PySide6.QtGui import QPixmap, QImage, QColor, QFont, QFontMetrics, QPolygon, QPainter, QValidator
+from PySide6.QtGui import QPixmap, QImage, QColor, QFont, QFontMetrics, QPolygon, QPainter, QValidator, QCursor
 from PIL import Image, ImageFilter
 
 logger = logging.getLogger(__name__)
@@ -368,6 +368,16 @@ ACTIVE_BOOK_STRIPE_WIDTH = 4 # for the List view
 # filtered list grows/shrinks. See BookDelegate._row_content_width / _row_stable_right.
 SCROLLBAR_EXTENT = 14
 
+# Keyboard/mouse hover coexistence for the library list's Up/Down/PageUp/PageDown/Home/End
+# navigation — same jitter-tolerant poll mechanism as StatsRowListView (stats_panel.py's
+# _STATS_KBDNAV_HOVER_POLL_MS/_JITTER_PX), ported here 2026-09-18. See LibraryPanel's
+# _enter_kbdnav_hover_mode docstring for why a poll (not the `entered` signal itself) is
+# required: Qt's QAbstractItemView re-evaluates `entered` when content scrolls under a
+# stationary cursor (exactly what a keyboard PageDown does via scrollTo), and there is no
+# reliable way to tell that apart from genuine mouse movement from inside the signal handler.
+_LIBRARY_KBDNAV_HOVER_POLL_MS = 60
+_LIBRARY_KBDNAV_HOVER_JITTER_PX = 3
+
 
 class _ComboItemDelegate(QStyledItemDelegate):
     """Paints hover/selected backgrounds for a QComboBox popup directly, bypassing native
@@ -535,6 +545,13 @@ class LibraryPanel(QFrame):
         # the keyboard-selected one — cuts the hold short instead of retargeting the keyframed
         # anim above.
         self._kbd_quick_fade_anim = None
+
+        # Keyboard/mouse hover coexistence (2026-09-18) — see _enter_kbdnav_hover_mode.
+        self._kbdnav_hover_active = False
+        self._kbdnav_hover_anchor = None
+        self._kbdnav_hover_poll = QTimer(self)
+        self._kbdnav_hover_poll.setInterval(_LIBRARY_KBDNAV_HOVER_POLL_MS)
+        self._kbdnav_hover_poll.timeout.connect(self._on_kbdnav_hover_poll)
 
         self._setup_ui()
         self._resolve_theme_colors()
@@ -855,12 +872,17 @@ class LibraryPanel(QFrame):
         self._list_view.setCurrentIndex(self._book_model.index(row_count // 2, 0))
 
     def _on_keyboard_nav_moved(self) -> None:
-        """Common tail for every keyboard move (Up/Down/Left/Right): suppress the mouse hover
-        so only one highlight ever shows (reuses the same teardown the real mouse-Leave event
-        uses, so List-mode hover-fade and the cover hover-overlay both clear correctly), then
-        show the keyboard-selection highlight on the new current row. List mode reuses the
-        mouse's own hover-fade mechanism (library_item_hover_color/_alpha, Fast/Normal/Slow/Off)
-        instead of the generic tint the other modes use."""
+        """Common tail for every keyboard move (Up/Down/Left/Right/PageUp/PageDown/Home/End):
+        suppress the mouse hover so only one highlight ever shows (reuses the same teardown the
+        real mouse-Leave event uses, so List-mode hover-fade and the cover hover-overlay both
+        clear correctly), then show the keyboard-selection highlight on the new current row.
+        List mode reuses the mouse's own hover-fade mechanism (library_item_hover_color/_alpha,
+        Fast/Normal/Slow/Off) instead of the generic tint the other modes use.
+
+        Arms _enter_kbdnav_hover_mode() FIRST, as the very first thing any keyboard move does —
+        this is the single choke point every keyboard-driven currentIndex change already routes
+        through, so it's the correct (and only) place this needs to be called from."""
+        self._enter_kbdnav_hover_mode()
         self._delegate._hover_book = None
         self._on_view_left()
         index = self._list_view.currentIndex()
@@ -1208,7 +1230,65 @@ class LibraryPanel(QFrame):
         if book:
             self.detail_requested.emit(book.path)
 
+    def _enter_kbdnav_hover_mode(self):
+        """Call at the start of every keyboard-driven currentIndex change (Up/Down/PageUp/
+        PageDown/Home/End/Left/Right/'.' in _list_key). Arms the anchor at the cursor's CURRENT
+        position and silences `_on_view_entered` until the poll below finds the mouse has
+        genuinely moved — ported verbatim (same constants' spirit, same two-part test) from
+        StatsRowListView's own _enter_kbdnav_hover_mode/_on_kbdnav_hover_poll (stats_panel.py),
+        the proven fix for the identical bug there: Qt's QAbstractItemView fires `entered`
+        whenever content scrolls under a stationary cursor — exactly what scrollTo() does on
+        every keyboard page/line move — and there is no way to tell that apart from a genuine
+        mouse move from inside the `entered` handler itself. Reported live here (2026-09-08) as
+        "if the mouse is hovering and stationary over any row that is not the first or last,
+        that row is visited after pressing up/down... some other row, it jumps there, making
+        you have to press PgDn twice" — a stationary mouse's `entered` re-fire on scroll was
+        overriding the keyboard's own setCurrentIndex on the very same keypress.
+
+        Idempotent: repeated keyboard presses just keep re-anchoring to "here, right now,"
+        which is exactly what should happen — a cursor that has already drifted (but not far
+        enough to reclaim) doesn't get a free pass on the next comparison."""
+        self._kbdnav_hover_active = True
+        self._kbdnav_hover_anchor = QCursor.pos()
+        if not self._kbdnav_hover_poll.isActive():
+            self._kbdnav_hover_poll.start()
+
+    def _exit_kbdnav_hover_mode(self):
+        self._kbdnav_hover_active = False
+        self._kbdnav_hover_anchor = None
+        self._kbdnav_hover_poll.stop()
+
+    def _on_kbdnav_hover_poll(self):
+        """Hand hover back to the mouse only once it has both moved past jitter tolerance AND
+        is genuinely resting over a real, different row — mirrors StatsRowListView's own poll
+        (and MainWindow._on_kbdnav_cursor_poll before it) so "moved a couple px across dead
+        space" can't silently steal the highlight back mid-arrow-press."""
+        anchor = self._kbdnav_hover_anchor
+        if anchor is None:
+            self._kbdnav_hover_poll.stop()
+            return
+        pos = QCursor.pos()
+        if (abs(pos.x() - anchor.x()) < _LIBRARY_KBDNAV_HOVER_JITTER_PX
+                and abs(pos.y() - anchor.y()) < _LIBRARY_KBDNAV_HOVER_JITTER_PX):
+            return  # hasn't left its resting spot yet
+        viewport = self._list_view.viewport()
+        viewport_pos = viewport.mapFromGlobal(pos)
+        if not viewport.rect().contains(viewport_pos):
+            return  # moved, but off this list entirely — keyboard keeps the highlight
+        index = self._list_view.indexAt(viewport_pos)
+        if not index.isValid():
+            return  # moved, but over dead space within the viewport — same reasoning
+        self._exit_kbdnav_hover_mode()
+        self._on_view_entered(index)
+
     def _on_view_entered(self, index):
+        # Silenced while keyboard mode is active — see _enter_kbdnav_hover_mode's docstring.
+        # `entered` fires on both genuine mouse movement AND a scrollTo-triggered synthetic
+        # re-evaluation, with no reliable way to tell those apart from inside this handler;
+        # _on_kbdnav_hover_poll is the only path that can hand hover back to the mouse while
+        # keyboard mode is active. Once it's off, this is authoritative again, same as always.
+        if self._kbdnav_hover_active:
+            return
         book = index.data(ROLE_BOOK)
         prev_path = getattr(self, '_hovered_book_path', None)
         self._hovered_book_path = book.path if book else None
@@ -2400,11 +2480,14 @@ class BookDelegate(QStyledItemDelegate):
         hc = theme.get('library_item_hover_color', theme.get('accent', '#ffffff'))
         ha = theme.get('library_item_hover_alpha', 0.50)
         self._hover_bg_color = qc(hc, int(ha * 255))
-        # Keyboard-selection highlight — separate from hover. Full-strength color; the fade
+        # Keyboard-selection highlight (1-per-row's own tint — the other grid modes reuse the
+        # duration/progress overlay instead, and List reuses the mouse hover-fade mechanism; see
+        # the CLAUDE.md "Keyboard-selection visual, per view mode" note). Unified onto the SAME
+        # color/alpha as mouse hover (2026-09-18, Pryme's own call — "align the keyboard highlight
+        # and the mouse highlight... it can simply use the same style as mouse highlight") rather
+        # than a separate library_item_keyboard_color/_alpha pair. Full-strength color; the fade
         # animation scales it down via _kbd_alpha in _kbd_fill_color().
-        kc = theme.get('library_item_keyboard_color', theme.get('accent', '#ffffff'))
-        ka = theme.get('library_item_keyboard_alpha', 0.25)
-        self._kbd_base_color = qc(kc, int(ka * 255))
+        self._kbd_base_color = qc(hc, int(ha * 255))
 
         self._bg_library     = qc(theme.get('library_bg',          '#1e1e1e'))
         self._grid_bg        = qc(theme.get('library_grid_bg',    theme.get('library_bg', '#1a1a1a')))
