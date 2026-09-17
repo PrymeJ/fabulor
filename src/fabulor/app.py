@@ -3598,9 +3598,11 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self._pending_cover_pixmap = None
         self._show_cover_placeholder()
         self.metadata_label.show()
-        self.metadata_label.setText(
-            f"{book.author} - {book.title}" if book else "Unknown book"
-        )
+        if book:
+            text = f"{book.author} - {book.title}" if book.author else (book.title or "")
+        else:
+            text = "Unknown book"
+        self.metadata_label.setText(text)
 
     def _placeholder_color(self):
         t = _resolve_theme(self.theme_manager._current_theme_name)
@@ -4027,6 +4029,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
     def wheelEvent(self, event):
         """Handles volume control via mouse wheel on the cover art area."""
         if self.visual_area.underMouse():
+            self.panel_manager.dismiss_sidebar()
             if not self.current_file:  # no book loaded — volume control inert
                 return
             self._nudge_volume(1 if event.angleDelta().y() > 0 else -1)
