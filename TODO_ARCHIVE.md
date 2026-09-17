@@ -5,6 +5,73 @@ list scannable. Kept, not deleted, per the project's normal practice of not thro
 that isn't fully duplicated in NOTES.md/SESSION.md/a commit message. Order is the same relative
 order these entries had in TODO.md before the split (2026-07-30).
 
+- **[2026-09-08, FIXED 2026-09-17, live-confirmed by Pryme] Library scan focus strand —
+  root-caused and fixed; the ORIGINAL
+  THEORY WAS WRONG.** Originally reported as "Rescan clicked, Esc closes Settings while the scan
+  is still running, then Space/arrow keys are no-ops," with a working theory that
+  `_set_scan_buttons_enabled(False)` moving focus to a sibling scan button was the culprit — that
+  theory was investigated, found not to reproduce synthetically, and a diagnostic
+  (`[FOCUS-STRAND-TRACE]`) was left in `app.py`'s `_focus_allows_global_shortcuts()`, gated on "no
+  panel open AND focus still panel-local," to catch the next live occurrence.
+
+  **Pryme reproduced it live on 2026-09-17 and the trace DID fire** — but pointed at something
+  completely different: the stranded focus owner was `fabulor.ui.tag_manager._TagBookGrid`, a
+  Tags-panel widget, not a scan button. Tracing the log showed Tags had been closed **31 minutes
+  earlier**; the strand had been sitting invisible the whole time, and the scan/Settings-close
+  sequence in the original report was just the first moment `_focus_allows_global_shortcuts()`
+  happened to run its check while no panel was open — a trigger for the *diagnostic*, not the
+  *bug*.
+
+  **A second, more careful repro then broke the original diagnostic entirely**: Pryme reproduced
+  the same dead-keys symptom again, but this time `[FOCUS-STRAND-TRACE]` never fired at all.
+  Targeted instrumentation added to `tag_manager.py` (`showEvent`/`hideEvent`/`_open_tag`/
+  `_show_list`/`eventFilter`, all temporary, all removed once root-caused) caught the real
+  mechanism directly: `TagManagerWidget.refresh_books()` (called unconditionally by
+  `_on_scan_finished` → `app.refresh_tag_manager()` on every completed scan, among several other
+  call sites) called `self._open_tag(self._current_tag)` whenever `_current_tag` was set — with
+  **no check that the panel was actually visible**. `_current_tag` is deliberately never cleared
+  on close (a reopen should land back on the same tag), so ANY scan finishing after a Tags visit,
+  no matter how much earlier, re-triggered `_open_tag()` — which calls
+  `QApplication.instance().installEventFilter(self)` and `_book_grid.setFocus(...)` as real side
+  effects, reinstalling the app-wide filter and re-focusing `_TagBookGrid` even though the panel
+  was genuinely closed (`self.isVisible()=False`, confirmed directly in the trace,
+  `[TAG-FILTER-TRACE] _open_tag: installEventFilter self.isVisible()=False panel_visible=False`,
+  fired 267ms after `_on_scan_finished`). From that point, `TagManagerWidget`'s own
+  `QApplication`-wide event filter — which Qt runs BEFORE `MainWindow`'s own filter, since it was
+  installed more recently — silently swallowed every arrow key app-wide before
+  `MainWindow.keyPressEvent` (and therefore `_focus_allows_global_shortcuts`) ever saw them. This
+  is exactly why the second repro produced dead keys with zero `[FOCUS-STRAND-TRACE]` hits: the
+  original diagnostic could only ever catch cases where the key reached `MainWindow` at all, and
+  this mechanism guarantees it never does.
+
+  **Both of Pryme's repro observations are fully explained by this mechanism**: "didn't work with
+  a fresh start without visiting Tags" — `_current_tag` is never set, so `refresh_books()` is a
+  no-op; "the second scan after visiting Tags made it stranded" — any scan after a Tags visit
+  retriggers it, reliably.
+
+  **Fix** (`tag_manager.py`, `refresh_books()`): gated the `_open_tag()` call on `self.isVisible()`
+  in addition to `self._current_tag` being set — `if self._current_tag and self.isVisible():`.
+  `refresh_books()`'s only job is keeping an already-displayed tag's book grid current after a
+  scan; there is nothing to refresh, and no side effects to trigger, when the panel isn't on
+  screen. All temporary `[TAG-FILTER-TRACE]` instrumentation removed once the mechanism was
+  confirmed. `pytest tests/ -k tag` green (29 tests, no new test added for this specific gap — the
+  bug requires a real scan-finished signal + prior tag visit + panel-closed state to reproduce,
+  which the existing test doubles don't model; worth a dedicated regression test in a future
+  session if this area is touched again). **Live-confirmed fixed by Pryme** — retested the exact
+  repro (visit a tag, close Tags, run a scan) and keys stayed responsive.
+
+  **The original `[FOCUS-STRAND-TRACE]` diagnostic is left in place, not removed** — it's a
+  general-purpose "no panel open, something still holds focus" catch-all that could still be
+  useful for a genuinely different future occurrence, and it did correctly catch and disprove the
+  original theory even though it wasn't (and structurally couldn't have been) the tool that found
+  this actual bug.
+
+- **[2026-09-17] CLOSED: Library 2-per-row grid doesn't fully fill available whitespace.** Confirmed
+  fixed by Pryme directly — the layout looks right now. No commit is cited here because the entry
+  was caught stale during a routine check of the HTML triage view rather than traced to a specific
+  fix; if the exact commit that resolved it is ever needed, `git log -- src/fabulor/ui/library.py`
+  around the 2-per-row cell-sizing constants is the place to look.
+
 - **[2026-09-17] CLOSED: sidebar mouse-wheel conflict over the cover art area — turned out to be a
   documentation/framing mistake, not a code bug needing further work.** Pryme originally logged:
   "when the sidebar is open, mouse wheel over art area both closes it and hits the volume... behavior

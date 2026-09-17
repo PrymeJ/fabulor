@@ -46,27 +46,6 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
   not a functional block. Originally deferred by Pryme's own call ("Fix Stats first, Book Detail
   later"); scope is now understood to be much smaller than a from-scratch feature addition.
 
-### Settings keyboard-focus regressions found while testing Tags (check after Tags is done)
-- [2026-09-08] Library scan focus strand — NOT YET ROOT-CAUSED, intermittent, diagnostic tracing
-  added. Reported live: Rescan clicked, Esc closes Settings WHILE the scan is still running,
-  then Space/arrow keys are no-ops on the main window. Neither side could reproduce this on
-  demand in the same session it was reported (worked cleanly on retries), so this was NOT fixed
-  blind. Investigated so far: confirmed directly (small standalone Qt script) that disabling a
-  currently-focused `QPushButton` does NOT drop focus to `None` — Qt silently moves it to a
-  focusable SIBLING instead — which is what `_set_scan_buttons_enabled(False)` does to
-  `add_folder_btn`/`remove_folder_btn`/`refresh_library_btn` while a scan runs; a synthetic
-  repro of "disable the focused button (or all three), then hide+release the panel, then
-  re-enable them once the scan finishes" behaved correctly in isolation (focus dropped to None
-  and stayed there) both times, so the real bug needs either the actual scanner thread's timing
-  or some other live-only factor a synchronous script doesn't capture. `_focus_allows_global_
-  shortcuts()` (app.py) now carries a narrow, permanent-until-removed `[FOCUS-STRAND-TRACE]`
-  log gated specifically on "no panel is open AND focus is still panel-local" (the exact bug
-  signature — a panel-local focus while a panel IS genuinely open is normal and would drown
-  this in noise otherwise), logging the blocking widget's identity/visibility/enabled state,
-  its full parent chain, and whether the scanner is still running at that moment. Purely
-  diagnostic, no behavior change (`allowed`'s value and effect are untouched) — waiting for it
-  to actually fire the next time this reproduces, rather than continuing to guess blind.
-
 ### Three more keyboard-nav consistency gaps, found by Pryme's own live testing (not yet investigated)
 - [2026-09-09] All three reported together, none investigated yet — grouped here rather than as
   separate entries since they were all found in the same pass and are all small, self-contained
@@ -603,7 +582,6 @@ isolation.
 - [2026-06-23] Slider→muted-icon transition is abrupt
 
 ### Misc UI polish
-- [2026-07-10] Library 2-per-row grid still doesn't fully fill available whitespace — cell size and gaps can likely tighten further (deferred by the user as "Later"); do not reuse the 469px vertical-space measurement from `d74ebee`'s session as a baseline, it predates that session's 9px top-push
 - [2026-07-30] In-app help section — the home for all reference material, incl. search operators
 - [2026-07-03] Excluding the currently-playing book behaves differently for M4B vs VT — design decision
 - [2026-07-01] Book Detail slide-in feels less smooth from Library than from Stats — unconfirmed
