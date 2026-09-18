@@ -1155,15 +1155,23 @@ class Player(QObject):
             filters.append("equalizer=f=4000:width_type=o:width=2:g=3")
 
         if mono:
-            filters.append("pan=1:c0=0.5*c0+0.5*c1")
+            # mpv has its own NATIVE filter also named "pan" (legacy MPlayer libaf,
+            # incompatible coefficient syntax) that silently shadows ffmpeg's "pan" of
+            # the same name — an unqualified "pan=..." resolves to the native one and
+            # mpv rejects ffmpeg-style c0=.../c1=... options with a bare -12 COMMAND
+            # error (confirmed live 2026-09-18, reproduced against a real ao='pulse'
+            # instance; mpv --af=help lists both "pan" and "lavfi" separately). The
+            # "lavfi=[...]" wrapper routes explicitly through libavfilter so ffmpeg's
+            # pan syntax is the one actually used.
+            filters.append("lavfi=[pan=mono|c0=0.5*c0+0.5*c1]")
         elif swap or balance != 0.0:
             l_mul = 1.0 if balance <= 0 else max(0.0, 1.0 - balance)
             r_mul = 1.0 if balance >= 0 else max(0.0, 1.0 + balance)
-            
+
             if swap:
-                filters.append(f"pan=2:c0={r_mul:.2f}*c1:c1={l_mul:.2f}*c0")
+                filters.append(f"lavfi=[pan=stereo|c0={r_mul:.2f}*c1|c1={l_mul:.2f}*c0]")
             else:
-                filters.append(f"pan=2:c0={l_mul:.2f}*c0:c1={r_mul:.2f}*c1")
+                filters.append(f"lavfi=[pan=stereo|c0={l_mul:.2f}*c0|c1={r_mul:.2f}*c1]")
 
         try:
             self.instance.command('af', 'clr', '')
