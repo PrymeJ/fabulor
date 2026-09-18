@@ -3078,10 +3078,18 @@ class ThemeManager(QObject):
         self._update_theme_pool_buttons_enabled()
 
     def _on_cover_pool_btn_hovered(self):
-        # Moving from a theme name onto the cover-pool button: drop any queued
-        # theme hover so it can't fire its preview after this one.
-        self._hover_debounce_timer.stop()
-        self._pending_hover_theme = None
+        # Queue a debounced preview — same _HOVER_DEBOUNCE_MS/_hover_debounce_timer/
+        # _pending_hover_theme pipeline _on_theme_hovered uses for a real swatch, so a
+        # quick pass-over (no lingering) never fires a preview here either. Originally
+        # applied SYNCHRONOUSLY (no debounce) — that was fine while this method only had
+        # a no-op branch for "no cover theme to preview," but became a real bug once the
+        # Off-mode preview branch below was added 2026-09-18: reported live the same day
+        # as "I didn't even want to preview that and my mouse is not there, but it
+        # previews" — a brief pass-over was enough to commit the preview instantly, unlike
+        # every theme swatch's own 150ms guard. _fire_pending_hover applies whatever is
+        # queued and re-asserts the keyboard synthetic-hover look afterward regardless of
+        # whether that's a theme name or a dict (_on_theme_changed accepts both), so
+        # routing through the same queue is a drop-in fix, not a new mechanism.
         theme_dict = self._cover_theme
         if theme_dict is None:
             # Mode is "off" (the ONLY case _cover_theme is ever None while a book with a
@@ -3098,10 +3106,17 @@ class ThemeManager(QObject):
             # exclusively by apply_cover_theme/clear_cover_theme/set_cover_art_mode.
             pixmap = getattr(self.main_window, 'current_cover_pixmap', None)
             if not pixmap or pixmap.isNull():
+                # Nothing to preview — still drop any theme-swatch hover already queued,
+                # same as the old synchronous version did unconditionally at its top.
+                self._hover_debounce_timer.stop()
+                self._pending_hover_theme = None
                 return
             from .cover_theme import build_cover_theme
             theme_dict = build_cover_theme(pixmap)
             if not theme_dict:
+                self._hover_debounce_timer.stop()
+                self._pending_hover_theme = None
                 return
-        fade = int(self.config.get_theme_fade_duration() * 0.5)
-        self._on_theme_changed(theme_dict, save=False, fade_ms=fade, hover=True)
+        self._pending_hover_theme = theme_dict
+        self._hover_seen_at = time.perf_counter()
+        self._hover_debounce_timer.start()  # restart on each enter → coalesces the sweep
