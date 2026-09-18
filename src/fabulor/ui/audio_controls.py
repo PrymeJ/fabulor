@@ -71,6 +71,7 @@ class AudioSettingsTab(QWidget):
         self.balance_slider.setObjectName("balance_slider")
         self.balance_slider.center_mark = True
         self.balance_slider.snap_to_center = True
+        self.balance_slider.fill_from_center = True
         self.balance_slider.setRange(-100, 100)
         self.balance_slider.setValue(int(self.config.get_balance() * 100))
         self.balance_slider.setFixedHeight(12)
@@ -98,6 +99,7 @@ class AudioSettingsTab(QWidget):
             slider.setObjectName(f"eq_slider_{freq}")
             slider.center_mark = True
             slider.snap_to_center = True
+            slider.fill_from_center = True
             slider.setRange(-60, 60)
             slider.setValue(int(getattr(self.config, f"get_eq_gain_{freq}")() * 10))
             slider.setFixedHeight(10)

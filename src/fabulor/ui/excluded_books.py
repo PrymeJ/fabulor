@@ -764,7 +764,11 @@ class ExcludedBooksPopup(QListWidget):
         anchor_top = anchor_local.y()
         h_overhead = self.frameWidth() * 2
         default_height = self.DEFAULT_VISIBLE_ROWS * _ExcludedRow.ROW_H + h_overhead
-        self._anchor_bottom = anchor_top + anchor_widget.height() + default_height - self.ANCHOR_Y_NUDGE
+        # The trailing +1 (down, separate from ANCHOR_Y_NUDGE) compensates anchor_widget's own
+        # height shrinking when #settings_header was pinned to min-height/max-height: 18px
+        # (2026-09-18, was ~20px unpinned) — the gap between "Excluded books" and the box grew
+        # by ~1px after that change; confirmed live.
+        self._anchor_bottom = anchor_top + anchor_widget.height() + default_height - self.ANCHOR_Y_NUDGE + 1
 
         self._resize_to_row_count()
         self._reposition_vertically()
@@ -814,10 +818,14 @@ class ExcludedBooksSection(QWidget):
         self._toggle = QLabel("")
         self._toggle.setObjectName("excluded_toggle")
         self._toggle.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        # Nudged down 5px — the header has its own `margin-top: 10px` (QSS
+        # Nudged down 9px — the header has its own `margin-top: 10px` (QSS
         # settings_header rule) baked into its sizeHint, so simply centering
         # the toggle within that same box reads visibly too high relative to
-        # the header's actual (lower, margin-shifted) glyph position.
+        # the header's actual (lower, margin-shifted) glyph position. This
+        # value stayed correct through the 2026-09-18 settings_header
+        # min-height/max-height pin (20px→18px) — that change instead needed
+        # a separate box/arrow nudge, see ExcludedBooksPopup.reposition and
+        # ExcludedBooksSection._reposition_arrow.
         self._toggle.setContentsMargins(0, 9, 0, 0)
         # Fixed height pinned to the header's own sizeHint — see the
         # commit history for why: rich text with an inline
@@ -907,8 +915,9 @@ class ExcludedBooksSection(QWidget):
             lift = max(0, ExcludedBooksPopup.MAX_EXPANDED_ROWS - default_rows) * _ExcludedRow.ROW_H
         # ANCHOR_Y_NUDGE keeps the arrow flush with the list's top edge,
         # which is shifted up by the same amount — see reposition()'s
-        # _anchor_bottom calculation.
-        self._arrow.move(x, self_topleft.y() + row_h - self._arrow.height() - lift - ExcludedBooksPopup.ANCHOR_Y_NUDGE)
+        # _anchor_bottom calculation. The extra +1 is the arrow's own fine
+        # nudge (does not affect the list box) — confirmed live 2026-09-18.
+        self._arrow.move(x, self_topleft.y() + row_h - self._arrow.height() - lift - ExcludedBooksPopup.ANCHOR_Y_NUDGE - 1)
         self._arrow.raise_()
 
     def set_theme(self, theme: dict):

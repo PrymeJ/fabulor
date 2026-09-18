@@ -25,6 +25,14 @@ class ClickSlider(QWidget):
         self.center_mark = False
         self._markers = []
         self.snap_to_center = False
+        # When True (balance/EQ-style sliders), the fill bar grows from the CENTER toward
+        # whichever side the value has moved to, instead of always from the left edge — a
+        # bidirectional slider reading as "half full" at its own rest/center value looks
+        # wrong; this makes rest read as EMPTY and a deflection read as a bar in that
+        # direction. Opt-in, same shape as center_mark/snap_to_center (plain instance
+        # attribute, not a Property) — every other ClickSlider (progress/chapter/volume)
+        # is a genuinely left-to-right quantity and must keep the left-anchored fill.
+        self.fill_from_center = False
         # Default colors (will be overridden by QSS)
         self._bg_color = QColor("#4B0082")
         self._fill_color = QColor("#C8A2C8")
@@ -265,7 +273,14 @@ class ClickSlider(QWidget):
         filled = int(ratio * self.width())
         p.fillRect(0, 0, self.width(), self.height(), self._bg_color)
         if not self._suppress_fill:
-            p.fillRect(0, 0, filled, self.height(), self._fill_color)
+            if self.fill_from_center:
+                mid = self.width() // 2
+                if filled > mid:
+                    p.fillRect(mid, 0, filled - mid, self.height(), self._fill_color)
+                elif filled < mid:
+                    p.fillRect(filled, 0, mid - filled, self.height(), self._fill_color)
+            else:
+                p.fillRect(0, 0, filled, self.height(), self._fill_color)
 
         if self.center_mark:
             # Draw a subtle notch in the dead center
