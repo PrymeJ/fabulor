@@ -729,6 +729,11 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # is a keyboard affordance — a mouse click must hide it rather than re-anchor it to
         # whatever was clicked.
         self._keyboard_nav_active: bool = False
+        # The ClickSlider currently painting its "fill highlight" brightened background
+        # (fill_highlight keyboard-nav style only), or None. Tracked so _update_focus_marker
+        # can clear the PREVIOUS slider when focus moves elsewhere — only one slider can be
+        # kbd_fill_active at a time app-wide, since only one widget holds real Qt focus.
+        self._kbd_fill_slider: "ClickSlider | None" = None
         # perf_counter() of the last MouseButtonPress the app-wide eventFilter saw, or None.
         # _update_focus_marker uses it to reject a TabFocusReason that is really just the focus
         # change a mouse click on the tab bar produced — see _MOUSE_PRESS_FOCUS_WINDOW_S and
@@ -4685,7 +4690,9 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # col_i == 0 would otherwise send Left back to the tab bar).
         if isinstance(focus, ClickSlider):
             step = -_BALANCE_ARROW_STEP if key == Qt.Key.Key_Left else _BALANCE_ARROW_STEP
-            focus.setValue(max(focus.minimum(), min(focus.maximum(), focus.value() + step)))
+            # step_by (not a plain += clamp) so a step that would cross the midpoint lands
+            # on it exactly first — see ClickSlider.step_by's own docstring.
+            focus.step_by(step)
             self._keep_marker_awake()
             return True
 
@@ -6143,25 +6150,36 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             # in eventFilter is what actually clears this in the common cases.
             self._set_keyboard_nav_active(False)
         # reason is None or OtherFocusReason → preserve flag unchanged (deliberately ambiguous)
+        # ClickSlider (balance_slider/eq_slider_* — the Audio tab's bidirectional sliders)
+        # paints itself manually (bg_color/fill_color via a custom paintEvent, not a QSS
+        # `background`), so it can never match the [kbdnav_fill_active="true"]
+        # QPushButton:focus rule every other control uses under fill_highlight. A first
+        # version fell through to the traveling border marker for sliders under
+        # fill_highlight instead; live feedback (2026-09-19) preferred a barely-brighter
+        # slider background over the marker, matching every other control's own flat-fill
+        # treatment under this style. ClickSlider.kbd_fill_active/set_kbd_fill_active is
+        # that widget-local equivalent — synced here on every call (both styles, so
+        # switching FROM fill_highlight while a slider is focused correctly clears it)
+        # rather than only inside the fill_highlight branch, since a slider's own paint
+        # state isn't reachable via the panel-wide QSS property this method otherwise
+        # drives for every other control.
+        focus_now = QApplication.focusWidget()
+        wants_slider_fill = (
+            self.config.get_keyboard_marker_style() == "fill_highlight"
+            and self._keyboard_nav_active
+            and isinstance(focus_now, ClickSlider)
+            and self._focus_marker_in_scope(focus_now)
+        )
+        new_fill_slider = focus_now if wants_slider_fill else None
+        if new_fill_slider is not self._kbd_fill_slider:
+            if self._kbd_fill_slider is not None:
+                self._kbd_fill_slider.set_kbd_fill_active(False)
+            if new_fill_slider is not None:
+                new_fill_slider.set_kbd_fill_active(True)
+            self._kbd_fill_slider = new_fill_slider
+
         if (self.config.get_keyboard_marker_style() == "fill_highlight"
                 and not isinstance(QApplication.focusWidget(), ClickSlider)):
-            # ClickSlider (balance_slider/eq_slider_* — the Audio tab's bidirectional
-            # sliders) is excluded from fill_highlight and always falls through to the
-            # traveling-marker path below instead, regardless of style. Live design call,
-            # 2026-09-19: under fill_highlight every OTHER control gets a flat QSS fill
-            # instead of the marker, but ClickSlider paints itself manually (bg_color/
-            # fill_color custom paintEvent, not a QSS `background`) and has no matching
-            # [kbdnav_fill_active="true"] QPushButton:focus rule to begin with — so before
-            # this exclusion, focusing a slider under fill_highlight showed NOTHING at all
-            # (no marker, since fill_highlight never invokes it; no fill, since the QSS
-            # selector can't match this widget class). A fill also could not represent a
-            # near-center value well even if it could match (a small deflection is just a
-            # sliver — the same "fill can't read as focused" problem this style has for
-            # any variable-fill widget). The traveling border marker already works
-            # correctly on these (square corners via _SQUARE_CORNER_OBJECT_NAMES), so it
-            # is kept for them under both styles rather than inventing a slider-specific
-            # fill treatment.
-            #
             # Alternate style (2026-09-08 live design ask, after the ramp buttons' focus
             # color was found to be a flat theme-dict color by mistake rather than derived
             # from accent — see themes.derive_lighter_accent_rgb's docstring): no separate
@@ -6226,7 +6244,14 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             marker.clear()
             return
         focus = QApplication.focusWidget()
-        if self._focus_marker_in_scope(focus):
+        # A ClickSlider under fill_highlight is handled entirely by the kbd_fill_active
+        # sync above (this branch is only reached for one because the outer isinstance
+        # check above let it through) — it must NOT also get the traveling marker, or
+        # it would show both a lit background AND the border marker at once.
+        if (isinstance(focus, ClickSlider)
+                and self.config.get_keyboard_marker_style() == "fill_highlight"):
+            marker.clear()
+        elif self._focus_marker_in_scope(focus):
             marker.show_for(focus)
         else:
             marker.clear()

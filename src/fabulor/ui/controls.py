@@ -72,6 +72,18 @@ class ClickSlider(QWidget):
         # set only on balance_slider/eq_slider_* (audio_controls.py), where nothing else
         # already owns the wheel.
         self.wheel_step = None
+        # Whether to paint bg_color slightly brightened, signaling "this slider is the
+        # keyboard-focused control" under the "fill highlight" keyboard-nav style — set
+        # directly by MainWindow._update_focus_marker (app.py) when a ClickSlider is
+        # focused under that style, since ClickSlider paints itself manually (bg_color/
+        # fill_color via a custom paintEvent, not a QSS `background`) and can never match
+        # the [kbdnav_fill_active="true"] QPushButton:focus rule every other control uses.
+        # A first version instead fell through to the traveling border marker for
+        # sliders under fill_highlight; live feedback (2026-09-19) preferred a barely-
+        # brighter background, matching every other control's own flat-fill treatment
+        # under this style, over the marker. Use set_kbd_fill_active() to change this,
+        # not a bare assignment — a plain attribute wouldn't trigger a repaint.
+        self.kbd_fill_active = False
         # Default colors (will be overridden by QSS)
         self._bg_color = QColor("#4B0082")
         self._fill_color = QColor("#C8A2C8")
@@ -341,6 +353,43 @@ class ClickSlider(QWidget):
             self.setValue(self._val_from_x(event.position().x()))
             self.sliderReleased.emit()
 
+    def set_kbd_fill_active(self, active: bool) -> None:
+        """See kbd_fill_active's own comment in __init__. No-op (and no repaint) if the
+        value is already correct — same guard shape as app.py's _set_kbdnav_property."""
+        if active == self.kbd_fill_active:
+            return
+        self.kbd_fill_active = active
+        self.update()
+
+    def step_by(self, delta: int) -> None:
+        """Move the value by `delta`, but land exactly on the midpoint first if the step
+        would otherwise cross or skip over it — the midpoint is a real, meaningful rest
+        state for a bidirectional slider (center_mark/snap_to_center already treat it
+        that way for a mouse click/drag), so a stepped input (wheel, arrow keys) landing
+        near it without ever visiting it exactly is a real gap, not just a rounding
+        nicety. Only engages when the CURRENT value is closer to the midpoint than one
+        step (matching Pryme's own spec: "whenever we are closer there than the step
+        value") — from any value already a full step or more away, a normal step is
+        indistinguishable from this and the plain += is used. Once at the midpoint, the
+        next step-shaped input moves a full step away from it as usual — this is a
+        one-time waypoint, not a magnet that keeps pulling back. Shared by wheelEvent
+        below and app.py's _handle_settings_arrows so the two input methods can't drift
+        out of sync on this (2026-09-19 live report: "if I click with mouse, then use
+        keyboard or the wheel, I can't get back to midpoint")."""
+        if delta == 0:
+            return
+        mid = (self._minimum + self._maximum) // 2
+        dist_to_mid = mid - self._value
+        # Crossing means moving strictly closer to mid than a full step would leave us,
+        # i.e. the target overshoots mid on the near side — checked by sign/magnitude
+        # rather than a plain range test, since delta and dist_to_mid must agree in
+        # direction (moving further away from mid never visits it).
+        if self._value != mid and abs(dist_to_mid) < abs(delta) and (dist_to_mid > 0) == (delta > 0):
+            target = mid
+        else:
+            target = self._value + delta
+        self.setValue(max(self._minimum, min(self._maximum, target)))
+
     def wheelEvent(self, event):
         # See wheel_step's own comment in __init__ — off by default, opt-in per instance,
         # so this never competes with MainWindow.wheelEvent's own handling of the three
@@ -349,14 +398,18 @@ class ClickSlider(QWidget):
             event.ignore()
             return
         step = self.wheel_step if event.angleDelta().y() > 0 else -self.wheel_step
-        self.setValue(max(self._minimum, min(self._maximum, self._value + step)))
+        self.step_by(step)
         event.accept()
 
     def paintEvent(self, event):
         p = QPainter(self)
         ratio = (self._value - self._minimum) / max(1, self._maximum - self._minimum)
         filled = int(ratio * self.width())
-        p.fillRect(0, 0, self.width(), self.height(), self._bg_color)
+        # Barely lighter than the resting bg_color — see kbd_fill_active's own comment in
+        # __init__. A small, fixed factor (not themed/tunable) since this is meant to read
+        # as a subtle "this is active" signal, not a second visual style.
+        bg = self._bg_color.lighter(120) if self.kbd_fill_active else self._bg_color
+        p.fillRect(0, 0, self.width(), self.height(), bg)
         if not self._suppress_fill:
             if self.fill_from_center:
                 mid = self.width() // 2
