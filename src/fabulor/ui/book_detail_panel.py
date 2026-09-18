@@ -876,11 +876,27 @@ class BookDetailPanel(QWidget):
         self._tag_suggest_timer.start()  # restarts if already running
 
     def _do_tag_suggestions(self):
+        """Re-queries the DB 200ms after the last keystroke (_tag_suggest_timer) and refreshes
+        the completer's model. Qt's QLineEdit/QCompleter wiring re-filters the model IMMEDIATELY
+        on every keystroke (Qt.MatchStartsWith against whatever the model currently holds), well
+        before this debounced re-query fires — so for one keystroke's worth of time, the popup is
+        showing matches against the PREVIOUS prefix's result set, not the new prefix. Reported
+        live 2026-09-18: typing "ai: s" right after "ai:" showed zero matches, because "ai:
+        scott brick" wasn't among the OLD prefix's cached rows the instant-filter pass had to
+        work with — even though the tag genuinely matches and the debounced re-query below would
+        have found it. Explicitly calling complete() after the model update — rather than relying
+        on Qt to notice the model changed on its own — is also what's needed to re-run the popup's
+        geometry calculation against the new row count; without it, once the popup has already
+        opened at some row count, a later update to a LARGER row count leaves the popup's height
+        unchanged (a scrollbar appears instead of the popup growing), also reported live the same
+        session ("the dropdown menu doesn't expand beyond the previous one or two hits")."""
         text = self._tag_input.text().strip()
         if text and self._book_path:
             suggestions = self.db.get_tag_suggestions(text, self._book_data['id'])
             self._tag_completer_model.setStringList(suggestions)
             self._style_completer_popup()
+            if self._tag_input.hasFocus() and suggestions:
+                self._tag_completer.complete()
         else:
             self._tag_completer_model.setStringList([])
 

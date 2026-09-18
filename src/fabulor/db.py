@@ -1662,6 +1662,12 @@ class LibraryDB:
             return conn.execute("SELECT COUNT(DISTINCT tag) FROM book_tags").fetchone()[0]
 
     def get_tag_suggestions(self, prefix: str, book_id: int) -> list[str]:
+        """LIMIT is the global unique-tag cap (add_book_tag enforces 50), not an arbitrary
+        display cap — this guarantees every matching tag is always returned regardless of
+        prefix, since the app can never have more than 50 distinct tags to match against.
+        A smaller LIMIT here previously truncated a broad prefix (e.g. a shared "ai:" namespace
+        prefix) to only its first ~10 alphabetically, silently hiding real matches — reported
+        live 2026-09-18."""
         with self._get_conn() as conn:
             rows = conn.execute(
                 """SELECT DISTINCT tag FROM book_tags
@@ -1669,7 +1675,7 @@ class LibraryDB:
                 AND tag NOT IN (
                     SELECT tag FROM book_tags WHERE book_id=?
                 )
-                ORDER BY tag LIMIT 10""",
+                ORDER BY tag LIMIT 50""",
                 (f"{prefix.lower()}%", book_id)
             ).fetchall()
         return [r[0] for r in rows]
