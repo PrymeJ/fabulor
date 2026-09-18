@@ -9,23 +9,64 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
 
 ## Summary index
 
-### Book Detail panel's Tags tab — thinner keyboard nav than its History tab sibling
-- [2026-09-15, scope corrected 2026-09-17] The 2026-09-15 framing of this entry ("Book Detail...
-  ZERO keyboard-arrow-nav... nothing") overstated the gap — Pryme corrected it directly: "mostly
-  wrong, only the Tags tab there needs some work, and that's minor." Book Detail in fact has real
-  keyboard handling app-wide: `keyPressEvent`/`eventFilter` (`book_detail_panel.py`) own
-  Tab/Backtab/Escape, Left/Right cycles Stats→History→Tags→Cover (wrapping both ways), and
-  `_history_key_event` gives the History tab full Up/Down/Delete row navigation. What's actually
-  missing, narrowly: the Tags tab's own tag chips have no Up/Down/Delete row navigation the way
-  History's session rows do — Tab there only toggles focus into/out of the tag-add input
-  (`_on_tags_tab` branch, `keyPressEvent`), so a keyboard user can add a tag but can't navigate to
-  or remove an existing chip without a mouse. Also still true and unrelated to the above: the
-  panel's tab bar itself was never wired into the shared `_kbdnav_active_panel_key` mechanism
-  (`MainWindow`) the way Settings/Speed/Sleep/Sprint/Stats were, so it gets no `kbdnav` property or
-  arrow-key handler for switching tabs by arrow key specifically (Left/Right via
-  `keyPressEvent` still works, just not through the shared mechanism) — cosmetic/consistency gap,
-  not a functional block. Originally deferred by Pryme's own call ("Fix Stats first, Book Detail
-  later"); scope is now understood to be much smaller than a from-scratch feature addition.
+### Book Detail panel's Tags tab — chip navigation design settled, not yet implemented
+- [2026-09-15, scope corrected 2026-09-17, design settled 2026-09-19] The 2026-09-15 framing of
+  this entry ("Book Detail... ZERO keyboard-arrow-nav... nothing") overstated the gap — Pryme
+  corrected it directly: "mostly wrong, only the Tags tab there needs some work, and that's
+  minor." Book Detail in fact has real keyboard handling app-wide: `keyPressEvent`/`eventFilter`
+  (`book_detail_panel.py`) own Tab/Backtab/Escape, Left/Right cycles Stats→History→Tags→Cover
+  (wrapping both ways), and `_history_key_event` gives the History tab full Up/Down/Delete row
+  navigation. What's actually missing, narrowly: the Tags tab's own tag chips (a `FlowLayout`
+  grid, variable items per row — like `swatch_box`'s bin-packed swatch grid, NOT a fixed button
+  row) have no Up/Down/Left/Right/Delete navigation the way History's session rows do — Tab there
+  only toggles focus into/out of the tag-add input (`_on_tags_tab` branch, `keyPressEvent`), so a
+  keyboard user can add a tag but can't navigate to, remove, or filter-by an existing chip without
+  a mouse. Also still true and unrelated to the above: the panel's tab bar itself was never wired
+  into the shared `_kbdnav_active_panel_key` mechanism (`MainWindow`) the way
+  Settings/Speed/Sleep/Sprint/Stats were, so it gets no `kbdnav` property or arrow-key handler for
+  switching tabs by arrow key specifically (Left/Right via `keyPressEvent` still works, just not
+  through the shared mechanism) — cosmetic/consistency gap, not a functional block.
+
+  **Design settled 2026-09-19 (Pryme walked through the options directly, confirmed via
+  AskUserQuestion — not yet implemented):**
+  - Down (from wherever focus currently is on the tab, matching the swatch-grid precedent's
+    "arrow into the grid" entry point) moves focus to the FIRST tag chip. Within the chip grid,
+    Left/Right/Up/Down navigate chip-to-chip, same shape as Settings' button-row/swatch-grid
+    navigation (`_handle_settings_arrows`/`_handle_themes_swatch_arrows`) — reading-order
+    wrap for Left/Right, column-aware move for Up/Down.
+  - The tag-add TEXT FIELD is explicitly OUT of arrow-key reach — arrows never land on it from
+    the chip grid, at any edge (no wrap-forward into it). It stays reachable by Tab only, and Tab
+    continues to cycle field ↔ tab bar exactly as it does today. This was chosen over the
+    alternative (last chip's Right/Down continuing into the field) specifically to keep arrow
+    navigation and Tab-navigation as two clean, non-overlapping mechanisms rather than one arrow
+    press occasionally landing on Tab's own territory.
+  - "Tag management" (the button at the bottom of the tab) IS included in arrow-key reach: Down or
+    Right past the LAST chip moves to it (instead of wrapping back to the first chip); Up or Left
+    from "Tag management" returns to the last chip. This is the one boundary that continues past
+    the chip grid rather than wrapping within it — deliberately asymmetric with the text-field
+    exclusion above.
+  - Once a chip has focus: **Del removes that tag from the book** (same action the mouse's
+    existing per-chip × does today — confirm the exact removal call site,
+    `TagManagerWidget`-equivalent logic in `book_detail_panel.py`, before wiring this). **Space or
+    Enter sets that tag as the active library filter**, but ONLY when Book Detail was opened from
+    within the Library panel — mirrors the existing mouse click-to-filter behavior on a tag chip
+    (see the `tag_filter_requested` signal and the library-context inert-chip handling already
+    documented under "Library Panel" in CLAUDE.md's "What's Built" section); when opened from
+    elsewhere (Stats/Tags), Space/Enter on a chip should follow whatever the mouse click already
+    does for a non-library context (verify this — the CLAUDE.md section describing library-context
+    behavior doesn't fully spell out the non-library case, so check `book_detail_panel.py`'s actual
+    click handler before assuming a no-op).
+  - **Digit shortcuts 1–5 jump directly to the Nth tag chip** (the per-book tag limit is 5, so this
+    covers every possible chip position) — while the chip grid has focus, matches the numbered
+    jump conventions already used elsewhere in the app (e.g. Library's chapter-list digit jump).
+  - Pressing `G` to open the Tags panel directly from here was considered and explicitly dropped —
+    Pryme: "I am not keen on this." The only path to the full Tags panel from here remains Esc,
+    Esc (back to the main window), then `G`. Do not add a `G` binding inside Book Detail's Tags
+    tab.
+
+  Not yet implemented — this entry records the settled design only. When picked up: also fold in
+  the pre-existing, unrelated tab-bar `kbdnav` wiring gap noted above, since both touch the same
+  file and the tab-bar fix is small enough to not warrant its own separate pass.
 
 ### Small visual/cosmetic bugs (batch logged 2026-09-17, mostly not yet reproduced in detail)
 - [2026-09-17] Restart button has jagged edges — visual, minor. Not yet investigated.
