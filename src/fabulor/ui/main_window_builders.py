@@ -788,8 +788,6 @@ def build_themes_tab(mw):
     themes_layout.addWidget(cover_header)
 
     cover_row = QHBoxLayout()
-    cover_row.setSpacing(4)
-    cover_row.setContentsMargins(0, 0, 0, 0)
     mw.theme_manager.cover_art_mode_widgets = {}
     for mode, label in [("off", "Off"), ("with_pool", "With pool"), ("exclusive", "Exclusive")]:
         btn = QPushButton(label)

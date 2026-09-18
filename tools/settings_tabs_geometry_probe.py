@@ -50,21 +50,53 @@ def main():
             layout = page.layout()
             hint_h = page.sizeHint().height()
             actual_h = page.height()
+            # The page's position WITHIN the QTabWidget's internal QStackedWidget — if this
+            # differs between tabs, every header on that page is offset by the same amount
+            # regardless of what's correct inside the page's own layout. This is what a
+            # visual overlay comparing two tabs' first header would actually be measuring.
+            page_pos_in_stack = page.pos()
+            page_pos_in_tabs = page.mapTo(tabs, page.rect().topLeft())
+            page_pos_in_panel = page.mapTo(mw.settings_panel, page.rect().topLeft())
 
             headers = page.findChildren(QLabel, "settings_header")
-            header_ys = [(h.text(), h.y(), h.height()) for h in headers]
+            # First header's ABSOLUTE position within settings_panel — this is the number
+            # that's directly comparable across tabs, unlike each header's y() (relative to
+            # its own page, which is meaningless if the pages themselves aren't aligned).
+            header_ys = []
+            for h in headers:
+                abs_pos = h.mapTo(mw.settings_panel, h.rect().topLeft())
+                header_ys.append((h.text(), h.y(), h.height(), abs_pos.y()))
 
             print(f"\n--- Tab: {tab_name!r} ---")
             print(f"  sizeHint height   : {hint_h}")
             print(f"  actual height     : {actual_h}")
             print(f"  overflow (hint-actual): {hint_h - actual_h}")
+            print(f"  page.pos() (in stack)     : {page_pos_in_stack.x()}, {page_pos_in_stack.y()}")
+            print(f"  page top-left in tabs     : {page_pos_in_tabs.x()}, {page_pos_in_tabs.y()}")
+            print(f"  page top-left in settings_panel: {page_pos_in_panel.x()}, {page_pos_in_panel.y()}")
             if layout is not None:
                 m = layout.contentsMargins()
                 print(f"  layout margins (t/b)  : {m.top()} / {m.bottom()}")
                 print(f"  layout spacing        : {layout.spacing()}")
             print(f"  header count      : {len(headers)}")
-            for text, y, h in header_ys:
-                print(f"    {text!r:35s} y={y:4d} h={h}")
+            for text, y, h, abs_y in header_ys:
+                print(f"    {text!r:35s} y={y:4d} h={h}  ABS_Y(in settings_panel)={abs_y}")
+
+            # Dump every top-level layout item's geometry (header widget or button-row
+            # sub-layout) in order, so the real pitch can be read off actual numbers
+            # instead of reconstructed from margin-top/spacing constants by hand.
+            if layout is not None:
+                print(f"  --- top-level layout items ({tab_name!r}) ---")
+                for idx in range(layout.count()):
+                    item = layout.itemAt(idx)
+                    w = item.widget()
+                    if w is not None:
+                        print(f"    [{idx}] WIDGET {type(w).__name__}({w.objectName()!r}, text={getattr(w, 'text', lambda: '')()!r}) y={w.y()} h={w.height()}")
+                    else:
+                        r = item.geometry()
+                        sub = item.layout()
+                        kind = type(sub).__name__ if sub is not None else "SPACER"
+                        print(f"    [{idx}] {kind} y={r.y()} h={r.height()}")
 
         print("\n" + "=" * 70)
         print("Done.")

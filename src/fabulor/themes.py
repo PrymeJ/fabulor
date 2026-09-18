@@ -4015,6 +4015,8 @@ def get_panel_base_stylesheet(theme_name="default"):
             font-weight: bold;
             font-size: 14px;
             margin-top: 10px;
+            min-height: 18px;
+            max-height: 18px;
             color: {t['accent_light']};
         }}
         QPushButton {{
