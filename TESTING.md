@@ -1,19 +1,79 @@
+## EQ/balance gradient fills, Audio tab reorder, EQ keyboard/wheel nav — 2026-09-19
+
+Background: after the 5-band EQ shipped (below), live feedback across multiple themes and
+screenshots found the sliders' flat fill hard to read, the tab order awkward for keyboard nav,
+and — while digging into keyboard behavior — two real functional gaps: the 5 EQ rows were
+completely invisible to arrow-key navigation (a layout-nesting bug, not a design choice), and
+mouse wheel did nothing on any of the 6 sliders. A third gap, focusing a slider under the "fill
+highlight" keyboard-nav style, was found and fixed in the same pass. Commit `9ce9e83`.
+
+### Audio tab order and slider sizing
+- [ ] Settings → Audio tab order, top to bottom: Voice boost / Stereo-Mono / Channel swap /
+  Equalizer / L/R balance (EQ moved above balance, off the very top of the tab)
+- [ ] Each EQ slider spans (close to) the tab's full width, with its freq label immediately to
+  its right — no longer a short slider with the label floating near mid-screen
+- [ ] L/R balance stays a shorter, fixed-width slider (not full-width like EQ) — check it does
+  not visually blend into the cover art shown behind the Audio tab
+
+### Gradient fills
+- [ ] L/R balance: dragging away from center shows a gradient, brighter toward whichever edge
+  you're approaching, darker toward center — the brightness at a given screen position stays
+  fixed as you drag; only how much of the ramp is revealed changes (a small deflection shows a
+  dim sliver near center, not an instant bright flash at its own short fill edge)
+- [ ] Equalizer: dragging a band to the RIGHT (boost) brightens toward the right edge; dragging
+  LEFT (cut) darkens toward the left edge — the two directions are NOT mirror images of each
+  other (right brightens, left darkens — confirm both read distinctly, and that the far-left/most
+  cut position is still visibly distinguishable from the panel background, not crushed to black)
+- [ ] Balance and EQ read as visually distinct gradient styles from each other, not identical
+
+### EQ keyboard navigation (regression fix)
+- [ ] From Channel swap's row, pressing Down steps into the FIRST EQ slider row (100Hz) — not
+  straight through to L/R balance
+- [ ] Up/Down steps through all 5 EQ slider rows individually, then into L/R balance
+- [ ] Left/Right on a focused EQ slider adjusts ITS OWN value (same as balance already did) —
+  confirm this still works now that the rows are reachable at all
+- [ ] Traveling marker still traces each EQ slider correctly (this worked before; confirms the
+  layout flattening didn't disturb it)
+
+### Mouse wheel on Audio sliders (new)
+- [ ] Scrolling the mouse wheel over L/R balance changes its value
+- [ ] Scrolling the mouse wheel over each of the 5 EQ sliders changes that slider's value
+- [ ] Scrolling the wheel over the transport progress/chapter/volume sliders elsewhere in the
+  app still does exactly what it always did (chapter nav / chapter scrub / volume) — confirms
+  the new per-slider wheel support didn't leak into or override the existing transport behavior
+
+### Fill-highlight keyboard-nav style + sliders (new)
+- [ ] In Settings → Look, switch the keyboard-nav marker style to "Fill highlight"
+- [ ] Tab/arrow focus onto L/R balance or any EQ slider in the Audio tab — the traveling border
+  marker still shows on the slider (square corners), NOT a flat fill and NOT nothing
+- [ ] Move focus off the slider onto a button (e.g. Voice boost) — that button now shows the
+  flat fill-highlight style, not the traveling marker (confirms sliders are a deliberate,
+  narrow exception, not a break in fill_highlight generally)
+- [ ] Switch back to "Traveling marker" style — sliders behave exactly as before
+
 ## 5-band EQ + Settings tab spacing/row fixes — 2026-09-18 Session 3
 
 Background: added a 5-band EQ to Settings → Audio (replacing Normalization), then fixed a
 tab-to-tab header-pitch drift and a stray row-spacing override discovered along the way while
 checking the new EQ's layout. Commits `119a2e6`, `1cc3ba9`, `b4f1325`.
 
+**Update, 2026-09-19:** the Up/Down and Left/Right item below was checked at the time but the
+EQ rows were in fact NOT reachable by arrow-key Up/Down at all — a layout-nesting bug (the 5 EQ
+rows sat inside a QVBoxLayout wrapper invisible to panels.settings_tab_button_rows()'s
+single-level walk) let Left/Right-on-a-focused-slider work correctly wherever focus DID land,
+which is what made this read as passing. Fixed in the 2026-09-19 section above — re-verify there,
+not here.
+
 ### Equalizer
-- [x] Settings → Audio shows an "Equalizer" section with 5 sliders (100, 300, 1K, 3K, 8K) below
-  L/R balance, each with center-snap/center-mark like balance
+- [x] Settings → Audio shows an "Equalizer" section with 5 sliders (100, 300, 1K, 3K, 8K), each
+  with center-snap/center-mark like balance (now ABOVE L/R balance — see 2026-09-19 reorder)
 - [ ] Dragging/arrow-keying each EQ slider produces an audible tonal change while a book plays,
   with **no console error** (this is exactly the failure mode mono/swap/balance had — must not
   reintroduce it)
 - [ ] Reset to defaults restores all 5 EQ sliders to center (flat) and hides itself again once
   every Audio control (voice boost, mono, swap, balance, all 5 EQ bands) is back to default
-- [ ] Keyboard Up/Down moves focus between the 5 EQ slider rows (each is its own one-item row,
-  like balance); Left/Right adjusts the focused slider's own value
+- [x] ~~Keyboard Up/Down moves focus between the 5 EQ slider rows~~ — see the 2026-09-19 update
+  note above; superseded by the "EQ keyboard navigation" checklist in the section above
 - [ ] Traveling marker traces each EQ slider's square corners correctly (not rounded)
 - [ ] "Speech compression (Normalization)" no longer appears anywhere in the Audio tab
 

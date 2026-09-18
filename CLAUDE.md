@@ -1810,7 +1810,28 @@ Any `QWidget` subclass (not `QFrame`, not `QLabel`) that owns a background-color
 
 *Reorganization note (2026-07-13): the "Critical Architecture Rules" section was restructured to remove repetition — it previously existed as two passes (a full-prose section and a later condensed second pass covering many of the same rules). The two were merged: rules that appeared in both now appear once, under whichever fact they share, with no information dropped. Rules unique to either pass are unchanged. See the note directly under the "Critical Architecture Rules" heading for detail.*
 
-*Last updated: 2026-09-18 Session 3 — Fixed mono/swap/L/R balance (silently broken against mpv's
+*Last updated: 2026-09-19 Session 1 — EQ/balance sliders got gradient fills, replacing the flat
+fill color (`ClickSlider.gradient_style`, a `_center_fill_brush` helper returning a
+`QLinearGradient` anchored to the slider's PHYSICAL edges rather than the current fill boundary —
+anchoring to the fill boundary instead would compress the whole dark-to-bright range into whatever
+short strip is drawn, flashing full brightness at even a 1px deflection, which is exactly the
+"single fill color that changes with the level" look this was built to avoid). Balance is
+symmetric (brighter toward either edge, darker toward center); EQ is directional (right = boost =
+brighter, left = cut = darker — deliberately not mirror images), both tunable via one
+`_GRADIENT_STOPS` table. Audio tab reordered (Voice boost / Stereo-Mono / Channel swap / Equalizer
+/ L/R balance — EQ deliberately not first, to keep Voice boost one keypress from the tab's top);
+EQ sliders now full-width, balance stays a shorter fixed width so it doesn't blend into the cover
+art. Two real bugs found while polishing (not design requests): the 5 EQ rows were unreachable by
+arrow-key Up/Down (a `QVBoxLayout` wrapper invisible to `panels.settings_tab_button_rows()`'s
+single-level walk — flattened to match every other row's shape), and none of the 6 Audio sliders
+had mouse-wheel support (`ClickSlider.wheel_step`, opt-in so the three transport sliders' own
+wheel handling in `MainWindow.wheelEvent` isn't disturbed). A third gap, found investigating how
+sliders should read under the "fill highlight" keyboard-nav style, turned out to be "nothing at
+all" (the QSS-only fill can't match a custom-painted widget) — sliders now keep the traveling
+marker under both styles. All live-verified by Pryme across multiple themes. Commits `3dcab5c`,
+`9ce9e83`.
+
+*Previously: 2026-09-18 Session 3 — Fixed mono/swap/L/R balance (silently broken against mpv's
 own native `pan` filter shadowing ffmpeg's filter of the same name — confirmed live against a real
 `ao='pulse'` mpv instance, fixed by wrapping as `lavfi=[pan=...]`); added a 5-band EQ to Settings >
 Audio replacing Normalization (100/300/1000/3000/8000 Hz, ±6dB, tuned for narration not music,
