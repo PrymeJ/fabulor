@@ -6143,7 +6143,25 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             # in eventFilter is what actually clears this in the common cases.
             self._set_keyboard_nav_active(False)
         # reason is None or OtherFocusReason → preserve flag unchanged (deliberately ambiguous)
-        if self.config.get_keyboard_marker_style() == "fill_highlight":
+        if (self.config.get_keyboard_marker_style() == "fill_highlight"
+                and not isinstance(QApplication.focusWidget(), ClickSlider)):
+            # ClickSlider (balance_slider/eq_slider_* — the Audio tab's bidirectional
+            # sliders) is excluded from fill_highlight and always falls through to the
+            # traveling-marker path below instead, regardless of style. Live design call,
+            # 2026-09-19: under fill_highlight every OTHER control gets a flat QSS fill
+            # instead of the marker, but ClickSlider paints itself manually (bg_color/
+            # fill_color custom paintEvent, not a QSS `background`) and has no matching
+            # [kbdnav_fill_active="true"] QPushButton:focus rule to begin with — so before
+            # this exclusion, focusing a slider under fill_highlight showed NOTHING at all
+            # (no marker, since fill_highlight never invokes it; no fill, since the QSS
+            # selector can't match this widget class). A fill also could not represent a
+            # near-center value well even if it could match (a small deflection is just a
+            # sliver — the same "fill can't read as focused" problem this style has for
+            # any variable-fill widget). The traveling border marker already works
+            # correctly on these (square corners via _SQUARE_CORNER_OBJECT_NAMES), so it
+            # is kept for them under both styles rather than inventing a slider-specific
+            # fill treatment.
+            #
             # Alternate style (2026-09-08 live design ask, after the ramp buttons' focus
             # color was found to be a flat theme-dict color by mistake rather than derived
             # from accent — see themes.derive_lighter_accent_rgb's docstring): no separate

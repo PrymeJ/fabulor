@@ -3,6 +3,13 @@ from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushBu
 from PySide6.QtCore import Qt
 from .controls import ClickSlider
 
+# Matches app.py's _BALANCE_ARROW_STEP (not imported directly — app.py imports FROM this
+# module, so importing back would risk a circular import). Used as both the arrow-key step
+# (app.py's _handle_settings_arrows, which reaches every ClickSlider generically) and the
+# mouse-wheel step for these 6 sliders (ClickSlider.wheel_step) — kept the same value so
+# the two input methods feel identically granular.
+_SLIDER_WHEEL_STEP = 5
+
 class AudioSettingsTab(QWidget):
     """Handles the UI and logic for audio processing settings (normalization, boost, etc.)."""
     def __init__(self, player, config, parent=None):
@@ -63,6 +70,60 @@ class AudioSettingsTab(QWidget):
         swap_row.addStretch()
         layout.addLayout(swap_row)
 
+        # --- Equalizer ---
+        # Order is Voice/Stereo/Swap/EQ/Balance (not importance order, which would put EQ
+        # first) — EQ's 5 rows would cost 5 extra Down-presses to reach Voice boost from the
+        # top of the tab if it opened the list. See CLAUDE.md/SESSION.md for the live-feedback
+        # trail; this ordering was Pryme's own explicit call over the importance-first one.
+        eq_header = QLabel("Equalizer")
+        eq_header.setObjectName("settings_header")
+        layout.addWidget(eq_header)
+        # Each band's QHBoxLayout is added directly to the tab's own top-level layout below
+        # (not nested inside a shared QVBoxLayout wrapper) — panels.settings_tab_button_rows()
+        # only walks ONE level of the tab's layout looking for a QHBoxLayout-of-widgets or a
+        # bare widget; a QVBoxLayout-of-QHBoxLayouts wrapper is invisible to that walk, which
+        # silently dropped all 5 EQ rows from arrow-key navigation (Up/Down jumped straight
+        # from Channel swap to L/R balance — live report 2026-09-19). Flattening matches the
+        # shape every other row in every other tab already uses, so no special-casing is
+        # needed in panels.py.
+        eq_freqs = [("100", "100"), ("300", "300"), ("1000", "1K"), ("3000", "3K"), ("8000", "8K")]
+        for eq_i, (freq, label) in enumerate(eq_freqs):
+            eq_row = QHBoxLayout()
+            slider = ClickSlider(Qt.Horizontal)
+            slider.setObjectName(f"eq_slider_{freq}")
+            slider.center_mark = True
+            slider.snap_to_center = True
+            slider.fill_from_center = True
+            # Darker-toward-deflection gradient (not balance's brighter-edges one) — pushing
+            # an EQ band away from center should read as "pulled toward shadow", not lit up.
+            slider.gradient_style = "eq"
+            slider.wheel_step = _SLIDER_WHEEL_STEP
+            slider.setRange(-60, 60)
+            slider.setValue(int(getattr(self.config, f"get_eq_gain_{freq}")() * 10))
+            slider.setFixedHeight(10)
+            # Full-width (via the row's stretch=1 below) — a short slider left the freq label
+            # stranded near mid-screen, visually disconnected from its own row (live feedback,
+            # 2026-09-19).
+            # Same reasoning as balance_slider below: ClickSlider is NoFocus by default
+            # (load-bearing for the transport sliders), granted per-instance here since this
+            # lives inside a panel where that rule doesn't apply.
+            slider.setFocusPolicy(Qt.FocusPolicy.TabFocus)
+            slider.valueChanged.connect(lambda v, k=freq: self._on_eq_changed(k, v))
+            eq_row.addWidget(slider, stretch=1, alignment=Qt.AlignmentFlag.AlignVCenter)
+            freq_label = QLabel(label)
+            freq_label.setObjectName("eq_freq_label")
+            freq_label.setFixedWidth(20)
+            eq_row.addWidget(freq_label, alignment=Qt.AlignmentFlag.AlignVCenter)
+            layout.addLayout(eq_row)
+            # Kept tight between EQ rows specifically (was eq_rows.setSpacing(2) before
+            # flattening) — the top-level tab layout has no explicit setSpacing anywhere
+            # else (every other row's gap comes purely from #settings_header's margin-top,
+            # per CLAUDE.md), so an explicit small gap here is the only way to keep the 5
+            # bands visually grouped tighter than a normal inter-group gap.
+            if eq_i < len(eq_freqs) - 1:
+                layout.addSpacing(2)
+            self.eq_sliders[freq] = slider
+
         # --- Balance ---
         balance_header = QLabel("L/R balance")
         balance_header.setObjectName("settings_header")
@@ -72,9 +133,15 @@ class AudioSettingsTab(QWidget):
         self.balance_slider.center_mark = True
         self.balance_slider.snap_to_center = True
         self.balance_slider.fill_from_center = True
+        # Brighter-edges/darker-center gradient — the opposite intent of the EQ sliders'
+        # "eq" style: deflecting away from center should read as lighting up, not dimming.
+        self.balance_slider.gradient_style = "balance"
+        self.balance_slider.wheel_step = _SLIDER_WHEEL_STEP
         self.balance_slider.setRange(-100, 100)
         self.balance_slider.setValue(int(self.config.get_balance() * 100))
         self.balance_slider.setFixedHeight(12)
+        # Kept shorter than the full-width EQ sliders — full width put it close enough to
+        # the cover art underneath that it started blending in (live feedback, 2026-09-19).
         self.balance_slider.setFixedWidth(140)
         # Keyboard-navigable, unlike every other ClickSlider in the app. ClickSlider is a
         # QWidget subclass and so NoFocus by default, which is deliberate and load-bearing for
@@ -86,37 +153,6 @@ class AudioSettingsTab(QWidget):
         self.balance_slider.setFocusPolicy(Qt.FocusPolicy.TabFocus)
         self.balance_slider.valueChanged.connect(self._on_balance_changed)
         layout.addWidget(self.balance_slider)
-
-        # --- Equalizer ---
-        eq_header = QLabel("Equalizer")
-        eq_header.setObjectName("settings_header")
-        layout.addWidget(eq_header)
-        eq_rows = QVBoxLayout()
-        eq_rows.setSpacing(2)
-        for freq, label in [("100", "100"), ("300", "300"), ("1000", "1K"), ("3000", "3K"), ("8000", "8K")]:
-            eq_row = QHBoxLayout()
-            slider = ClickSlider(Qt.Horizontal)
-            slider.setObjectName(f"eq_slider_{freq}")
-            slider.center_mark = True
-            slider.snap_to_center = True
-            slider.fill_from_center = True
-            slider.setRange(-60, 60)
-            slider.setValue(int(getattr(self.config, f"get_eq_gain_{freq}")() * 10))
-            slider.setFixedHeight(10)
-            slider.setFixedWidth(140)
-            # Same reasoning as balance_slider above: ClickSlider is NoFocus by default
-            # (load-bearing for the transport sliders), granted per-instance here since this
-            # lives inside a panel where that rule doesn't apply.
-            slider.setFocusPolicy(Qt.FocusPolicy.TabFocus)
-            slider.valueChanged.connect(lambda v, k=freq: self._on_eq_changed(k, v))
-            eq_row.addWidget(slider, alignment=Qt.AlignmentFlag.AlignVCenter)
-            freq_label = QLabel(label)
-            freq_label.setObjectName("eq_freq_label")
-            eq_row.addWidget(freq_label, alignment=Qt.AlignmentFlag.AlignVCenter)
-            eq_row.addStretch()
-            eq_rows.addLayout(eq_row)
-            self.eq_sliders[freq] = slider
-        layout.addLayout(eq_rows)
 
         layout.addSpacing(10)
         self.reset_audio_btn = QPushButton("Reset to defaults")

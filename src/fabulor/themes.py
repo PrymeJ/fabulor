@@ -109,6 +109,7 @@ tab_hover_bg:      Background color for an unselected tab when hovered OR (2026-
                     every tab bar in the app: get_settings_stylesheet AND get_stats_stylesheet. Fallback: accent.
 tab_hover_opacity: Opacity for the above. Fallback: 0.85.
 tab_hover_text:    Text color for the above. Fallback: text.
+audio_slider_bg: (Optional) Background groove color for the Audio tab's L/R balance and 5 EQ sliders (#balance_slider, #eq_slider_*). Fallback: slider_chapter_bg lightened (+25/255 value, hue/saturation unchanged — see _audio_slider_bg_hex) — reusing slider_chapter_bg verbatim left these small panel sliders nearly invisible against the settings panel background in several themes. Set this per-theme when the derived lighten doesn't fit.
 cover_preview_bg:     Background color for book cover previews in the library. Fallback: bg_deep → #000000.
 
 GROUP 10 — PLACEHOLDER COVERS
@@ -196,6 +197,7 @@ THEMES = {
         "tassel_head":                   "#B01F78",
         "tassel_fringe":                 "#3593C6",
         "focus_marker_palette":         ["#FD0000", "#6D0707"],
+        "audio_slider_bg":               "#230C49",
         "placeholder_cover":             "#6D1212",
         "carousel_bg":                   "#2E184B",
         "carousel_stripe":               "#C31111",
@@ -3386,8 +3388,8 @@ def derive_lighter_accent_rgb(accent_hex: str) -> str:
     a flat, unrelated theme-dict color picked by mistake (the bug that
     prompted this alternate style — see SESSION.md 2026-09-08).
 
-    Value boost is +12/255 (not StreakGrid's +60/255) — two live-tuning passes down from the
-    original, each after being reported as still too bright/too strong: +60 -> +25 -> +12.
+    Value boost is +8/255 (not StreakGrid's +60/255) — three live-tuning passes down from the
+    original, each after being reported as still too bright/too strong: +60 -> +25 -> +12 -> +8.
     Saturation cut (55%) is unchanged since that wasn't reported as the problem.
 
     Returns a plain string rather than a QColor because this module is
@@ -3401,9 +3403,36 @@ def derive_lighter_accent_rgb(accent_hex: str) -> str:
     r, g, b = (int(h[i:i + 2], 16) / 255 for i in (0, 2, 4))
     hue, sat, val = colorsys.rgb_to_hsv(r, g, b)
     new_sat = sat * 0.55
-    new_val = min(1.0, val + 12 / 255)
+    new_val = min(1.0, val + 8 / 255)
     nr, ng, nb = colorsys.hsv_to_rgb(hue, new_sat, new_val)
     return ",".join(str(round(c * 255)) for c in (nr, ng, nb))
+
+
+def _audio_slider_bg_hex(t: dict) -> str:
+    """The Audio tab's balance/EQ slider groove color: the per-theme `audio_slider_bg`
+    override if set, else `slider_chapter_bg` lightened. Added 2026-09-19 — reusing
+    slider_chapter_bg verbatim (the transport chapter-progress bar's own groove color,
+    tuned for a much larger, more prominent widget) left these small panel sliders nearly
+    invisible against the settings panel background in several themes (live screenshot).
+    Lightened here rather than by adding a literal new key to all 50+ theme dicts (which
+    would need per-theme tuning before it's usable at all) — same reasoning as
+    derive_lighter_accent_rgb just above: compute a sane default now, let any theme
+    override it individually later if the derived value doesn't fit.
+
+    Value boost is +25/255 — a first pass at +60/255 was reported live as "way too
+    bright", tuned down once. Independent of derive_lighter_accent_rgb's own +8/255 —
+    same shape, unrelated tuning, do not share the constant between the two."""
+    override = t.get('audio_slider_bg')
+    if override:
+        return override
+    h = t['slider_chapter_bg'].lstrip('#')
+    if len(h) != 6:
+        h = '888888'
+    r, g, b = (int(h[i:i + 2], 16) / 255 for i in (0, 2, 4))
+    hue, sat, val = colorsys.rgb_to_hsv(r, g, b)
+    new_val = min(1.0, val + 25 / 255)
+    nr, ng, nb = colorsys.hsv_to_rgb(hue, sat, new_val)
+    return "#" + "".join(f"{round(c * 255):02x}" for c in (nr, ng, nb))
 
 
 def _kbdnav_fill_rgb(t: dict) -> str:
@@ -4506,7 +4535,7 @@ def get_settings_stylesheet(theme_name="default"):
             background: {t.get('focus_audio_tab_reset', t['accent_light'])};
         }}
         #balance_slider, #eq_slider_100, #eq_slider_300, #eq_slider_1000, #eq_slider_3000, #eq_slider_8000 {{
-            qproperty-bg_color: "{t['slider_chapter_bg']}";
+            qproperty-bg_color: "{_audio_slider_bg_hex(t)}";
             qproperty-fill_color: "{t['slider_chapter_fill']}";
         }}
         QLabel#eq_freq_label {{

@@ -10,6 +10,27 @@ _stutter_log = logging.getLogger("fabulor.ui.controls")  # [STUTTER-PROBE]
 # when disabled.
 _PAINT_TRACE_ENABLED = os.environ.get("FABULOR_GRAB_TRACE") == "1"
 
+# Tunable center->edge gradient stops for ClickSlider.gradient_style. Each stop is
+# (direction, factor): direction is "lighter" or "darker", factor is the
+# QColor.lighter()/.darker() argument (100 = unchanged, higher = stronger).
+#
+# "balance" is SYMMETRIC (same treatment regardless of which side is deflected — L/R
+# balance has no inherent "good" direction) — keyed by "near" (center end of the
+# gradient) / "far" (the slider's physical edge).
+#
+# "eq" is DIRECTIONAL: right = boosting the frequency (brighter), left = cutting it
+# (darker) — these are NOT mirror images of each other, so it's keyed by "right"/"left"
+# instead of near/far, each with its own independent near/far pair. Keep the left side's
+# "far" (leftmost/most-cut) from going so dark it becomes invisible against the panel —
+# see gradient_style's own comment in __init__.
+_GRADIENT_STOPS = {
+    "balance": {"near": ("darker", 200), "far": ("lighter", 120)},
+    "eq": {
+        "right": {"near": ("lighter", 100), "far": ("lighter", 150)},
+        "left": {"near": ("lighter", 100), "far": ("darker", 160)},
+    },
+}
+
 class ClickSlider(QWidget):
     valueChanged = Signal(int)
     sliderPressed = Signal()
@@ -33,6 +54,24 @@ class ClickSlider(QWidget):
         # attribute, not a Property) — every other ClickSlider (progress/chapter/volume)
         # is a genuinely left-to-right quantity and must keep the left-anchored fill.
         self.fill_from_center = False
+        # Paint the fill as a gradient instead of a flat color. None = flat (every slider
+        # except balance/EQ). "balance" = brighter at the deflected edge, darker toward
+        # center — a deflection should read as "lighting up". "eq" = the opposite: darker
+        # toward the deflected edge, brighter toward center — pushing a band away from flat
+        # should read as "pulled toward shadow", not lit up (Pryme's own distinction, live
+        # feedback 2026-09-19 — the two slider families are visually similar but meant to
+        # read oppositely).
+        self.gradient_style = None
+        # Step size for wheelEvent's own value adjustment. None = wheel support OFF (the
+        # default) — the three transport sliders (progress/chapter/volume) are also
+        # ClickSlider instances, but MainWindow.wheelEvent already gives each of them its
+        # own carefully-tuned, semantically-specific wheel behavior (chapter nav, an
+        # undo-gated scrub, a volume nudge) via underMouse() checks; a blanket wheelEvent
+        # on this base class would silently steal those events out from under that
+        # handling. Opt-in per instance, same shape as fill_from_center/gradient_style —
+        # set only on balance_slider/eq_slider_* (audio_controls.py), where nothing else
+        # already owns the wheel.
+        self.wheel_step = None
         # Default colors (will be overridden by QSS)
         self._bg_color = QColor("#4B0082")
         self._fill_color = QColor("#C8A2C8")
@@ -261,11 +300,57 @@ class ClickSlider(QWidget):
         if self._dragging:
             self.setValue(self._val_from_x(event.position().x()))
 
+    def _center_fill_brush(self, mid, filled, deflected_right):
+        """Return the brush for a fill_from_center segment: a flat color, or (when
+        gradient_style is set) a linear gradient. "balance" is symmetric (same treatment
+        on either side — L/R balance has no inherent "good" direction). "eq" is
+        DIRECTIONAL: right = boosting the frequency (brighter), left = cutting it
+        (darker) — not mirror images, see _GRADIENT_STOPS's own comment.
+
+        The gradient's color stops are anchored to the slider's PHYSICAL edges (x=0 and
+        x=width()), not to the current fill boundary — only the *revealed span* changes as
+        the value moves, never the brightness ramp itself. A small deflection therefore
+        reveals a dim sliver near center; full brightness only appears once the value
+        reaches the true edge. Anchoring to `filled` instead (the fill boundary) would
+        compress the whole dark-to-bright range into whatever short strip is currently
+        drawn, so even a tiny deflection would flash full brightness at its own edge —
+        the "single fill color that changes with the level" effect Pryme explicitly said
+        this should NOT look like (2026-09-19 live feedback)."""
+        stops = _GRADIENT_STOPS.get(self.gradient_style)
+        if stops is None:
+            return self._fill_color
+        if "right" in stops:
+            stops = stops["right"] if deflected_right else stops["left"]
+
+        def _apply(direction, factor):
+            c = QColor(self._fill_color)
+            return c.lighter(factor) if direction == "lighter" else c.darker(factor)
+
+        near = _apply(*stops["near"])
+        far = _apply(*stops["far"])
+
+        edge = self.width() if deflected_right else 0
+        grad = QLinearGradient(mid, 0, edge, 0)
+        grad.setColorAt(0.0, near)
+        grad.setColorAt(1.0, far)
+        return grad
+
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.LeftButton:
             self._dragging = False
             self.setValue(self._val_from_x(event.position().x()))
             self.sliderReleased.emit()
+
+    def wheelEvent(self, event):
+        # See wheel_step's own comment in __init__ — off by default, opt-in per instance,
+        # so this never competes with MainWindow.wheelEvent's own handling of the three
+        # transport sliders.
+        if self.wheel_step is None:
+            event.ignore()
+            return
+        step = self.wheel_step if event.angleDelta().y() > 0 else -self.wheel_step
+        self.setValue(max(self._minimum, min(self._maximum, self._value + step)))
+        event.accept()
 
     def paintEvent(self, event):
         p = QPainter(self)
@@ -276,9 +361,9 @@ class ClickSlider(QWidget):
             if self.fill_from_center:
                 mid = self.width() // 2
                 if filled > mid:
-                    p.fillRect(mid, 0, filled - mid, self.height(), self._fill_color)
+                    p.fillRect(mid, 0, filled - mid, self.height(), self._center_fill_brush(mid, filled, deflected_right=True))
                 elif filled < mid:
-                    p.fillRect(filled, 0, mid - filled, self.height(), self._fill_color)
+                    p.fillRect(filled, 0, mid - filled, self.height(), self._center_fill_brush(mid, filled, deflected_right=False))
             else:
                 p.fillRect(0, 0, filled, self.height(), self._fill_color)
 
