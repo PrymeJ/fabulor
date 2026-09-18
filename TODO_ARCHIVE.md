@@ -533,6 +533,32 @@ order these entries had in TODO.md before the split (2026-07-30).
   (no dedicated test existed for this handler; none added, per no test infra covering it was found
   to extend). Live UI verification not yet done by Pryme.
 
+- **[2026-07-21, FIXED 2026-09-18, live-confirmed by Pryme] "Cover art based theme" hover doesn't
+  preview from Off mode — the hover half of the sibling right-click fix directly above.**
+  `_on_cover_pool_btn_hovered` (`theme_manager.py`) early-returned whenever `self._cover_theme` was
+  `None` — which is unconditionally true in Off mode: `clear_cover_theme()` nulls it on every path
+  that switches to Off (`_on_cover_pool_btn_clicked`, `set_cover_art_mode`, and
+  `apply_cover_theme`'s own `mode == "off"` branch), so hovering the "Cover art based theme" entry
+  while Off was selected was always a silent no-op, with no exception. (Live investigation initially
+  chased a false lead: Pryme first reported hover working after "With pool → Off" but not after
+  "Exclusive → Off" — a real, reproducible-sounding asymmetry that contradicted the code, which has
+  no such branch. Added `[COVERHOVER-TRACE]` instrumentation to settle it with evidence rather than
+  re-theorize from the source per usual practice; before the trace was even needed, Pryme retested
+  more carefully and retracted the claim himself — "It is not previewed when going back to Off. I
+  think I confused it with a similar looking theme." The code was right the whole time.)
+
+  Design decision (Pryme, 2026-09-18), settling the open question the original entry deliberately
+  left unresolved: hover-from-Off should preview transiently, like every other theme swatch's
+  hover, and must NOT commit the mode the way a left/right-click on the same button does. Fixed by
+  building a theme dict from the current cover pixmap on demand, purely for the preview call
+  (`_on_theme_changed(theme_dict, save=False, fade_ms=fade, hover=True)`) — `self._cover_theme`,
+  `self._cover_theme_active`, and the stored config mode are never touched by this path, so the
+  existing unhover snapback (`_on_theme_unhovered`) needed no changes: it already reads those same
+  two fields and correctly falls through to reverting to `self._current_theme_name` when both are
+  unset, exactly the same as leaving any other unselected swatch's hover. Trace instrumentation
+  fully removed once the real cause was confirmed live. `pytest tests/ -q` green, pyflakes clean.
+  Commit `5f0c45c`.
+
 - **[2026-09-17] CLOSED: two "FIXED" bullets sitting under "Settings keyboard-focus regressions
   found while testing Tags," same class of gap as the entry below (a done-status note left in the
   open-work file).** Both were flagged `— FIXED` in their own text and had nothing outstanding:

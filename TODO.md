@@ -677,25 +677,6 @@ isolation.
   to the three-state `panel_backdrop` key; the old boolean is kept only as a one-time
   backward-compatibility read on upgrade, not as the live setting.
 
-- **[2026-07-21, spec expanded 2026-07-28] "Cover art based theme": hover should preview the
-  cover-derived theme regardless of the current mode.** Originally two halves; the right-click half
-  is now fixed (2026-09-17, not yet live-verified by Pryme — see TODO_ARCHIVE.md for the fix and
-  for a correction: an earlier pass of this same audit wrongly reported it as already shipped when
-  it was not) — only the hover-preview half remains open.
-  **Hover preview.** `_on_cover_pool_btn_hovered` (`theme_manager.py`) early-returns when
-  `self._cover_theme` is None, so with mode Off, hovering the "Cover art based theme" entry does
-  nothing. It should preview the cover-derived theme whatever the Off/With pool/Exclusive selection
-  is, so the look can be seen before committing. Needs to confirm a cover theme is BUILDABLE for the
-  current book first (there may be no cover, or no `_cover_theme` computed while mode is Off) —
-  that check is the actual work; the preview call itself already exists. Pryme's own framing for
-  why right-click-from-Off was fixed the way it was (see the archive entry) applies here too: it's
-  not clear whether a hover-preview-from-Off should also commit the mode to With pool the way the
-  right-click fix does, or just preview transiently without changing the stored mode — decide this
-  before implementing, don't assume it mirrors the right-click fix exactly.
-  Note this sits on the hover/preview path that changed twice on 2026-07-28 (hover interrupts
-  any fade; selections interrupt too) — re-read those before touching, since a preview arriving
-  mid-fade now behaves differently than when this entry was written.
-
 - **[2026-06-19] Remove theme inheritance from "The Color Purple."** Every theme currently resolves
   via `_resolve_theme()` as `THEMES["The Color Purple"].copy()` overlaid with the requested theme's
   own dict — any key a theme doesn't define falls back to Purple's literal value, not to that

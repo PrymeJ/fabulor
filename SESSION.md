@@ -1,3 +1,84 @@
+## Session Summary — 2026-09-18 Session 2 — Unified Settings' Off/On toggle defaults, day-start-hour spinbox formatting, escalated the book-folder-move data-loss bug to Blocking with a planned content-hash ID refactor, sequenced the cover-cache item behind it, and fixed cover-art-theme hover-from-Off. `a41b407`, `514c6be`, `c401778`, `5f0c45c`.
+
+**Full audit of Settings' Off/On toggle order, at Pryme's request.** A subagent inventoried all 17
+toggle/ramp rows across Audio, Appearance, Library, Controls, Sprint, Sleep, Stats' ⚙, and Playback.
+Finding: two genuinely distinct families, not one inconsistent mess — literal Off/On toggles split
+roughly 50/50 between Off-left and On-left with no rule, while every NAMED-option pair (Stereo/Mono,
+Embedded/.cue, By name/By index, Traveling/Fill, Auto-play/Jump only) already puts its default on
+the left with zero exceptions. Pryme's own review: most of the apparent inconsistency (Compression/
+Voice boost/Cover-art-based theme/Backward seek compensation, Theme hover fade) is acceptable as-is
+— two consistent conventions, not a bug. Three were real and fixed: **Chapter notches** (labels
+`["On","Off"]` but the actual default was `False`/Off — config default flipped to `True`);
+**Persist search filter** (button order flipped `["Off","On"]` → `["On","Off"]`, master default
+flipped `False`→`True` — the Tag/Text/Year sub-filters already defaulted individually-selected, so
+the net effect is On-with-all-three-selected as asked, and the pre-existing self-correcting guard
+that forces the master back Off when no sub-flag is set stays intact, simply never triggered by the
+new defaults); **Stats ⚙ Default timeline view** (the ONE toggle on the whole panel where the left
+slot — "Streak" — was the non-default option; `"heatmap"` was the real default — config flipped to
+`"streak"`).
+
+**Day-starts-at spinbox got three follow-up fixes from the same investigation, one of them reverted
+twice after live testing caught what offscreen verification couldn't.** (1) Display format: bare
+"0"–"23" → "0:00"–"23:00" via `textFromValue`/`valueFromText` overrides on `_ThemedSpinBox` —
+display-only, the stored/emitted value stays a plain int, config/signal wiring untouched. (2) A
+full-text-selection flash on every arrow-click/keyboard-focus: `QAbstractSpinBox.stepBy` selects
+the line edit's full text AFTER updating the value (confirmed via an offscreen trace — a naive
+`valueChanged`-connected `deselect()` got clobbered by this trailing select-all), fixed by
+overriding `stepBy` to call `deselect()` AFTER `super().stepBy()` instead, plus `focusInEvent` for
+the Tab-in case. (3) Removing the text-edit caret, since the field is arrow-only and never meant to
+be typed into — **two attempts, both reverted, a real instance of offscreen testing giving false
+confidence** (CLAUDE.md's own documented risk class). First attempt: `setReadOnly(True)`, verified
+via `.stepUp()`/`.stepDown()` called directly — looked clean, but Pryme reported live the arrows
+stopped working entirely; a REAL dispatched-click test (not a direct method call) then confirmed
+`ReadOnly` genuinely blocks the up/down BUTTONS too, contradicting the assumption (stated, not
+checked, the first time) that Qt's `ReadOnly` flag only guards typed input. Reverted immediately,
+confirmed clean via `git diff`. Second attempt: an `eventFilter` on the line edit swallowing
+`QEvent.Type.Timer` (theorized as the blink-driving timer) — preserved arrow functionality this
+time (verified via both a real dispatched mouse click AND a real dispatched `Key_Up` event, not
+just direct method calls), but Pryme reported live it did NOT stop the caret blinking — the
+assumption about which timer drives the blink was simply wrong. No Qt API exists for this (no
+caret-color role separate from `QPalette::Text`, which the visible digits also use; no
+`setCursorBlink`/`setCursorVisible` in this Qt build) — reverted, left as-is, genuinely no safe
+lever found. Also this investigation: Playback defaults changed — speed increment (step) `0.1`→
+`0.05`, skip duration `10s`→`5s` (both values were already existing UI button options, so no UI
+code change needed beyond the config default).
+
+**"Moving a book's folder isn't picked up by the scanner" escalated from Worth Fixing to Blocking**
+after Pryme confirmed live (moved a file to a new path, checked directly) that the manual
+delete-and-rescan workaround genuinely drops tags and listening history — real data loss on
+reorganizing folders, an ordinary user action, not an inconvenience. This was the exact condition
+the item's own text had flagged as its escalation trigger. Pryme's planned fix direction: replace
+the library's path-keyed identity model with an ID based on a content hash, so a book survives a
+folder move/rename — a large refactor (path is currently the identity key threaded through
+`books`/`book_tags`/`listening_sessions`/`book_events`/`book_covers`/`book_files`, the scanner's
+`known_paths` dedup, every soft-delete flag, and the stats queries' dual `book_id`/`book_path`
+write pattern), needing its own dedicated session. The sibling "cover image changed outside the app
+isn't picked up until restart" item was explicitly sequenced to follow this refactor rather than be
+fixed independently — its root cause is the same path-identity ambiguity (the cache is keyed by
+`book_id` and needs to reliably tell "same book, cover changed" apart from "different book,
+coincidentally same path"), so fixing it first risks a throwaway patch or reinforcing more
+path-keyed logic that then has to be unwound. Cross-referenced in both directions in TODO.md so
+neither gets picked up out of order by mistake.
+
+**Cover-art-theme hover-from-Off, the second (and final) half of a bug whose right-click half was
+already fixed 2026-09-17.** Investigation initially chased a false lead: Pryme first reported hover
+DID work after "With pool → Off" but not after "Exclusive → Off" — a real, reproducible-sounding
+asymmetry that flatly contradicted a full read of the code (`clear_cover_theme()` unconditionally
+nulls `self._cover_theme` on every single path that switches to Off, with no branch that would
+produce this difference). Rather than keep re-deriving from a source read that had already proven
+wrong once, added temporary `[COVERHOVER-TRACE]` log instrumentation and was about to ask for a
+live repro when Pryme retested more carefully first and retracted the claim himself: "It is not
+previewed when going back to Off. I think I confused it with a similar looking theme." The code was
+right the whole time — hover-from-Off is unconditionally a no-op today, no exceptions. Trace pulled
+back out, never needed to be run. Design decision settling the open question the original TODO
+entry deliberately left unresolved: hover-from-Off should preview transiently, exactly like every
+other theme swatch's hover, and must NOT commit the mode the way a left/right-click on the same
+button does. Fixed by building a theme dict from the current cover pixmap on demand, purely for the
+preview call — `self._cover_theme`/`self._cover_theme_active`/the stored config mode are never
+touched, so the existing unhover snapback needed no changes at all: it already reads those same two
+fields and correctly reverts to the current committed theme when both are unset. Not yet
+live-verified by Pryme.
+
 ## Session Summary — 2026-09-18 Session 1 — Sleep timer end-of-chapter fade-out, a two-round Stats row-title elision fix, closed a false-lead TODO item, unified/fixed Library's keyboard-selection highlight and pagination hover-jump, closed two already-fixed-but-never-archived keyboard-nav TODO items, closed the Library scan focus-strand item that had gone stale in the HTML triage page, a pyflakes unused-import/undefined-name cleanup, and five distinct Book Detail Tags-tab completer bugs (one needing real log-based diagnosis, not a guess). `523f432`, `9ba1665`, `9f4f6f1`, `e308c47`, `9058136`, `bc4e395`, `e2df6ac`, `3794231`, `5de212c`, `e2014cf`.
 
 **Sleep timer end-of-chapter mode now fades out**, mirroring timed mode. Designed against two

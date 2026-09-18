@@ -1,3 +1,44 @@
+## Settings Off/On toggle defaults + day-starts-at spinbox — 2026-09-18 Session 2
+
+Background: TODO_ARCHIVE.md's 2026-09-18 closure entry has the full audit (`a41b407`).
+
+### Toggle default flips (config-only changes — first app launch on a fresh profile, or after
+clearing the relevant QSettings key, is what actually exercises the new default)
+- [ ] Chapter notches: on a fresh profile, Settings → Look should show Chapter notches defaulting
+  to On (was Off) — and notches should actually be visible on the progress slider by default
+- [ ] Persist search filter: on a fresh profile, Settings → Library should show the master toggle
+  defaulting to On (button order also flipped to On/Off, left to right) with Tag, Text, and Year
+  all individually shown as selected
+- [ ] Stats ⚙ → Default timeline view: on a fresh profile, should default to Streak (was Heatmap) —
+  opening the Stats panel's Timeline tab for the first time should show the streak grid, not the
+  heatmap
+- [ ] Playback panel: Step should default to 0.05 (was 0.1); Skip should default to 5s (was 10s) —
+  confirm both are highlighted correctly on a fresh profile
+
+### Day-starts-at spinbox (`2:00` format, confirmed live by Pryme via screenshot)
+- [x] Spinbox displays "H:00" (e.g. "2:00") instead of a bare hour number
+- [ ] Click the up/down arrow buttons — value should still change correctly and the displayed text
+  should update to match (e.g. 2:00 → 3:00)
+- [ ] Click the up/down arrows repeatedly, or Tab into the field via keyboard — the field's text
+  should NOT show a full-text selection highlight flash on either interaction
+- [ ] The blinking text-edit caret is still present when the field has focus — this was
+  investigated and explicitly left unfixed (no safe Qt lever found after two reverted attempts);
+  not a regression if still visible
+
+## Cover-art-theme hover previews from Off mode — 2026-09-18 Session 2
+
+Not yet live-verified by Pryme. Background: TODO_ARCHIVE.md's 2026-09-18 closure entry (`5f0c45c`).
+This is the hover half of the right-click fix from 2026-09-17 (already live-confirmed separately).
+
+- [ ] With cover-art-theme mode set to Off and a book with a cover loaded, hover the "Cover art
+  based theme" entry in Settings → Look — should preview the cover-derived theme (not remain
+  inert), then revert cleanly when the mouse leaves
+- [ ] After that hover-and-leave, confirm the mode is STILL Off and the stored theme was NOT
+  changed — hovering must only preview, never commit (unlike left/right-click on the same button)
+- [ ] Repeat with mode set to With pool, then to Exclusive — hover-preview-from-Off is the only new
+  behavior; confirm the other two modes' existing hover/click behavior is unchanged
+- [ ] Confirm a book with NO cover art still no-ops correctly on hover (no crash, no stale preview)
+
 ## Library keyboard-selection highlight unification + pagination hover-jump fix — 2026-09-18 Session 1
 
 Two changes shipped together (`9058136`). **Both confirmed live by Pryme.** Background: CLAUDE.md's
