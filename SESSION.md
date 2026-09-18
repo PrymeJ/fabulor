@@ -1,3 +1,98 @@
+## Session Summary — 2026-09-18 Session 3 — Fixed mono/swap/L/R balance (silently broken against mpv's native "pan" filter), added a 5-band EQ to Settings > Audio, fixed a Settings-tab header-pitch drift and a Themes-tab row-spacing outlier, and fixed a same-day cover-art-theme hover regression (missing debounce). `97b5b38`, `119a2e6`, `1cc3ba9`, `b4f1325`, `5757f4e`.
+
+**Mono/Swap/Balance completely broken, root-caused and fixed.** Live report: "Stereo/mono switch...
+af command error: ('Error running mpv command', -12, ...)" for all three Audio tab controls.
+Reproduced directly against a real `ao='pulse'` mpv instance (not `/dev/zero` — that masked the
+bug entirely, since `ao='null'` never hit it). Root cause: mpv has its own NATIVE `pan` filter
+(legacy MPlayer libaf) that shadows ffmpeg's `pan` filter of the same name — `apply_audio_processing`
+was calling the unqualified `pan=...` with ffmpeg-style `c0=.../c1=...` coefficient syntax, which
+mpv resolved to its own incompatible native filter and rejected outright (`-12` COMMAND error,
+confirmed via `mpv.ErrorCode`). Confirmed working syntax live: `equalizer=f=...` (a native filter
+name with no collision) worked as-is; `pan=...` only worked wrapped as `lavfi=[pan=...]`, which
+routes explicitly through libavfilter. Fixed in `player.py`'s `apply_audio_processing` for both the
+mono and swap/balance branches. Commit `97b5b38`.
+
+**5-band EQ added to Settings > Audio, replacing Normalization.** Planned via EnterPlanMode (two
+Explore/Plan subagents scoped the existing code and drafted a design) after Pryme confirmed via
+AskUserQuestion: 5 fixed bands (not parametric), horizontal ClickSlider rows matching balance's
+style, Voice Boost stays separate. Bands: 100/300/1000/3000/8000 Hz (rumble, warmth, presence,
+sibilance, air — tuned for narration, not music), ±6dB range at 0.1dB resolution (narrower than a
+music EQ's typical ±12-15dB, since narration only needs subtle correction and a wide range invites
+one misclick producing broken audio). Reuses the confirmed-working `equalizer=f=...:width_type=o:
+width=2:g=...` syntax voice_boost already used; a band within 0.01 of 0.0dB is omitted from the
+filter chain entirely (same reasoning as mono/swap/balance's existing conditional-append — keeps the
+flat-default case at zero `af add` calls). `Config.get_norm_enabled`/`set_norm_enabled` left in
+place, unused — cheap to keep, preserves a clean re-add path, avoids an orphaned QSettings value with
+no getter. Each EQ slider reuses `balance_slider`'s exact per-instance `setFocusPolicy(TabFocus)`
+pattern, its `#balance_slider` QSS rule (extended to cover the 5 new object names), and
+`focus_marker.py`'s `_SQUARE_CORNER_OBJECT_NAMES` set. New `tests/test_audio_processing.py` (10
+tests) pins the exact filter strings for flat/single-band/all-five/near-zero-omission/negative-gain/
+combined-with-voice-boost-and-balance cases via a fake mpv instance, plus `Config` round-trips for
+the 5 new `eq_gain_*` keys — reusing `test_sidebar_hotspot.py`'s verified QSettings-isolation
+fixture pattern (a naive `tmp_path`+monkeypatched-`Config.__init__` approach was tried first and
+abandoned in favor of the already-proven fixture once found). Commit `119a2e6`.
+
+**UI layout iterated live against direct Pryme feedback, three rounds.** First pass (narrow
+50px-wide sliders in one packed horizontal row) was rejected outright before shipping — Pryme's own
+direction: move L/R balance down, one full-width slider per EQ row (not packed), freq label to the
+right of the slider not above it, center-snap/center-mark required. Second pass shipped that shape
+but the reordering attempt (a stray `layout.setSpacing(0)` meant to fix perceived uneven gaps)
+actually broke a previously-correct gap that had no issue — reverted immediately once Pryme pointed
+out the regression directly ("You pushed buttons up and closed the gap under the header, which did
+not have any issues in the first place"). The one REAL bug in that pass: "Channel swap (L ↔ R)" was
+silently wrapping to two lines (39px header height vs. every sibling's 30px) because it didn't fit
+the panel's actual ~240px usable width — confirmed via a new geometry probe, not guessed; shortened
+to "Channel swap" (the Normal/Swapped buttons already carry the L/R meaning). Commit `1cc3ba9`.
+
+**Settings-tab header-pitch drift, root-caused via a live empirical test, not static reasoning.**
+Pryme's report: Look's header-to-button spacing reads tighter than Audio's when switching tabs
+(overlaid two screenshots in a photo editor to show it precisely — not a rendering glitch, a real
+static misalignment). Initial hypothesis (Look's 8 groups genuinely overflow the shared 464px
+`QTabWidget` content area, `sizeHint` 473 vs 463 actual, so Qt silently compresses it) was
+plausible and grounded in real measurement via a new `tools/settings_tabs_geometry_probe.py` (built
+following `tags_geometry_probe.py`'s established live-app-measurement pattern), but the REAL cause
+was narrower and different: `#settings_header`'s un-pinned height varied 28-29px per string purely
+from font-metric descenders ("Library hover trail" vs "Voice boost"), independent of available
+space or group count. Proven via a direct empirical test at Pryme's explicit request: temporarily
+padded the Controls tab (which has huge slack, only 2 real groups) with 5 dummy header+On/Off
+groups to see whether a SPACIOUS tab also drifts once it has as many groups as Look — it did,
+producing the identical 65px pitch Look already showed, which ruled out space-driven compression
+as the mechanism (a tab with 4px of slack behaved identically to one 10px short). Fixed by pinning
+`#settings_header` to `min-height/max-height: 18px` in `themes.py` (Settings panel's own copy only
+— Stats' and Tags' separate `#settings_header` rules at lines 4858/5256 were left untouched, though
+this also reaches Speed/Sleep/Sprint since they share `get_settings_stylesheet()`, which Pryme
+explicitly said was fine — "even better... I told you to exclude them to lessen your load"). All
+tabs now produce an identical 65px header pitch regardless of text or group count. Commit `b4f1325`.
+
+**A second, separate spacing outlier found and fixed in the same pass.** Pryme independently
+noticed the Themes tab's Off/With pool/Exclusive button row had visibly different horizontal
+button spacing than every other Settings button row. Traced to `cover_row.setSpacing(4)` +
+`cover_row.setContentsMargins(0, 0, 0, 0)` — the ONLY button-toggle row across all five Settings
+tabs with an explicit override (confirmed by grepping every `setSpacing`/`setContentsMargins` call
+in `main_window_builders.py`); every other row relies on Qt's default `QHBoxLayout` spacing.
+Removed both overrides. Commit `b4f1325` (bundled with the header-pitch fix, same investigation).
+
+**Process note, two corrections this session:** (1) An early over-broad edit
+(`layout.setSpacing(0)` on Audio's whole tab) was proposed and applied without first reading how
+the already-correct Look tab actually achieves its rhythm — Pryme's correction: "check how the
+other tabs are built. Do not assume, do not make up numbers, but use the exact same numbers." (2)
+An `Edit` tool call intended to target the Settings-panel's `#settings_header` QSS rule silently
+landed on the byte-identical Stats-panel copy instead (three near-duplicate rules exist across the
+file with the same literal text) — caught by re-reading the target line immediately after editing
+rather than trusting the tool call succeeded as intended, then redone with enough unique
+surrounding context to hit the right one.
+
+**A regression surfaced late in the session was root-caused and fixed the same session.** Pryme
+reported the cover-art-theme hover preview (fixed and closed earlier the same day, Session 2,
+commit `5f0c45c`) firing spuriously with no mouse hover at all — then, once the fix landed, pinned
+the mechanism precisely: "the theme swatch quickly, they don't trigger as they have a guard for, I
+think, 80ms. But the cover art theme doesn't have it and it triggers even if I briefly pass over
+it." That was exactly it: `_on_cover_pool_btn_hovered` applied synchronously with no debounce,
+unlike every theme swatch's `_hover_debounce_timer`-based queue (`_on_theme_hovered`/
+`_fire_pending_hover`) — harmless while the method only had a no-op branch, but a real bug once the
+same-day Off-mode preview branch gave it something to actually apply on every hover. Fixed by
+routing it through the identical debounce queue the swatches already use. Commit `5757f4e`.
+
 ## Session Summary — 2026-09-18 Session 2 — Unified Settings' Off/On toggle defaults, day-start-hour spinbox formatting, escalated the book-folder-move data-loss bug to Blocking with a planned content-hash ID refactor, sequenced the cover-cache item behind it, and fixed cover-art-theme hover-from-Off. `a41b407`, `514c6be`, `c401778`, `5f0c45c`.
 
 **Full audit of Settings' Off/On toggle order, at Pryme's request.** A subagent inventoried all 17

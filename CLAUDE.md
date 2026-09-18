@@ -1810,7 +1810,22 @@ Any `QWidget` subclass (not `QFrame`, not `QLabel`) that owns a background-color
 
 *Reorganization note (2026-07-13): the "Critical Architecture Rules" section was restructured to remove repetition — it previously existed as two passes (a full-prose section and a later condensed second pass covering many of the same rules). The two were merged: rules that appeared in both now appear once, under whichever fact they share, with no information dropped. Rules unique to either pass are unchanged. See the note directly under the "Critical Architecture Rules" heading for detail.*
 
-*Last updated: 2026-09-16 Session 2 — Volume wheel-scroll, mute click-to-restore, and a chain of
+*Last updated: 2026-09-18 Session 3 — Fixed mono/swap/L/R balance (silently broken against mpv's
+own native `pan` filter shadowing ffmpeg's filter of the same name — confirmed live against a real
+`ao='pulse'` mpv instance, fixed by wrapping as `lavfi=[pan=...]`); added a 5-band EQ to Settings >
+Audio replacing Normalization (100/300/1000/3000/8000 Hz, ±6dB, tuned for narration not music,
+reusing the confirmed-working `equalizer=f=...` syntax voice_boost already used); fixed a Settings
+tab-to-tab header-pitch drift (`#settings_header`'s un-pinned height varied 1-2px per label from
+font-metric descenders, independent of available space — proven via a live empirical test padding a
+spacious tab with dummy groups to rule out space-driven compression, then fixed by pinning
+`min-height`/`max-height: 18px`) and a Themes-tab button-row spacing outlier (a stray
+`setSpacing(4)` override, the only one across every Settings button row); and fixed a same-day
+regression where the cover-art-theme hover preview (closed earlier the same session) applied
+synchronously with no debounce, unlike every theme swatch's 150ms queue — a brief pass-over
+committed the preview instantly, fixed by routing it through the same debounce mechanism. All
+live-verified by Pryme. Commits `97b5b38`, `119a2e6`, `1cc3ba9`, `b4f1325`, `5757f4e`.
+
+*Previously: 2026-09-16 Session 2 — Volume wheel-scroll, mute click-to-restore, and a chain of
 six hand-cursor/hitzone fixes, all live-verified by Pryme. Several widgets in the vol_stack area
 and the chapter label are laid out wider than their visible content (a small icon centered in a
 much larger label, centered text in a wider transparent-background button, a scrolling label in a

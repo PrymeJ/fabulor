@@ -5,6 +5,55 @@ list scannable. Kept, not deleted, per the project's normal practice of not thro
 that isn't fully duplicated in NOTES.md/SESSION.md/a commit message. Order is the same relative
 order these entries had in TODO.md before the split (2026-07-30).
 
+- **[2026-09-18, FIXED same day] REGRESSION: cover-art-theme hover previewed spuriously with no
+  mouse hover at all — same-day regression of the hover-from-Off fix (`5f0c45c`).** Root cause:
+  `_on_cover_pool_btn_hovered` applied its preview SYNCHRONOUSLY, with no debounce, unlike every
+  theme swatch (which queues through `_hover_debounce_timer`, 150ms, via `_on_theme_hovered`/
+  `_fire_pending_hover`). Harmless while this method only had a no-op branch for "no cover theme to
+  preview," but became a real bug the moment the Off-mode preview branch gave it something to
+  actually apply on every hover — a brief, unintended pass-over now committed the preview instantly.
+  Pryme's own diagnosis pinned it precisely: "When I pass over the theme swatch quickly, they don't
+  trigger as they have a guard for, I think, 80ms. But the cover art theme doesn't have it." Fixed
+  by routing `_on_cover_pool_btn_hovered` through the exact same `_pending_hover_theme`/
+  `_hover_debounce_timer` queue the swatches use — `_on_theme_changed` and `_fire_pending_hover`'s
+  trailing keyboard-hover reassert already accept either a theme name or a dict, so this was a
+  drop-in fix, not a new mechanism. Live-confirmed by Pryme. Commit `5757f4e`.
+
+- **[2026-08-03, FIXED 2026-09-18] `af command error` on Audio-tab mono/swap/balance — root cause
+  was mpv's native `pan` filter shadowing ffmpeg's filter of the same name.** Mono, Channel swap,
+  and L/R balance all threw `('Error running mpv command', -12, (...))` (`mpv.ErrorCode.COMMAND`)
+  and produced no audible effect whatsoever — confirmed live against a real `ao='pulse'` mpv
+  instance (a `/dev/zero`/`ao='null'` isolated repro attempt masked the bug entirely and returned
+  success, which is why it wasn't caught by any earlier isolated test). Root cause: mpv ships its
+  own NATIVE `pan` filter (legacy MPlayer libaf, different coefficient syntax) alongside libavfilter's
+  `pan` of the identical name — `Player.apply_audio_processing`'s unqualified `pan=...` string with
+  ffmpeg-style `c0=.../c1=...` options resolved to mpv's native filter and was rejected outright.
+  Fixed by wrapping every `pan=...` filter string as `lavfi=[pan=...]`, which routes explicitly
+  through libavfilter. `equalizer=...` (used by voice_boost, and later the new EQ bands below) was
+  never affected — no name collision for that filter. Commit `97b5b38`.
+
+- **[2026-09-17, FIXED 2026-09-18] "A working parametric EQ in the Audio tab" — shipped as a 5-band
+  fixed-frequency EQ, explicitly NOT fully parametric, per Pryme's own confirmed choice.** Replaced
+  "Speech compression (Normalization)" to reclaim panel space. 5 bands (100/300/1000/3000/8000 Hz —
+  rumble, warmth, presence, sibilance, air) tuned for narration rather than music, ±6dB at 0.1dB
+  resolution. Reused the already-working `equalizer=f=...:width_type=o:width=2:g=...` syntax
+  voice_boost relies on; a band within 0.01 of 0.0dB is omitted from the filter chain entirely.
+  `Config.get_norm_enabled`/`set_norm_enabled` deliberately left in place, unused (cheap, preserves
+  a clean re-add path, avoids an orphaned QSettings value with no getter). Layout iterated across
+  three live-feedback rounds (packed narrow sliders → rejected; one full-width slider per row with
+  balance moved below → close but one header silently wrapped to two lines; final shape confirmed
+  correct). New `tests/test_audio_processing.py`, 10 tests. Commits `119a2e6`, `1cc3ba9`.
+
+  **A pre-existing, silent tab-to-tab spacing drift was found and fixed in the same pass, unrelated
+  to the EQ itself.** `#settings_header`'s un-pinned height varied 1-2px per label purely from
+  font-metric descenders, independent of available space or group count — proven, not assumed, via
+  a live empirical test (temporarily padding the spacious Controls tab with 5 dummy groups to see if
+  it also drifted once it had as many groups as the tighter-looking Look tab; it did, ruling out
+  space-driven compression as the mechanism). Fixed via `min-height`/`max-height: 18px` on the
+  Settings panel's own `#settings_header` QSS rule. A second, independent outlier (the Themes tab's
+  Off/With pool/Exclusive row having its own explicit `setSpacing(4)`/zero-margin override, the only
+  button row across all Settings tabs with one) was found and fixed the same pass. Commit `b4f1325`.
+
 - **[2026-09-17, FIXED 2026-09-18] Settings' Off/On toggle button order was inconsistent across the
   panel — audited every pair, fixed the two real default mismatches, left the rest as-is.** Full
   inventory (17 toggles/ramp rows across Audio, Appearance, Library, Controls, Sprint, Sleep, Stats'

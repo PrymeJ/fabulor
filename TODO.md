@@ -120,11 +120,6 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
   works invisibly-until-populated, but Series would face the same "empty most of the time" problem
   without an obvious place to hide when unused. Needs feasibility/layout thinking before deciding,
   not just a yes/no.
-- [2026-09-17] A working parametric EQ in the Audio tab — feature, minor, not decided. Pryme's own
-  caveat: the existing audio-processing controls (mono/swap/balance) are already broken — see the
-  "Audio tab: mono/swap/balance throw a console error and do nothing" entry (Cleanup/process area,
-  Pending section) — so it's unclear whether a new EQ feature would even work correctly given
-  those pre-existing issues. Investigate that bug first; this is downstream of it, not independent.
 
 ### Keyboard/mouse focus quality-of-life gaps (batch logged 2026-09-17)
 - [2026-09-17] In Book Detail's metadata edit mode, if the Year or Narrator field is empty, it can't
@@ -545,7 +540,6 @@ isolation.
 - [2026-07-14] App-start flow-animation baseline roughness (Regime A) — standalone ~70ms hitch
 
 ## Pending
-
 
 - **[2026-08-02] Theme-apply ordering/deferral for book-switch flow stutter (cover-theme on).**
   Confirmed directional: Book A (80% progress) → Book B (11.5%) stutters during the flow animation;
@@ -1188,44 +1182,6 @@ isolation.
   than investigated. Needs its own pass to confirm they're genuinely dead (not
   matching something constructed dynamically or in a code path not checked) and, if
   so, remove them. Not urgent — no live effect either way.
-
-- **`af command error` printed to the terminal when clicking Audio-tab settings**
-  (2026-08-03, reported live by Pryme while testing the theme/stylesheet work — NOT
-  caused by it). Clicking norm/voice-boost/mono/channel-swap toggles, dragging the
-  balance slider, or hitting Reset in the Audio tab can print
-  `af command error: ('Error running mpv command', -12, (...))` to the console.
-  `-12` is `mpv.py`'s own `MPV_ERROR_COMMAND` (confirmed directly from the binding's
-  error-code table) — a genuine mpv-level failure of the `af clr`/`af add` calls in
-  `Player.apply_audio_processing` (`player.py`), caught and printed there, not a
-  crash. **Confirmed NOT a regression from the theme/stylesheet-split branch work**:
-  diffed both `player.py`'s `apply_audio_processing` and `audio_controls.py` against
-  `main` via a throwaway `git worktree` — byte-identical on both files, zero diff.
-  Also confirmed NOT related to the documented libcaca/GLIBCXX venv issue (CLAUDE.md)
-  — that failure mode is an `OSError` at `import mpv` time when the venv isn't
-  activated (reproduced directly for comparison) and would prevent the app from
-  starting at all, not surface as a caught runtime error from an already-running mpv
-  instance.
-
-  **Narrowed by Pryme (2026-08-03, same day):** Speech compression (norm) and Voice
-  boost work with no error. **Mono, Channel swap, and Balance — the bottom three
-  options — throw the error, and per Pryme those three have ALREADY been no-op**
-  (not producing an audible effect) independent of the console error. Reading
-  `apply_audio_processing`'s filter list confirms a structural split matching this
-  exactly: norm (`dynaudnorm`) and voice_boost (`equalizer=...` x3) are independent
-  `filters.append(...)` calls with no shared state; mono/swap/balance all funnel
-  through ONE `elif` chain building a single `pan=...` filter string
-  (`if mono: ... elif swap or balance != 0.0: ...`) — the three broken options are
-  exactly the three sharing this one code path, and the two working options are
-  exactly the two that don't touch it. Strongly suggests the `pan=` filter string
-  itself is malformed/rejected by mpv, not a general `af` pipeline problem — but NOT
-  yet confirmed by reading mpv's own error detail or testing the exact string
-  in isolation. Root cause of the actual `af` command failure itself not
-  investigated further — `apply_audio_processing` is inside the MPV-initialization
-  code CLAUDE.md protects (`DO NOT modify, refactor, or touch any code related to
-  MPV initialization under any circumstances`), so this needs its own
-  explicitly-scoped session, not a piecemeal touch. Pryme was not certain how long
-  this has been happening — treat as a pre-existing latent issue, not a new one,
-  until investigated further.
 
 ## In Progress
 

@@ -1,3 +1,28 @@
+## 5-band EQ + Settings tab spacing/row fixes — 2026-09-18 Session 3
+
+Background: added a 5-band EQ to Settings → Audio (replacing Normalization), then fixed a
+tab-to-tab header-pitch drift and a stray row-spacing override discovered along the way while
+checking the new EQ's layout. Commits `119a2e6`, `1cc3ba9`, `b4f1325`.
+
+### Equalizer
+- [x] Settings → Audio shows an "Equalizer" section with 5 sliders (100, 300, 1K, 3K, 8K) below
+  L/R balance, each with center-snap/center-mark like balance
+- [ ] Dragging/arrow-keying each EQ slider produces an audible tonal change while a book plays,
+  with **no console error** (this is exactly the failure mode mono/swap/balance had — must not
+  reintroduce it)
+- [ ] Reset to defaults restores all 5 EQ sliders to center (flat) and hides itself again once
+  every Audio control (voice boost, mono, swap, balance, all 5 EQ bands) is back to default
+- [ ] Keyboard Up/Down moves focus between the 5 EQ slider rows (each is its own one-item row,
+  like balance); Left/Right adjusts the focused slider's own value
+- [ ] Traveling marker traces each EQ slider's square corners correctly (not rounded)
+- [ ] "Speech compression (Normalization)" no longer appears anywhere in the Audio tab
+
+### Settings tab header/row spacing consistency (`b4f1325`)
+- [x] Switching between Themes/Look/Library/Audio/Controls, every tab's header-to-header spacing
+  looks identical — no tab reads as "tighter" or "more cramped" than another
+- [x] Themes tab: the Off / With pool / Exclusive button row's spacing now matches every other
+  button row in Settings (was visibly tighter before the fix)
+
 ## Settings Off/On toggle defaults + day-starts-at spinbox — 2026-09-18 Session 2
 
 Background: TODO_ARCHIVE.md's 2026-09-18 closure entry has the full audit (`a41b407`).
@@ -25,14 +50,17 @@ clearing the relevant QSettings key, is what actually exercises the new default)
   investigated and explicitly left unfixed (no safe Qt lever found after two reverted attempts);
   not a regression if still visible
 
-## Cover-art-theme hover previews from Off mode — 2026-09-18 Session 2
+## Cover-art-theme hover previews from Off mode — 2026-09-18 Session 2/3
 
-Not yet live-verified by Pryme. Background: TODO_ARCHIVE.md's 2026-09-18 closure entry (`5f0c45c`).
-This is the hover half of the right-click fix from 2026-09-17 (already live-confirmed separately).
+Regression found and fixed same-day (Session 3, `5757f4e`): the preview applied synchronously with
+no debounce, so a brief pass-over (no lingering) fired it instantly — fixed by routing through the
+same 150ms `_hover_debounce_timer` queue every theme swatch already uses. Live-confirmed by Pryme.
 
-- [ ] With cover-art-theme mode set to Off and a book with a cover loaded, hover the "Cover art
-  based theme" entry in Settings → Look — should preview the cover-derived theme (not remain
-  inert), then revert cleanly when the mouse leaves
+- [x] Quickly passing the cursor over the "Cover art based theme" entry (no lingering) does NOT
+  trigger a preview — matches every theme swatch's own quick-pass-over behavior
+- [x] With cover-art-theme mode set to Off and a book with a cover loaded, hovering (lingering on)
+  the "Cover art based theme" entry in Settings → Look previews the cover-derived theme, then
+  reverts cleanly when the mouse leaves
 - [ ] After that hover-and-leave, confirm the mode is STILL Off and the stored theme was NOT
   changed — hovering must only preview, never commit (unlike left/right-click on the same button)
 - [ ] Repeat with mode set to With pool, then to Exclusive — hover-preview-from-Off is the only new
