@@ -1,4 +1,4 @@
-## Session Summary — 2026-09-18 Session 1 — Sleep timer end-of-chapter fade-out, a two-round Stats row-title elision fix, closed a false-lead TODO item, and unified/fixed Library's keyboard-selection highlight and pagination hover-jump. `523f432`, `9ba1665`, `9f4f6f1`, `e308c47`, `9058136`.
+## Session Summary — 2026-09-18 Session 1 — Sleep timer end-of-chapter fade-out, a two-round Stats row-title elision fix, closed a false-lead TODO item, unified/fixed Library's keyboard-selection highlight and pagination hover-jump, closed two already-fixed-but-never-archived keyboard-nav TODO items, closed the Library scan focus-strand item that had gone stale in the HTML triage page, a pyflakes unused-import/undefined-name cleanup, and five distinct Book Detail Tags-tab completer bugs (one needing real log-based diagnosis, not a guess). `523f432`, `9ba1665`, `9f4f6f1`, `e308c47`, `9058136`, `bc4e395`, `e2df6ac`, `3794231`, `5de212c`, `e2014cf`.
 
 **Sleep timer end-of-chapter mode now fades out**, mirroring timed mode. Designed against two
 concerns Pryme raised directly: seeking within the anchor chapter while a fade is showing (fade
@@ -59,9 +59,75 @@ the app"), Library was the one panel left out of the 2026-09-15 hover-pickup pas
   already-proven jitter-tolerant poll mechanism verbatim in shape (not reinvented): every
   keyboard move arms a poll and silences `_on_view_entered` until the mouse has genuinely moved
   past a small jitter threshold AND rests over a real, different row. Both fixes committed
-  together (`9058136`); not yet independently confirmed by Pryme in the running app as of this
-  writing (the highlight-color change is a visual call his eyes settle, per CLAUDE.md's own rule
-  on visual matters).
+  together (`9058136`), and both **live-confirmed by Pryme**.
+
+**Two keyboard-nav TODO items were closed as already fixed, not newly fixed** — Settings' Themes-
+tab interval focus indicator and Speed panel's Tab order had working fixes committed 2026-09-06
+(`3015945`) and 2026-09-10 (`e3e8145`) respectively, both BEFORE or shortly after the TODO entry
+reporting them was filed 2026-09-09 — the entry had simply never been moved to TODO_ARCHIVE.md.
+Confirmed by reading the actual code and its own already-detailed root-cause comments, then
+live-confirmed still working by Pryme with a screenshot of the interval option showing its
+underline. **Lesson applied mid-session**: initially misjudged the Stats `‹`/`›` sub-nav button
+item the same way — read the code, concluded it was a real functional gap, and was wrong; Pryme
+corrected directly that arrows already reach period-cycling via the row list and the buttons are
+DELIBERATELY never given a focus highlight. That item was removed from TODO.md outright (not
+archived — there was never a bug), and the correction sharpened the read on the two GENUINELY
+stale items that followed.
+
+**The HTML ship-triage artifact was also found stale mid-session**, independent of TODO.md/
+TODO_ARCHIVE.md themselves: "Library scan can permanently strand keyboard focus" was still showing
+under Blocking on the page even though it had been root-caused and fixed the PREVIOUS session
+(2026-09-17, `TagManagerWidget.refresh_books()` reopening a closed panel — see that date's own
+TODO_ARCHIVE.md entry). The page had been regenerated multiple times this session without ever
+being re-diffed against the archive it was supposedly reflecting. Blocking dropped from 2 items to
+1 (just the VT missing-file design). Worth remembering for any future derived-artifact regeneration:
+re-check EVERY item still shown, not just the ones being actively edited that pass.
+
+**Pyflakes cleanup, Pryme's own framing going in**: "not urgent, and something technically totally
+for you, not requiring me." ~30 unused imports removed across 15 files (`e2df6ac`), confirmed via
+`pyflakes` plus a `grep` of each name across its file before deleting (to rule out a string-quoted
+type annotation or similar non-obvious use). Two real, non-cosmetic bugs found and fixed in the
+same pass, not just lint noise: `panels.py`'s `self.book_detail_panel: "BookDetailPanel | None"`
+had no backing import anywhere in the file (fixed with a `TYPE_CHECKING`-guarded import, no
+circular-import risk); and, found independently while in `flow_layout.py`, `horizontalSpacing()`/
+`verticalSpacing()` referenced a bare `QStyle` name only ever imported LOCALLY inside a different
+method — genuinely undefined if Qt's layout engine ever called either method directly. Moved the
+import to module level. Every touched module import-checked directly, full suite green.
+
+**Book Detail's Tags-tab tag-add field — five completer bugs, reported together with real detail
+for the first time** (the TODO item had sat as a bare, detail-free placeholder since 2026-09-17).
+Two were one-line/mechanical (a hardcoded `LIMIT 10` in `get_tag_suggestions` hiding real matches
+under a broad prefix; `QCompleter.complete()` not being called explicitly after a debounced model
+update, which was ALSO the cause of a second symptom — the popup not resizing when narrowed-then-
+widened results should have grown it back). A fourth (Tab wiping text with what looked like a stuck
+cursor) traced to a genuine Qt fact confirmed via an isolated test rather than assumed: `clearFocus()`
+does not close an already-open `QCompleter` popup, which was the actual "stuck cursor" artifact.
+
+**The fifth (Down/Up "quickly selects one as if clicked/pressed Enter") needed two real
+investigation rounds, not one lucky guess.** First attempt: `_ensure_panel_owns_focus()`'s
+`isAncestorOf` check reads a `QCompleter` popup as "outside" the panel, same shape as this panel's
+own documented popup gotcha for the modal-dialog case — added an `activePopupWidget()` guard,
+theoretically sound, and Pryme reported back it made NO difference (tested with the backdrop set to
+Transparent specifically to rule out blur as a factor too — a genuinely useful elimination). Rather
+than guess a third time, added temporary `[TAGCOMPLETE-TRACE]` log instrumentation (per CLAUDE.md's
+"never substitute a plausible explanation for a checked one" rule) and asked Pryme to reproduce and
+share the actual log. First finding from the log: no `activated` signal or `_on_add_tag` call EVER
+fired on an arrow press — ruling out literal accidental selection outright. Second finding, the
+real cause: a Down press was followed ~193ms later by `_do_tag_suggestions firing... text='ai
+[listened]' suggestions=1` — arrow-key navigation writes the highlighted row's full text into the
+field as an inline preview (standard `QCompleter` behavior), and the debounce timer was treating
+that preview-write as genuine typing, re-querying the DB against the FULL PREVIEWED TAG as the
+search prefix 200ms later and collapsing the list to 1 result — which is what visually read as an
+accidental selection, even though nothing was ever actually chosen. Fixed by connecting
+`QCompleter.highlighted` (fires before the resulting `textChanged`, exactly when the preview is
+written) to a one-shot flag the debounce handler checks and consumes. One own-bug found along the
+way: the diagnostic lambda itself crashed on a `RuntimeError` (captured the `QKeyEvent` by
+reference inside a deferred `QTimer.singleShot(0, ...)`, and Qt deletes the event object before the
+0ms timer fires) — fixed by capturing the key value directly instead of the event. All trace
+instrumentation stripped back out once the real cause was confirmed and fixed; kept only the
+finding itself, documented in the fix's own commit message and docstring. **Live-confirmed fixed by
+Pryme** for all five, the last one only after this two-round investigation actually landed on the
+real mechanism.
 
 ## Session Summary — 2026-09-17 Session 1 — Full TODO.md staleness audit against git history and CLAUDE.md, closing 13 already-fixed entries never moved to TODO_ARCHIVE.md, plus one real fix (cover-art-theme right-click-from-Off) and several corrections from Pryme's live testing. `c78ace5`, `3946a17`.
 

@@ -5,6 +5,113 @@ list scannable. Kept, not deleted, per the project's normal practice of not thro
 that isn't fully duplicated in NOTES.md/SESSION.md/a commit message. Order is the same relative
 order these entries had in TODO.md before the split (2026-07-30).
 
+- **[2026-09-17, FIXED 2026-09-18, live-confirmed by Pryme] Book Detail's Tags-tab tag-add field —
+  five distinct completer bugs, all filed as one detail-free placeholder ("priority but not yet
+  reproduced") and all fully diagnosed and fixed in one session once Pryme actually walked through
+  the reproduction.** Real screenshots and precise step-by-step reports this time, not a vague
+  symptom — see the git log for the exact wording of each.
+
+  1. **Query capped at 10 results regardless of how many tags actually matched a prefix**
+     (`db.py`'s `get_tag_suggestions`, `LIMIT 10`). A broad shared-namespace prefix like `"ai:"`
+     silently hid every match past the first 10 alphabetically. Raised to `LIMIT 50` — the app's
+     own global unique-tag cap (`add_book_tag` enforces it), so every match is now always
+     returned regardless of prefix breadth. Zero-risk, one-line fix.
+  2. **Typing a more specific prefix right after a broader one could show zero matches for a
+     genuinely valid tag** (e.g. "ai:" → "ai: s" briefly showed nothing, even though "ai: scott
+     brick" matches). Root cause: Qt's own `QLineEdit`/`QCompleter` wiring re-filters the popup
+     IMMEDIATELY on every keystroke against whatever the model currently holds — before this
+     app's 200ms debounced DB re-query has a chance to fetch the correct, fresh result set for
+     the new prefix. Fixed by calling `self._tag_completer.complete()` explicitly after each
+     debounced model update, forcing Qt to re-run completion against the NEW model rather than
+     leaving the popup showing a stale filter pass.
+  3. **The dropdown wouldn't grow back to fit more results after narrowing then widening the
+     search** (backspacing showed a scrollbar instead of a taller popup). Same root cause and
+     same fix as #2 — `QCompleter` does not automatically recompute popup geometry when its
+     model's row count changes while already visible; the explicit `complete()` call above forces
+     that recomputation too.
+  4. **Tab while typing wiped the text but left what looked like a stuck cursor, and typing again
+     was broken or limited to one character.** Confirmed directly via an isolated Qt test
+     (`QLineEdit`+`QCompleter`, not assumed): `clearFocus()` does NOT close an already-open
+     `QCompleter` popup — it stays visible, orphaned, floating over the now-cleared/defocused
+     field. The "stuck cursor" was this leftover popup, not the `QLineEdit`'s own caret. Fixed
+     by calling `self._tag_completer.popup().hide()` explicitly in `_clear_tag_input()`
+     (`book_detail_panel.py`), the shared "leave the field" action Tab-away and Escape both use.
+  5. **Down/Up arrow navigation through the suggestion popup "quickly selects one as if I
+     clicked/pressed Enter on it."** The trickiest of the five — two investigation rounds:
+     - **First theory (independently correct, but NOT the actual cause — confirmed by live
+       retest making no difference):** `_ensure_panel_owns_focus()` (runs on every keypress) uses
+       `isAncestorOf` to detect focus drifting outside the panel — a `QCompleter` popup is a
+       genuine top-level `Qt.WindowType.Popup` window, never a widget-tree descendant, so it
+       reads as "outside" exactly like any other popup (same shape as this panel's/Tag Manager's
+       own documented `safe`-allowlist gotcha, see CLAUDE.md's "Keyboard focus ownership"
+       consequence 5). Added a `QApplication.activePopupWidget()` guard, mirroring the existing
+       `activeModalWidget()` guard for the file-dialog case. Kept in the final code as
+       independently correct, but its docstring now explicitly says it did NOT fix this bug,
+       since Pryme confirmed live (tested with the backdrop set to Transparent to rule out blur
+       too) that it made no difference.
+     - **Real cause, found via temporary `[TAGCOMPLETE-TRACE]` log instrumentation rather than a
+       third guess** (per CLAUDE.md's "never substitute a plausible explanation for a checked
+       one" rule) — confirmed first that NO `activated` signal or `_on_add_tag` call EVER fired
+       on an arrow press (ruling out literal accidental selection), then caught the actual
+       mechanism directly in the log: a Down press was followed ~193ms later by
+       `_do_tag_suggestions firing... text='ai [listened]' suggestions=1`. Arrow-key navigation
+       through a `QCompleter` popup writes the highlighted row's full text into the line edit as
+       an inline preview — standard, documented Qt behavior — and `_on_tag_input_changed` had no
+       way to tell that apart from genuine typing, so it restarted the 200ms debounce timer for
+       the preview text too. 200ms later, `_do_tag_suggestions` re-queried the DB using the FULL
+       PREVIEWED TAG STRING as the search prefix, which of course matched only that one tag,
+       collapsed the suggestion list to 1 result, and reshaped the popup — visually reading as
+       "the arrow key just picked something," even though nothing was ever actually selected or
+       added. Fixed by connecting `QCompleter.highlighted` (fires exactly when the inline preview
+       is written, before the resulting `textChanged`) to set a one-shot flag
+       (`_tag_input_change_from_completer`) that `_on_tag_input_changed` checks and consumes,
+       skipping the debounce restart for that one call only — a genuine keystroke immediately
+       after still restarts it normally.
+
+  All five fixes committed together with the diagnostic trace stripped back out once the real
+  cause was confirmed (`3794231` for #1/#2/#3, `5de212c` for #4/#5, `e2014cf` for the one test
+  fixture update carried along with #4). Full pytest suite green throughout; `pyflakes` clean.
+  **Live-confirmed fixed by Pryme** for all five, in two rounds — #1-#3 confirmed together, #4
+  confirmed separately, then #5 needed the deeper trace-based investigation above before it
+  actually resolved.
+
+- **[2026-06-27, re-verified 2026-09-17, FIXED 2026-09-18] Pyflakes: unused imports across 15
+  files, plus the `BookDetailPanel` undefined-name reference in `ui/panels.py`.** Pryme's own
+  framing going in: "not urgent, and something technically totally for you, not requiring me" —
+  low-risk, deletion-only cleanup, done in one pass rather than left open indefinitely.
+
+  Removed ~30 dead imports total (confirmed via `python -m pyflakes src/fabulor/` plus a `grep` of
+  each name across its own file before deleting, to rule out a string-quoted type annotation or
+  other non-obvious use pyflakes wouldn't see): `app.py` (`QModelIndex`, `QRegularExpression`,
+  `QIntValidator`, `QRegularExpressionValidator`, `THEMES`, `ThemeComboBox`, `CoverLoaderWorker`,
+  `LibraryPanel`, `StatsPanel`, `BookDetailPanel`, `TagManagerWidget`, `BOOK_QUOTES`),
+  `library/scanner.py` (`Qt`), `flow_layout.py` (see below), `carousel.py` (`Qt`),
+  `cover_panel.py` (`os`, `QSizePolicy`, `QBrush`, `save_cover_image`, a dead local
+  `import tempfile, shutil`), `text_context_menu.py` (`QEvent`), `title_bar.py` (`QPixmap`),
+  `book_detail_panel.py` (a dead local `QColor` import), `speed_controls.py` (`THEMES`),
+  `theme_manager.py` (`QPushButton`, `QWidget`), `tag_manager.py` (`QImage`), `stats_panel.py`
+  (`QEnterEvent`), `library.py` (`QWidget`, `QLabel`, `QGridLayout`, `QProgressBar`, `QDateTime`,
+  `QCoreApplication`), `panels.py` (`QLabel`, `QPushButton`, `QVBoxLayout`, `QLineEdit`), and
+  `models/book.py` (`field`, `asdict`).
+
+  **The `BookDetailPanel` reference was real, not a lint-only nuisance** — `panels.py`'s
+  `self.book_detail_panel: "BookDetailPanel | None" = None` had NO backing import anywhere in the
+  file, string-quoted so it never raised at runtime, but genuinely unresolvable by any static
+  tooling. Fixed with a `TYPE_CHECKING`-guarded import (`if TYPE_CHECKING: from .book_detail_panel
+  import BookDetailPanel`) — confirmed no circular-import risk first (`book_detail_panel.py` does
+  not import `panels.py` or anything that does).
+
+  **A second, structurally identical latent bug was found and fixed in the same pass, NOT in the
+  original TODO entry's list** — `flow_layout.py`'s `horizontalSpacing()`/`verticalSpacing()`
+  referenced a bare `QStyle` name that was only ever imported LOCALLY inside a different method
+  (`_smart_spacing`), so those two methods would raise `NameError` if Qt's layout engine ever
+  called them directly rather than routing through `_smart_spacing` first — genuinely undefined,
+  not just an unused-import false alarm. Moved the `QStyle` import to module level.
+
+  Every touched module import-checked directly (`import fabulor.<module>` for all 15) in addition
+  to `pytest tests/ -q` (green) and `py_compile` — Pryme's own live check was "the app is loading
+  correctly with no errors in the terminal," which this matches. Commit `e2df6ac`.
+
 - **[2026-09-09, FIXED earlier — 2026-09-06 and 2026-09-10 — closed 2026-09-18, live-confirmed by
   Pryme] Two keyboard-nav consistency gaps that were already fixed before this entry was even
   filed, and just never got moved out of TODO.md.** Both items were logged 2026-09-09 as "not yet

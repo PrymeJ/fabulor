@@ -1,22 +1,22 @@
 ## Library keyboard-selection highlight unification + pagination hover-jump fix — 2026-09-18 Session 1
 
-Two changes shipped together (`9058136`), neither yet independently confirmed live in the running
-app as of this writing. Background: CLAUDE.md's "Keyboard-selection visual, per view mode" note
-and the `StatsRowListView` hover-poll mechanism this was ported from.
+Two changes shipped together (`9058136`). **Both confirmed live by Pryme.** Background: CLAUDE.md's
+"Keyboard-selection visual, per view mode" note and the `StatsRowListView` hover-poll mechanism
+this was ported from.
 
 ### Keyboard highlight color (1-per-row only)
-- [ ] 1-per-row view mode: arrow-navigate to a book with the mouse elsewhere — the keyboard
+- [x] 1-per-row view mode: arrow-navigate to a book with the mouse elsewhere — the keyboard
   highlight should now look like a mouse-hover highlight (same color/opacity as hovering that row
   with the mouse), not the old separate, more subtle tint
 - [ ] Confirm List, 2-per-row, 3-per-row, and Square modes look UNCHANGED — this fix only touches
   1-per-row's own tint
 
 ### Pagination no longer jumps to a stationary mouse's row
-- [ ] Rest the mouse over some row in the middle of the list (not the first or last visible row),
+- [x] Rest the mouse over some row in the middle of the list (not the first or last visible row),
   then press Down or Up repeatedly with the mouse NOT moving — the keyboard selection should
   advance one row at a time from wherever it already was, never snapping to the row under the
   mouse
-- [ ] Same check with PageDown/PageUp — this was the original reported symptom ("making you have
+- [x] Same check with PageDown/PageUp — this was the original reported symptom ("making you have
   to press PgDn twice") — a single PageDown should move a full page, not appear to consume one
   press just resolving the mouse's row first
 - [ ] Same check with Home/End
@@ -26,6 +26,23 @@ and the `StatsRowListView` hover-poll mechanism this was ported from.
 - [ ] After a keyboard move, physically move the mouse onto a genuinely different row — the
   keyboard highlight should yield to mouse hover normally, same as before this fix (mouse
   reclaim itself must still work, only the false-positive "mouse never moved" case was broken)
+
+## Book Detail Tags tab — tag-add field completer, five bugs fixed — 2026-09-18 Session 1
+
+All five **live-confirmed fixed by Pryme** (`3794231`, `5de212c`). Background: TODO_ARCHIVE.md's
+2026-09-18 closure entry has the full per-bug root-cause writeup.
+
+- [x] Type a broad shared-prefix (e.g. `ai:`) with 10+ matching tags — the full list should show,
+  not just the first 10
+- [x] Type a prefix, then immediately type a more specific continuation (e.g. `ai:` then a space
+  then a letter) — matches should show without a spurious empty flash
+- [x] Narrow the search down, then backspace to widen it again — the dropdown should grow back to
+  fit more results instead of staying capped at a scrollbar
+- [x] Start typing a tag, press Tab mid-typing — the field should clear with no leftover dropdown
+  and no stuck-looking cursor; typing a fresh tag afterward should work normally
+- [x] Type a prefix, press Down/Up repeatedly through the suggestions — the list should stay
+  stable as you arrow through it, never collapsing to a single result or looking like something
+  got auto-selected (no tag should actually be added without pressing Enter/Tab-selecting/clicking)
 
 ## Sleep timer end-of-chapter mode fade-out — 2026-09-18 Session 1
 

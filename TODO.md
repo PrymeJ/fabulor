@@ -159,13 +159,6 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
   pattern Stats already proved out, as its own scoped investigation — don't let the display feature
   quietly justify or block on a full rewrite without that being a deliberate decision.
 
-### Filter issues while adding tags — priority but not yet reproduced
-- [2026-09-17] BUG, priority (although not a release blocker). Logged as a bare placeholder at
-  Pryme's own request — he flagged this as priority but explicitly has no specifics captured yet
-  ("needs to be reproduced and the issues need to be fully documented first"). Fill in with real
-  detail (which field, which filter, what the wrong behavior looks like) the next time it's hit,
-  rather than guessing at a mechanism now.
-
 ### Listening Sprint backward-seek compensation doesn't net forward+backward excursions
 - [2026-08-11] The pure tick-to-tick `_last_known_pos` diff in `SprintPanel.update_sprint_state`
   can't tell a genuine rewind from "seeked forward then came back" — seeking forward 20 minutes then
@@ -537,7 +530,6 @@ isolation.
 - [2026-07-01] ScrollingLabel first-glyph clipping
 
 ### Cleanup / process
-- [2026-06-27] Unused imports / dead names flagged by pyflakes in app.py and ui/panels.py
 - [2026-06-27] Excluded Books popup corner-radius mismatch
 - [2026-06-25] Pre-release cleanup pass (remove Q-key shortcut, stray debug prints)
 
@@ -1112,25 +1104,6 @@ isolation.
   The committed state (`72d80df`) has a visible 2px gap at the start position as the least-bad
   tradeoff. Needs a fresh look — possibly `QTextLayout` instead of raw `drawText`, or a containing
   widget with `setContentsMargins` rather than painting directly.
-
-- **[2026-06-27, re-verified 2026-09-17] Unused imports / dead names flagged by pyflakes in
-  `app.py` and `ui/panels.py` — still present, exact list and line numbers have drifted.**
-  Pre-existing, not introduced any particular session. Re-ran pyflakes 2026-09-17 against current
-  source (the original entry's line numbers no longer match). `app.py`: `QModelIndex`,
-  `QRegularExpression` (QtCore), `QIntValidator`, `QRegularExpressionValidator` (QtGui), `THEMES`
-  (themes), `ThemeComboBox` (theme_manager), `CoverLoaderWorker` (cover_loader), `LibraryPanel`
-  (ui.library), `StatsPanel` (stats_panel), `BookDetailPanel` (book_detail_panel),
-  `TagManagerWidget` (tag_manager), `BOOK_QUOTES` (book_quotes) all still unused; also a
-  `QPropertyAnimation` import shadowed by a loop variable, now at app.py:2122 (was :1212).
-  `ui/panels.py`: only `QLabel`, `QPushButton`, `QVBoxLayout`, `QLineEdit` are still unused
-  (`QWidget`/`QHBoxLayout`/`QGridLayout`, present in the original 2026-06-27 list, are now used) —
-  plus the undefined-name `BookDetailPanel` reference, now at line 266 (was line 34; genuinely
-  moved, not a typo — confirmed via `grep -n BookDetailPanel src/fabulor/ui/panels.py`, still
-  `self.book_detail_panel: "BookDetailPanel | None" = None` with no import), and a new one not in
-  the original list: `panels.py:1843` — local variable `mw` assigned but never used.
-  Run `python -m pyflakes src/fabulor/app.py src/fabulor/ui/panels.py` to reproduce. Low priority,
-  cosmetic/lint-only except the undefined-name one, which should be checked for being a latent bug
-  rather than assumed harmless.
 
 - **[2026-06-27] Excluded Books popup (`ui/excluded_books.py`) corner-radius mismatch.**
   The popup's selection highlight is flat/square; `settings_folder_list`'s is rounded (`4px`).
