@@ -27,29 +27,6 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
   not a functional block. Originally deferred by Pryme's own call ("Fix Stats first, Book Detail
   later"); scope is now understood to be much smaller than a from-scratch feature addition.
 
-### Three more keyboard-nav consistency gaps, found by Pryme's own live testing (not yet investigated)
-- [2026-09-09] All three reported together, none investigated yet — grouped here rather than as
-  separate entries since they were all found in the same pass and are all small, self-contained
-  gaps rather than one shared root cause:
-  - **Settings' Themes-tab interval options have no Tab-focus indicator.** "Tab in Settings
-    doesn't underline the interval options. Enter selects them, but they are never indicated" —
-    i.e. Tab can reach and Enter can activate an interval option, but nothing shows the user
-    which one currently has keyboard focus while tabbing through them (no underline, no
-    highlight, no marker). Likely the interval row's own QLabel-based buttons never got the same
-    `kbdnav_hover`/focus-indicator treatment other Themes-tab controls have — see this file's own
-    `swatch_box`/interval-row history further up in this list, and the "text-decoration:
-    underline does NOT render on QLabel via QSS" gotcha already documented in CLAUDE.md
-    (2026-09-06 Session 2) as the likely reason a naive underline-based indicator wouldn't work
-    here either, if that's what's attempted.
-  - **Speed panel's Tab order is wrong.** "Tab skips Default speed after grid. Goes there after
-    Smart rewind. Order needs to be fixed here." — the Default-speed row is being reached later in
-    the Tab sequence (after Smart Rewind) than its visual position (right after the preset grid)
-    would suggest, so Tab-cycling through Speed doesn't match reading order. Likely a
-    `flat_panel_rows`/construction-order mismatch, the same general class of "Qt's native order
-    diverges from the visual model" issue already flagged twice elsewhere in this same section —
-    worth checking whether this is literally the same underlying defect surfacing a third time,
-    or a separate, unrelated row-ordering bug specific to how Speed's rows list was built.
-
 ### Small visual/cosmetic bugs (batch logged 2026-09-17, mostly not yet reproduced in detail)
 - [2026-09-17] Restart button has jagged edges — visual, minor. Not yet investigated.
 - [2026-09-17] Chapter label scroll has a 2px gap on the left before scrolling starts — visual,

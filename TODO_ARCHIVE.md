@@ -5,6 +5,37 @@ list scannable. Kept, not deleted, per the project's normal practice of not thro
 that isn't fully duplicated in NOTES.md/SESSION.md/a commit message. Order is the same relative
 order these entries had in TODO.md before the split (2026-07-30).
 
+- **[2026-09-09, FIXED earlier — 2026-09-06 and 2026-09-10 — closed 2026-09-18, live-confirmed by
+  Pryme] Two keyboard-nav consistency gaps that were already fixed before this entry was even
+  filed, and just never got moved out of TODO.md.** Both items were logged 2026-09-09 as "not yet
+  investigated," but reading the actual code this session found each one had a fix already
+  committed with its own detailed root-cause comment still sitting in place — the TODO entry had
+  simply gone stale rather than being closed at the time.
+
+  **Settings' Themes-tab interval options had no Tab-focus indicator** ("Tab in Settings doesn't
+  underline the interval options. Enter selects them, but they are never indicated"). Fixed
+  `3015945`, 2026-09-06 — three days BEFORE this TODO entry was filed. `themes.py`'s
+  `QWidget#settings_panel[kbdnav="true"] QLabel#theme_interval_label:focus { border-bottom: ... }`
+  rule is the real fix; its own comment already documents that `text-decoration: underline` was
+  tried first and confirmed inert on `QLabel` via direct offscreen pixel comparison, with
+  `border-bottom` used instead as the actual working substitute. Live-confirmed by Pryme this
+  session with a screenshot showing "5" underlined while tabbed to.
+  **Speed panel's Tab order skipped Default Speed until after Smart Rewind.** Fixed `e3e8145`,
+  2026-09-10 — one day after this entry was filed, evidently without the entry being closed at the
+  time. Root cause, per that commit's own comment in `panels.py`'s `panel_tab_widgets`: Speed's
+  Default Speed row is deleted and rebuilt on every panel open (`_rebuild_def_speed_row`, called
+  from `_start_speed_entry`), so its buttons become the NEWEST entries in Qt's internal
+  child-object list — `findChildren` order reflects recreation order, not layout order, the
+  moment anything in the panel gets rebuilt after construction. Arrow-key navigation was already
+  immune (`flat_panel_rows` reads the real `QVBoxLayout`/`QHBoxLayout`/`QGridLayout` structure via
+  `itemAt`, not `findChildren`) — Tab was the only consumer still using the fragile walk. Fixed by
+  making `panel_tab_widgets` delegate to `flat_panel_rows` for Speed/Sleep/Sprint instead of its
+  own `findChildren`-based walk.
+
+  Both closed on Pryme's own confirmation this session ("Both fixed") rather than fresh
+  diagnosis — the investigative work here was locating the pre-existing fixes and their commits,
+  not producing new ones.
+
 - **[2026-09-08, FIXED 2026-09-18, not yet live-verified by Pryme] Library keyboard nav didn't
   yield to mouse hover during pagination, and its 1-per-row keyboard-selection tint used its own
   separate color instead of matching mouse hover.** Reported as the Library-specific instance of
