@@ -1142,12 +1142,14 @@ class Player(QObject):
         if self.instance:
             self.instance.volume = self._base_volume * self._fade_ratio
 
-    def apply_audio_processing(self, norm=False, mono=False, swap=False, balance=0.0, voice_boost=False):
+    def apply_audio_processing(self, mono=False, swap=False, balance=0.0, voice_boost=False,
+                                eq_100=0.0, eq_300=0.0, eq_1000=0.0, eq_3000=0.0, eq_8000=0.0):
         if not self.instance: return
 
         filters = []
-        if norm:
-            filters.append("dynaudnorm")
+        for freq, gain in ((100, eq_100), (300, eq_300), (1000, eq_1000), (3000, eq_3000), (8000, eq_8000)):
+            if not math.isclose(gain, 0.0, abs_tol=0.01):
+                filters.append(f"equalizer=f={freq}:width_type=o:width=2:g={gain:.1f}")
 
         if voice_boost:
             filters.append("equalizer=f=500:width_type=o:width=2:g=3")

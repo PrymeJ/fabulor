@@ -9,31 +9,17 @@ class AudioSettingsTab(QWidget):
         super().__init__(parent)
         self.player = player
         self.config = config
-        self.norm_buttons = {}
         self.voice_buttons = {}
         self.mono_buttons = {}
         self.swap_buttons = {}
-        
+        self.eq_sliders = {}
+
         self._setup_ui()
         self.update_visuals()
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(10, 0, 10, 10)
-
-        # --- Normalization ---
-        norm_header = QLabel("Speech compression (Normalization)")
-        norm_header.setObjectName("settings_header")
-        layout.addWidget(norm_header)
-        norm_row = QHBoxLayout()
-        for state in ["Off", "On"]:
-            btn = QPushButton(state)
-            btn.setObjectName("pattern_button")
-            btn.clicked.connect(lambda _, s=state: self._update_setting("norm", s == "On"))
-            norm_row.addWidget(btn)
-            self.norm_buttons[state] = btn
-        norm_row.addStretch()
-        layout.addLayout(norm_row)
 
         # --- Voice Boost ---
         voice_header = QLabel("Voice boost")
@@ -100,6 +86,36 @@ class AudioSettingsTab(QWidget):
         self.balance_slider.valueChanged.connect(self._on_balance_changed)
         layout.addWidget(self.balance_slider)
 
+        # --- Equalizer ---
+        eq_header = QLabel("Equalizer")
+        eq_header.setObjectName("settings_header")
+        layout.addWidget(eq_header)
+        eq_rows = QVBoxLayout()
+        eq_rows.setSpacing(2)
+        for freq, label in [("100", "100"), ("300", "300"), ("1000", "1K"), ("3000", "3K"), ("8000", "8K")]:
+            eq_row = QHBoxLayout()
+            slider = ClickSlider(Qt.Horizontal)
+            slider.setObjectName(f"eq_slider_{freq}")
+            slider.center_mark = True
+            slider.snap_to_center = True
+            slider.setRange(-60, 60)
+            slider.setValue(int(getattr(self.config, f"get_eq_gain_{freq}")() * 10))
+            slider.setFixedHeight(10)
+            slider.setFixedWidth(140)
+            # Same reasoning as balance_slider above: ClickSlider is NoFocus by default
+            # (load-bearing for the transport sliders), granted per-instance here since this
+            # lives inside a panel where that rule doesn't apply.
+            slider.setFocusPolicy(Qt.FocusPolicy.TabFocus)
+            slider.valueChanged.connect(lambda v, k=freq: self._on_eq_changed(k, v))
+            eq_row.addWidget(slider, alignment=Qt.AlignmentFlag.AlignVCenter)
+            freq_label = QLabel(label)
+            freq_label.setObjectName("eq_freq_label")
+            eq_row.addWidget(freq_label, alignment=Qt.AlignmentFlag.AlignVCenter)
+            eq_row.addStretch()
+            eq_rows.addLayout(eq_row)
+            self.eq_sliders[freq] = slider
+        layout.addLayout(eq_rows)
+
         layout.addSpacing(10)
         self.reset_audio_btn = QPushButton("Reset to defaults")
         self.reset_audio_btn.setObjectName("reset_audio_btn")
@@ -107,11 +123,16 @@ class AudioSettingsTab(QWidget):
         self.reset_audio_btn.hide()
         layout.addWidget(self.reset_audio_btn)
 
+        # A trailing addStretch() with no fixed-size anchor below it would let the EQ rows
+        # visibly drift apart to fill the panel's leftover height whenever reset_audio_btn is
+        # hidden (is_default) — addStretch(1) alone can't tell "absorb slack below the last
+        # widget" from "absorb slack the last widget itself should keep tight to its
+        # neighbors." Reset_audio_btn is always in the layout (just hidden), so it already
+        # anchors the bottom; the stretch only needs to sit below everything, never between.
         layout.addStretch()
 
     def _update_setting(self, kind, value):
-        if kind == "norm": self.config.set_norm_enabled(value)
-        elif kind == "voice": self.config.set_voice_boost_enabled(value)
+        if kind == "voice": self.config.set_voice_boost_enabled(value)
         elif kind == "mono": self.config.set_mono_enabled(value)
         elif kind == "swap": self.config.set_channels_swapped(value)
         self.update_visuals()
@@ -122,32 +143,38 @@ class AudioSettingsTab(QWidget):
         self.sync_player()
         self.update_visuals()
 
+    def _on_eq_changed(self, freq_key, value):
+        getattr(self.config, f"set_eq_gain_{freq_key}")(value / 10.0)
+        self.sync_player()
+        self.update_visuals()
+
     def _reset_settings(self):
-        self.config.set_norm_enabled(False)
         self.config.set_voice_boost_enabled(False)
         self.config.set_mono_enabled(False)
         self.config.set_channels_swapped(False)
         self.config.set_balance(0.0)
         self.balance_slider.setValue(0)
+        for freq, slider in self.eq_sliders.items():
+            getattr(self.config, f"set_eq_gain_{freq}")(0.0)
+            slider.setValue(0)
         self.sync_player()
         self.update_visuals()
 
     def sync_player(self):
         if self.player:
             self.player.apply_audio_processing(
-                norm=self.config.get_norm_enabled(),
                 voice_boost=self.config.get_voice_boost_enabled(),
                 mono=self.config.get_mono_enabled(),
                 swap=self.config.get_channels_swapped(),
-                balance=self.config.get_balance()
+                balance=self.config.get_balance(),
+                eq_100=self.config.get_eq_gain_100(),
+                eq_300=self.config.get_eq_gain_300(),
+                eq_1000=self.config.get_eq_gain_1000(),
+                eq_3000=self.config.get_eq_gain_3000(),
+                eq_8000=self.config.get_eq_gain_8000(),
             )
 
     def update_visuals(self):
-        norm = self.config.get_norm_enabled()
-        for s, btn in self.norm_buttons.items():
-            btn.setProperty("selected", "true" if (s == "On" if norm else s == "Off") else "false")
-            btn.style().unpolish(btn); btn.style().polish(btn)
-            
         voice = self.config.get_voice_boost_enabled()
         for s, btn in self.voice_buttons.items():
             btn.setProperty("selected", "true" if (s == "On" if voice else s == "Off") else "false")
@@ -166,7 +193,16 @@ class AudioSettingsTab(QWidget):
         # Force the balance slider to re-evaluate its QSS properties (bg_color, fill_color)
         self.balance_slider.style().unpolish(self.balance_slider)
         self.balance_slider.style().polish(self.balance_slider)
-            
+
+        for slider in self.eq_sliders.values():
+            slider.style().unpolish(slider)
+            slider.style().polish(slider)
+
         balance = self.config.get_balance()
-        is_default = (not norm and not voice and not mono and not swap and math.isclose(balance, 0.0, abs_tol=0.01))
+        eq_gains = [getattr(self.config, f"get_eq_gain_{freq}")() for freq in self.eq_sliders]
+        is_default = (
+            not voice and not mono and not swap
+            and math.isclose(balance, 0.0, abs_tol=0.01)
+            and all(math.isclose(g, 0.0, abs_tol=0.01) for g in eq_gains)
+        )
         self.reset_audio_btn.setVisible(not is_default)

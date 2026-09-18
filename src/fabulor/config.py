@@ -341,6 +341,36 @@ class Config:
     def set_balance(self, value):
         self.settings.setValue("balance", float(value))
 
+    def get_eq_gain_100(self):
+        return self._safe_float("eq_gain_100", 0.0)
+
+    def set_eq_gain_100(self, value):
+        self.settings.setValue("eq_gain_100", float(value))
+
+    def get_eq_gain_300(self):
+        return self._safe_float("eq_gain_300", 0.0)
+
+    def set_eq_gain_300(self, value):
+        self.settings.setValue("eq_gain_300", float(value))
+
+    def get_eq_gain_1000(self):
+        return self._safe_float("eq_gain_1000", 0.0)
+
+    def set_eq_gain_1000(self, value):
+        self.settings.setValue("eq_gain_1000", float(value))
+
+    def get_eq_gain_3000(self):
+        return self._safe_float("eq_gain_3000", 0.0)
+
+    def set_eq_gain_3000(self, value):
+        self.settings.setValue("eq_gain_3000", float(value))
+
+    def get_eq_gain_8000(self):
+        return self._safe_float("eq_gain_8000", 0.0)
+
+    def set_eq_gain_8000(self, value):
+        self.settings.setValue("eq_gain_8000", float(value))
+
     def get_chapter_digit_mode(self):
         return self.settings.value("chapter_digit_mode", "by_name")
 

@@ -4503,9 +4503,14 @@ def get_settings_stylesheet(theme_name="default"):
         QWidget#settings_panel[kbdnav="true"] #reset_audio_btn:focus:hover {{
             background: {t.get('focus_audio_tab_reset', t['accent_light'])};
         }}
-        #balance_slider {{
+        #balance_slider, #eq_slider_100, #eq_slider_300, #eq_slider_1000, #eq_slider_3000, #eq_slider_8000 {{
             qproperty-bg_color: "{t['slider_chapter_bg']}";
             qproperty-fill_color: "{t['slider_chapter_fill']}";
+        }}
+        QLabel#eq_freq_label {{
+            font-size: 10px;
+            font-weight: normal;
+            color: {t['text']};
         }}
         QComboBox QAbstractItemView QScrollBar:vertical,
         QListWidget#settings_folder_list QScrollBar:vertical {{

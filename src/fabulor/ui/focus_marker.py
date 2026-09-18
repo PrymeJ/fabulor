@@ -77,7 +77,9 @@ _CORNER_ARC_SEGMENTS = 6      # polyline segments per rounded corner; higher = s
 # Keyboard-navigable controls that paint SQUARE corners, so the marker must not round them (see
 # _corner_radius_for). ClickSlider draws a plain filled rect — no drawRoundedRect, and no
 # border-radius in its QSS — so tracing it at the button radius visibly clipped its corners.
-_SQUARE_CORNER_OBJECT_NAMES = frozenset(("balance_slider",))
+_SQUARE_CORNER_OBJECT_NAMES = frozenset((
+    "balance_slider", "eq_slider_100", "eq_slider_300", "eq_slider_1000", "eq_slider_3000", "eq_slider_8000",
+))
 
 # Qt's painting convention puts pixel CENTRES at half-integer coordinates, so a 1px stroke drawn
 # on an integer straddles two rows at half intensity each rather than filling one (measured
