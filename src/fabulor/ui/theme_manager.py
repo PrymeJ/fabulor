@@ -3082,7 +3082,26 @@ class ThemeManager(QObject):
         # theme hover so it can't fire its preview after this one.
         self._hover_debounce_timer.stop()
         self._pending_hover_theme = None
-        if not self._cover_theme:
-            return
+        theme_dict = self._cover_theme
+        if theme_dict is None:
+            # Mode is "off" (the ONLY case _cover_theme is ever None while a book with a
+            # cover is loaded — clear_cover_theme() unconditionally nulls it on every switch
+            # to Off, in every path: _on_cover_pool_btn_clicked, set_cover_art_mode, and
+            # apply_cover_theme's own mode=="off" branch. Confirmed live 2026-09-18 — earlier
+            # reports of it working after "With pool → Off" were a mix-up with a
+            # similar-looking theme, not a real code path difference; it is unconditionally
+            # a no-op today). Live design call, 2026-09-18: hovering from Off should preview
+            # like any other swatch — transient, never committing the mode or activating the
+            # cover theme, unlike a left/right-click on this same button. Build a theme dict
+            # from the current cover on demand for the preview only; do NOT assign it to
+            # self._cover_theme or touch self._cover_theme_active/config — those stay owned
+            # exclusively by apply_cover_theme/clear_cover_theme/set_cover_art_mode.
+            pixmap = getattr(self.main_window, 'current_cover_pixmap', None)
+            if not pixmap or pixmap.isNull():
+                return
+            from .cover_theme import build_cover_theme
+            theme_dict = build_cover_theme(pixmap)
+            if not theme_dict:
+                return
         fade = int(self.config.get_theme_fade_duration() * 0.5)
-        self._on_theme_changed(self._cover_theme, save=False, fade_ms=fade, hover=True)
+        self._on_theme_changed(theme_dict, save=False, fade_ms=fade, hover=True)
