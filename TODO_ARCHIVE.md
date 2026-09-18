@@ -5,6 +5,83 @@ list scannable. Kept, not deleted, per the project's normal practice of not thro
 that isn't fully duplicated in NOTES.md/SESSION.md/a commit message. Order is the same relative
 order these entries had in TODO.md before the split (2026-07-30).
 
+- **[2026-09-17, FIXED 2026-09-18] Settings' Off/On toggle button order was inconsistent across the
+  panel — audited every pair, fixed the two real default mismatches, left the rest as-is.** Full
+  inventory (17 toggles/ramp rows across Audio, Appearance, Library, Controls, Sprint, Sleep, Stats'
+  ⚙, and Playback) found two genuine families rather than one inconsistent mess: literal Off/On
+  toggles split roughly 50/50 between Off-left and On-left with no rule, while every named-option
+  pair (Stereo/Mono, Embedded/.cue, By name/By index, Traveling/Fill, Auto-play/Jump only) already
+  puts its default on the left with zero exceptions.
+
+  Pryme's own review of the inventory: most of the "inconsistency" is acceptable as two distinct,
+  internally-consistent conventions (Off-left toggles that also happen to match "default on the
+  left," e.g. Compression/Voice boost/Cover-art-based theme/Backward seek compensation) — not a bug.
+  Theme hover fade starts Off but Off isn't its default; explicitly left as-is, not made default.
+  Three items were real and fixed:
+  1. **Chapter notches** — labels were `["On","Off"]` but the actual default was `False`/Off, so
+     the highlighted default sat on the right while every other On-left toggle has its default on
+     the left. Fixed by flipping the config default to `True` (`config.py`,
+     `get_chapter_notches_enabled`).
+  2. **Persist search filter** — button order changed from `["Off","On"]` to `["On","Off"]`
+     (`main_window_builders.py`), and the master toggle's config default flipped `False`→`True`
+     (`config.py`, `get_persist_filter_enabled`). The Tag/Text/Year sub-filters already defaulted
+     to selected individually, so the net effect is On by default with all three sub-filters
+     selected, as asked — the pre-existing self-correcting guard (master forced back Off if none of
+     the three sub-flags are set) stays intact and is now simply never triggered by the defaults.
+  3. **Stats ⚙ Default timeline view** — the only toggle on the whole panel where the left slot
+     ("Streak") was the NON-default option (`"heatmap"` was the real default). Fixed by flipping
+     the config default to `"streak"` (`config.py`, `get_default_timeline_view`).
+
+  A fourth, unrelated live ask surfaced during the same investigation: the "Day starts at" spinbox
+  displayed a bare `0`–`23` instead of an hour ("0:00"–"23:00"). Fixed via `textFromValue`/
+  `valueFromText` overrides on `_ThemedSpinBox` (display-only — the stored/emitted value stays a
+  plain int, config/signal wiring untouched) — confirmed live. A follow-up ask (remove the
+  full-text-selection flash on arrow-click/keyboard-focus) was fixed via `stepBy`/`focusInEvent`
+  overrides calling `lineEdit().deselect()` — `QAbstractSpinBox.stepBy` selects the full text
+  AFTER updating the value, so a naive `valueChanged`-connected deselect gets clobbered; the fix
+  had to run after `super().stepBy()` instead. A further ask (remove the read-only field's blinking
+  text caret) was attempted twice and reverted both times: `setReadOnly(True)` also silently blocks
+  the up/down arrow buttons (confirmed via a real dispatched-click test, not assumed — Qt's
+  `ReadOnly` flag is documented as guarding only the `QLineEdit`'s own typed-input path, but that
+  documentation understated its actual scope); a second attempt swallowing the line edit's
+  `QEvent.Type.Timer` events (theorized as the blink-driving timer) preserved arrow functionality
+  but was confirmed live NOT to stop the blink — the assumption about which timer drives the caret
+  was wrong. No further attempt made; Pryme's call to leave the caret as-is (Qt exposes no public
+  caret-color API separate from `QPalette::Text`, which the visible digits also use, and no
+  `setCursorBlink`/`setCursorVisible` method in this Qt build — genuinely no safe lever available).
+
+  Also this session: Playback defaults changed — speed increment (step) `0.1`→`0.05`, skip duration
+  `10s`→`5s` (both `config.py`; both values were already present as existing UI button options in
+  `speed_controls.py`, `[0.05, 0.1, 0.25, 0.5]` and `[5, 10, 15, 30]` respectively, so no UI code
+  change was needed beyond the config default).
+
+  A second, duplicate TODO.md entry ("Chapter label scroll has a 2px gap on the left before
+  scrolling starts") was also removed in this pass — confirmed to be the same ScrollingLabel
+  first-glyph-clipping bug the entry itself flagged as a likely duplicate, already closed as
+  accepted debt earlier the same session (see NOTES.md, 2026-09-18 — not TODO_ARCHIVE, since that
+  bug was never fixed, only investigated and abandoned).
+
+- **[2026-08-08, CLOSED as won't-fix 2026-09-18] Stats archived-book cover dimming — turned out to
+  be a grayscale treatment, not an opacity tuning problem, and the underlying code this item
+  described no longer exists anyway.** The original entry cited `StatsRowDelegate.paint()`'s
+  `painter.setOpacity(0.4)` as too faint against `BookDayRow`'s dimming, plus a suspected GC bug in
+  `BookDayRow._dim_effect()`'s bare `QGraphicsOpacityEffect`. Both `BookDayRow` and that opacity
+  mechanism were fully removed by the 2026-08-05/09 Stats lazy-delegate migration (see CLAUDE.md's
+  Stats Panel section) — current code (`to_grayscale()`/`_cover_pixmap`/`_grayscale_cache` in
+  `stats_panel.py`) desaturates archived covers to grayscale, not opacity, so the entry was stale
+  before it was even reachable.
+
+  Live-tested 2026-09-18 with real screenshots across four Day-view months: Pryme could reliably
+  spot the grayscale treatment on covers with real color, but confirmed two genuinely
+  indistinguishable false leads along the way — a small corner "icon" on a couple of covers
+  (Solaris, Blood of Amber, The Tunnel) turned out to just be those covers' own naturally
+  monochrome artwork, not an archive marker. The actual, load-bearing finding: **a cover that is
+  already near-monochrome by design (Death and the Dervish, Auto-da-Fé) renders visually identical
+  archived vs. not** — grayscale has nothing left to change on an already-grayscale image. Pryme
+  confirmed this is a genuine dead end, not a tuning problem: adjusting opacity instead would look
+  bad on covers generally, and a badge overlay was explicitly rejected. Closed as an accepted
+  limitation — no fix exists that doesn't trade one problem for a worse one.
+
 - **[2026-09-17, FIXED 2026-09-18, live-confirmed by Pryme] Book Detail's Tags-tab tag-add field —
   five distinct completer bugs, all filed as one detail-free placeholder ("priority but not yet
   reproduced") and all fully diagnosed and fixed in one session once Pryme actually walked through

@@ -1,3 +1,98 @@
+## 2026-09-18 — ScrollingLabel first-glyph clipping: seven attempts, none landed, closed as accepted debt
+
+**Scope.** Chapter-title marquee (`ScrollingLabel`, `controls.py`) clips/shears its first character
+when scroll motion begins. Pre-existing issue, first attempted 2026-07-01 (`72d80df`, shipped);
+revisited 2026-09-18 for a fresh attempt per TODO.md's own suggestion. Two more attempts made,
+both reverted after live screenshot review; closed as accepted debt, not scheduled work — Pryme's
+own call after ~2 hours across the two sessions. See TODO.md's Pending/Known Debt for the one-line
+pointer; this entry is the full trace.
+
+### 2026-07-01 attempts (`72d80df` and four reverted siblings)
+
+The shipped state: `+2` draw offset in `paintEvent` (`p.drawText(self._scroll_pos + 2, y, text)`)
+plus a matching `+2` in `_update_scroll`'s `max_scroll = text_width - self.width() + 2`, keeping the
+right-side scroll endpoint symmetric. Reduces the shear versus the original `x=0` state but leaves
+a visible ~2-4px gap at the true left edge before scrolling ever starts clipping anything.
+
+Four other approaches were tried the same session and reverted, never committed: `setClipRect`
+(produced gaps and clips simultaneously depending on scroll phase); `leftBearing` compensation
+(font metrics report `leftBearing=0` for the glyphs actually affected in this app's default font —
+does not predict the real defect, confirmed independently below); `eraseRect`/`fillRect` background
+clear before redraw (caused ghost text overlapping the new chapter title on a chapter switch); an
+extra `update()` call immediately after `_timer.start()` (same ghost-text problem). SESSION.md's
+2026-07-01 entry records the outcome ("ghost text on chapter switch, right-side clipping, etc.")
+without the per-attempt detail; this section fills that gap in from re-deriving the mechanism.
+
+### 2026-09-18 re-attempt — misread the bug shape twice before Pryme corrected it directly
+
+**First misreading:** treated the report as "text starts too far right, then jumps left ~4px once
+scrolling begins" — i.e. the REST position was wrong, not the clip. Built and verified an offscreen
+harness (`QFontMetrics.leftBearing`, `QTextLayout.boundingRect`) confirming the code path always
+draws at a fixed `x=2` for the entire initial pause with no jump in-code — correct as far as it
+went, but answered a question Pryme hadn't actually asked. `AskUserQuestion` clarified: the real
+complaint was that the rest position sits too far from the true edge, so clipping doesn't begin
+until several frames into the scroll motion, coasting first — the reverse of what the first
+misreading assumed.
+
+**Attempt 1 — narrow the pad to `+1`.** Changed all three sites that must stay in lockstep
+(`paintEvent`'s draw offset, `_update_scroll`'s `max_scroll`, and `_text_rect()`'s hit-test
+offset — a third site not touched by the original `72d80df` commit at all, since `_text_rect()` was
+added later, 2026-09-16, for hand-cursor hit-testing and independently duplicated the `+2` magic
+number). Live result: glyph visibly cut at rest, "1 or 2px." Reverted.
+
+**Attempt 2 — pre-spend the pad, rest flush at true `x=0`.** Initialized `_scroll_pos` to `-2`
+(not `0`) at the top of both the pause-start and return-to-start branches, and adjusted
+`max_scroll` to drop its own `+2` (since the pad was now spent entirely at the rest position
+rather than split across both scroll endpoints) — verified arithmetically correct via an offscreen
+probe (rest `x=0`, first tick `x=-1`, end position byte-identical to the un-touched right side,
+round-trip back to `x=0`/`scroll_pos=-2` exact) and confirmed the full `pytest`/`pyflakes` suite
+stayed green. Live result, confirmed via screenshots: WORSE, not better — "half of Y missing," a
+real, sizeable chunk of the glyph gone, not antialiasing softness. This directly contradicted the
+offscreen harness's `leftBearing=0` measurement for the affected letters — **the harness was blind
+to the actual live defect**, the same class of gap CLAUDE.md's Debugging-discipline section already
+documents generally for offscreen rendering harnesses ("An offscreen harness can also be blind to
+correctness, not just biased on timing — those are two separate risks"). Reverted; confirmed via
+`git diff` returning clean against the `72d80df`-committed file.
+
+**Second misreading, caught from screenshots:** initially read the screenshots as showing partial,
+independently-clipped letters at each edge (a clean "Y is missing its left 60%" story) and started
+proposing offset-based fixes for that shape. Pryme corrected directly, twice: first, that the
+correct row to look at was the chapter label under the transport buttons, not the tooltip/dropdown
+text above it; second, and more importantly, that the artifact isn't a clean per-letter partial
+clip at all — at some scroll phases, two adjacent, UNRELATED glyphs visually fuse at the clip
+boundary into a shape that reads as a different, wrong character entirely (e.g. an "fl" shape
+appearing where the real text has no "fl" at that position; a "Y" rendered in a shape masked by
+whatever letter preceded it at a different scroll offset in another screenshot). Confirmed via
+`AskUserQuestion`: "two glyphs blend into a shape that reads as a different letter entirely," not
+"one letter's cut edge looks inconsistent frame to frame."
+
+### Why this defeats every integer-pixel-offset attempt
+
+Once the real symptom was identified, the reason all three fix generations (2px, 1px, 0px/flush)
+each landed wrong became clear: this was never a "the clip boundary sits at the wrong X" problem.
+A single `drawText` call painting the FULL string at a sliding x, clipped by the widget's own
+paint-rect boundary, lets Qt's antialiased rasterizer blend whatever partial ink survives the clip
+on one glyph with the full ink of its neighbor — the resulting shape depends on which TWO specific
+characters happen to straddle the boundary at that exact scroll offset, not on any single constant.
+No fixed pixel pad can be correct across every scroll phase and every glyph pair simultaneously;
+each attempt just traded "gap before clipping" against "chunk of a letter missing," because both
+symptoms are downstream of the same single-`drawText`-with-a-hard-clip architecture, not of the
+pad's specific value.
+
+### Where this leaves it
+
+Closed at the exact `72d80df` state (verified via clean `git diff`) — Pryme's own call, not
+continuing to iterate on pixel offsets. A real fix would need to address the glyph-fusion mechanism
+itself, not the pad: likely a hard `QPainter` clip mask applied precisely at the pixel boundary each
+frame (so partial ink is fully suppressed rather than blended), or `QTextLayout`/`QStaticText` with
+explicit per-glyph position control instead of one `drawText` call at a sliding x. Neither has been
+tried; both are new painting logic in a widget with a seven-attempt failure history, so either
+carries real regression risk and should not be attempted without live screenshot verification at
+every step — code-reading and offscreen font-metrics measurement have now both independently misled
+this exact investigation once each.
+
+---
+
 ## 2026-09-15 — Hover-pickup keyboard navigation shipped for Settings/Speed/Sleep/Sprint/Stats/Tags; the 2026-09-10 "no mechanism confirmed" tab-bar bug finally explained
 
 **Scope.** Closed two paused TODO items in one session: (1) keyboard arrow-nav picking up from

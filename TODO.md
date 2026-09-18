@@ -29,15 +29,6 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
 
 ### Small visual/cosmetic bugs (batch logged 2026-09-17, mostly not yet reproduced in detail)
 - [2026-09-17] Restart button has jagged edges — visual, minor. Not yet investigated.
-- [2026-09-17] Chapter label scroll has a 2px gap on the left before scrolling starts — visual,
-  very minor. Likely the same or a sibling issue to the already-tracked "ScrollingLabel first-glyph
-  clipping" entry (see "Misc UI polish" below) — check whether this is that entry's own 2px gap
-  described from a different angle, or a genuinely separate artifact, before starting work on
-  either.
-- [2026-09-17] Settings' Off/On toggle button order is inconsistent across the panel — visual,
-  minor. Needs an audit of every Off/On pair, a check of what each one's default value actually is,
-  and a decision on a single consistent left-to-right (or top-to-bottom) order before fixing any of
-  them individually.
 - [2026-09-17] No-cover-art placeholder's "author - title" text: font, style, and position need a
   visual pass — flagged VISUAL, MAJOR (the strongest severity in this batch). Not yet scoped
   further than "needs a look."
@@ -527,7 +518,6 @@ isolation.
 - [2026-07-30] In-app help section — the home for all reference material, incl. search operators
 - [2026-07-03] Excluding the currently-playing book behaves differently for M4B vs VT — design decision
 - [2026-07-01] Book Detail slide-in feels less smooth from Library than from Stats — unconfirmed
-- [2026-07-01] ScrollingLabel first-glyph clipping
 
 ### Cleanup / process
 - [2026-06-27] Excluded Books popup corner-radius mismatch
@@ -540,17 +530,6 @@ isolation.
 
 ## Pending
 
-
-- **[2026-08-08] Stats Day-tab archived/deleted-book cover dimming alpha needs tuning.**
-  `StatsRowDelegate.paint()` dims archived-book covers via `painter.setOpacity(0.4)` — confirmed
-  live by Pryme as too low (too faint/washed-out) against Week/Month's actual `BookDayRow` dimming.
-  Note: during the same investigation, `BookDayRow`'s own dimming (`_dim_effect()`, a bare
-  `QGraphicsOpacityEffect` with no parent/retained reference) was found to be silently
-  garbage-collected before it ever renders — confirmed live via `cover_label.graphicsEffect()`
-  returning `None` immediately after `setGraphicsEffect()` — so Week/Month's "reference" dimming may
-  not actually be a reliable target to match either. Needs a decision on which value is
-  actually correct (and possibly fixing `_dim_effect()`'s GC bug in `BookDayRow` too, so Day/Week/
-  Month agree) before just nudging the delegate's opacity constant.
 
 - **[2026-08-02] Theme-apply ordering/deferral for book-switch flow stutter (cover-theme on).**
   Confirmed directional: Book A (80% progress) → Book B (11.5%) stutters during the flow animation;
@@ -1094,17 +1073,6 @@ isolation.
   (a panel? a popup? its own overlay?) and it should be built once, after the feature set stops
   moving, so it can cover everything at once rather than growing per-feature.
 
-- **[2026-07-01] ScrollingLabel first-glyph clipping.** When a chapter name is long enough to scroll,
-  the first character ('c', 't', etc.) clips against the widget's left edge at the start position
-  (`_scroll_pos = 0`). Qt renders glyphs at x=0 with no left margin and the widget boundary shears
-  them. Attempted fixes: `+2` draw offset (fixes left, clips right or leaves a gap), `setClipRect`
-  (gaps and clips simultaneously), `leftBearing` compensation (bearing reports 0 for these glyphs so
-  no help), `eraseRect`/`fillRect` background clear (causes ghost-text overlap on chapter switch),
-  `update()` after `_timer.start()` (same ghost problem). All attempts introduced worse regressions.
-  The committed state (`72d80df`) has a visible 2px gap at the start position as the least-bad
-  tradeoff. Needs a fresh look — possibly `QTextLayout` instead of raw `drawText`, or a containing
-  widget with `setContentsMargins` rather than painting directly.
-
 - **[2026-06-27] Excluded Books popup (`ui/excluded_books.py`) corner-radius mismatch.**
   The popup's selection highlight is flat/square; `settings_folder_list`'s is rounded (`4px`).
   Should match (one or the other) since they're both "selected row in a themed list" in the same
@@ -1212,19 +1180,6 @@ isolation.
   recreate the "one bug wearing two names" confusion the investigation resolved. The original trace
   was right about Regime A and blind to Regime B; its "the trace found nothing, not a live-forced
   test showed nothing" caveat is what prompted the measurement that split them.*
-
-- **Reset/destructive-button style unification.** Surfaced while splitting the shared
-  Settings/Speed/Sleep stylesheet (2026-08-03): `disable_sleep_btn` and
-  `reset_audio_btn` currently share one combined QSS rule despite belonging to
-  different panels, and there are other similarly-purposed buttons across the app
-  (Delete listening history, Tag management, Reset all stats) using a visually
-  different, transparent-background style — no unified "reset/destructive action"
-  button system exists; it's accreted inconsistently rather than intentionally
-  varied. Pryme's proposed direction: define two main styles for this button
-  category, then deliberately choose which one each use case gets during a future
-  theme pass, checked app-wide — rather than continuing to add one-off variants.
-  Not urgent; low visual/functional impact today. Do during a dedicated theme/style
-  pass, not piecemeal.
 
 - **Dead-code cleanup: `QComboBox`/`QScrollArea`/`theme_selector_container` rules in
   settings stylesheet.** Surfaced during the same stylesheet-split investigation.

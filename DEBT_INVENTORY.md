@@ -46,6 +46,13 @@ Newest entries at the top within each section, matching SESSION.md/NOTES.md conv
 
 ## Stats / library UI
 
+- **`ScrollingLabel` (chapter-title marquee) clips/fuses its first glyph at scroll start — seven fix
+  attempts, none landed** (2026-09-18) — shipped at the `72d80df` (2026-07-01) 2px-gap tradeoff;
+  two more attempts today both regressed live. Root cause: a single `drawText` call clipped by the
+  widget's hard paint boundary lets two adjacent glyphs visually fuse into a wrong-looking shape
+  depending on scroll offset — not a fixed-pixel-offset problem, so no pad value can fix it. Closed
+  as accepted debt, not scheduled work. See CLAUDE.md "Pending / Known Debt" and NOTES.md
+  (2026-09-18) for the full trace.
 - **Diacritic-folded sort (library + tags) is a locale-agnostic approximation, not real
   per-language collation** (2026-09-10) — always sorts an accented letter adjacent to its plain
   base form, which is wrong for languages (Turkish ö, Swedish/Finnish å/ä/ö) that alphabetize a
