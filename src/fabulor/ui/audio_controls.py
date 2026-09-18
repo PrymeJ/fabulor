@@ -50,7 +50,7 @@ class AudioSettingsTab(QWidget):
         layout.addLayout(mono_row)
 
         # --- Channel Swap ---
-        swap_header = QLabel("Channel swap (L ↔ R)")
+        swap_header = QLabel("Channel swap")
         swap_header.setObjectName("settings_header")
         layout.addWidget(swap_header)
         swap_row = QHBoxLayout()
