@@ -79,7 +79,7 @@ class Config:
         self.settings.setValue("volume", value)
 
     def get_skip_duration(self):
-        return self._safe_int("skip_duration", 10)
+        return self._safe_int("skip_duration", 5)
 
     def set_skip_duration(self, seconds):
         self.settings.setValue("skip_duration", seconds)
@@ -103,7 +103,7 @@ class Config:
         self.settings.setValue("smart_rewind_duration", seconds)
 
     def get_speed_increment(self):
-        return self._safe_float("speed_increment", 0.1)
+        return self._safe_float("speed_increment", 0.05)
 
     def set_speed_increment(self, value):
         self.settings.setValue("speed_increment", float(value))
@@ -128,8 +128,8 @@ class Config:
         self.settings.setValue("day_start_hour", hour)
 
     def get_default_timeline_view(self) -> str:
-        """Returns 'heatmap' (default) or 'streak'."""
-        return self.settings.value("default_timeline_view", "heatmap")
+        """Returns 'streak' (default) or 'heatmap'."""
+        return self.settings.value("default_timeline_view", "streak")
 
     def set_default_timeline_view(self, value: str) -> None:
         self.settings.setValue("default_timeline_view", value)
@@ -276,7 +276,7 @@ class Config:
         self.settings.setValue("chapter_hints_mode", mode)
 
     def get_chapter_notches_enabled(self):
-        return self.settings.value("chapter_notches_enabled", "false") == "true"
+        return self.settings.value("chapter_notches_enabled", "true") == "true"
 
     def set_chapter_notches_enabled(self, enabled):
         self.settings.setValue("chapter_notches_enabled", str(enabled).lower())
@@ -368,7 +368,7 @@ class Config:
         self.settings.setValue("chapter_list_source", source)
 
     def get_persist_filter_enabled(self) -> bool:
-        return self.settings.value("persist_filter_enabled", "false") == "true"
+        return self.settings.value("persist_filter_enabled", "true") == "true"
 
     def set_persist_filter_enabled(self, enabled: bool):
         self.settings.setValue("persist_filter_enabled", str(enabled).lower())

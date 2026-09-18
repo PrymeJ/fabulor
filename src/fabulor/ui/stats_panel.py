@@ -3391,6 +3391,32 @@ class _ThemedSpinBox(QSpinBox):
         super().__init__(parent)
         self._panel = panel
 
+    def stepBy(self, steps):
+        # QAbstractSpinBox.stepBy selects the line edit's full text AFTER updating the value
+        # (confirmed: a valueChanged-connected deselect() gets clobbered by this trailing
+        # select-all, live-reported 2026-09-18 as an unwanted highlight flash on every
+        # arrow-button click). deselect() here, after the base implementation, runs after
+        # that select-all instead of before it.
+        super().stepBy(steps)
+        self.lineEdit().deselect()
+
+    def focusInEvent(self, event):
+        # Keyboard Tab-in also native-selects the full text; same fix, different trigger.
+        super().focusInEvent(event)
+        self.lineEdit().deselect()
+
+    def textFromValue(self, value: int) -> str:
+        """Display-only: 0-23 shows as 'H:00' (an hour, not a bare count) — the stored/emitted
+        value stays a plain int via valueFromText below, so config/signal wiring is untouched."""
+        return f"{value}:00"
+
+    def valueFromText(self, text: str) -> int:
+        # Accept either "14" or "14:00" typed directly — split on ':' and parse the hour part.
+        try:
+            return int(text.split(':')[0].strip())
+        except ValueError:
+            return self.value()
+
     def paintEvent(self, event):
         super().paintEvent(event)
         accent = self._panel._accent_color

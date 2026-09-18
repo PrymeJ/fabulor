@@ -1190,7 +1190,7 @@ def build_library_tab(mw):
 
     persist_row = QHBoxLayout()
     mw.persist_filter_buttons = {}
-    for val, label in [(False, "Off"), (True, "On")]:
+    for val, label in [(True, "On"), (False, "Off")]:
         btn = QPushButton(label)
         btn.setObjectName("pattern_button")
         btn.clicked.connect(lambda _, v=val: mw._on_persist_filter_master(v))
