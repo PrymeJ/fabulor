@@ -42,17 +42,33 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
   Fixed to fall back to just the title (no dangling " - ") when author is empty.
 
 ### Cover/metadata scan gaps (batch logged 2026-09-17, need reproduction)
-- [2026-09-17] POSSIBLE BUG, needs repro: changing a book's cover image file outside the app is not
-  reflected in the library after a rescan — only after a full app restart. Suggests the cover cache
-  (`_cover_cache`/`_sized_cover_cache`, see CLAUDE.md's cover-caching rules) isn't being invalidated
-  on a rescan-detected cover change, only ever read fresh at process start. Needs a live repro
-  (change a cover file, rescan, observe) before diagnosing further.
-- [2026-09-17] BUG, needs repro for full detail: moving a book's folder to a different path is not
-  picked up by the scanner — the book has to be manually deleted from the library and rescanned
-  from the new location. Open question, explicitly flagged by Pryme: do tags and listening
-  sessions survive that manual delete-and-rescan, or are they lost? Needs to be checked as part of
-  reproducing this, since if they're lost that raises the severity considerably (data loss, not
-  just an inconvenience).
+- [2026-09-17, SEQUENCED behind the ID refactor 2026-09-18] POSSIBLE BUG, needs repro: changing a
+  book's cover image file outside the app is not reflected in the library after a rescan — only
+  after a full app restart. Suggests the cover cache (`_cover_cache`/`_sized_cover_cache`, see
+  CLAUDE.md's cover-caching rules) isn't being invalidated on a rescan-detected cover change, only
+  ever read fresh at process start. Needs a live repro (change a cover file, rescan, observe) before
+  diagnosing further. **Deliberately deferred until after the content-hash book-identity refactor
+  (see the folder-move item below) lands, Pryme's own call, 2026-09-18: the cache is keyed by
+  `book_id`, and any fix here needs to reliably tell "same book, cover file changed" apart from
+  "different book, coincidentally same path" — exactly the identity ambiguity the ID refactor
+  exists to resolve. Fixing this first risks either a narrow patch that gets thrown away once the
+  refactor lands, or accidentally reinforcing more path-keyed logic that then has to be unwound.**
+- [2026-09-17, ESCALATED to BLOCKING 2026-09-18] BUG: moving a book's folder to a different path is
+  not picked up by the scanner — the book has to be manually deleted from the library and rescanned
+  from the new location. **Confirmed live by Pryme (2026-09-18): tags and listening sessions do NOT
+  survive that manual delete-and-rescan — real data loss on an ordinary user action (reorganizing
+  folders), not just an inconvenience.** Planned fix direction (Pryme's own call, 2026-09-18): move
+  the library's identity model from path-keyed to an ID based on a content hash, so a book is
+  recognized as the same book after a folder move/rename regardless of its current path. This is a
+  large refactor — path is currently the identity key threaded through `books`/`book_tags`/
+  `listening_sessions`/`book_events`/`book_covers`/`book_files`, the scanner's `known_paths` dedup,
+  every soft-delete flag (`is_deleted`/`is_excluded`/`is_missing`), and the stats queries' `book_id`
+  vs. `book_path` dual-write pattern (see CLAUDE.md's "DO NOT join `book_events` directly..." and
+  the soft-delete-flags section) — touches most of `db.py` and `library/scanner.py`. Needs its own
+  dedicated design/implementation session, not a quick patch. **Reminder for whoever picks this up:
+  the "cover image changed outside the app" item directly above this one was deliberately sequenced
+  to follow this refactor rather than being fixed independently — once book identity survives a
+  path change, revisit that item as a natural, much simpler follow-up.**
 - [2026-09-17] TEST, minor: add a deliberately corrupted image file as a book's cover and confirm
   the app handles it gracefully (no crash, some sane fallback) rather than assuming it does. Not a
   known bug — a gap in test coverage to close.
