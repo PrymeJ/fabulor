@@ -3,7 +3,7 @@ import time
 
 from PySide6.QtWidgets import QWidget, QLabel, QPushButton, QHBoxLayout
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QPixmap, QCursor
+from PySide6.QtGui import QCursor
 
 logger = logging.getLogger(__name__)
 

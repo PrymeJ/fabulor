@@ -4,13 +4,17 @@ import logging
 import os
 import pstats
 import time
-from PySide6.QtWidgets import QWidget, QLabel, QPushButton, QHBoxLayout, QVBoxLayout, QGridLayout
-from PySide6.QtWidgets import QLineEdit, QApplication, QListWidget, QAbstractSpinBox, QScrollArea
+from typing import TYPE_CHECKING
+from PySide6.QtWidgets import QWidget, QHBoxLayout, QGridLayout
+from PySide6.QtWidgets import QApplication, QListWidget, QAbstractSpinBox, QScrollArea
 from PySide6.QtCore import QPoint, QRect, QPropertyAnimation, QAbstractAnimation, QTimer, Qt, QObject, QEvent
 from PySide6.QtGui import QCursor
 from .title_bar import ThemeItem
 from .transport_bar_blur import TransportBarBlurOverlay, panel_rect_in_common_space
 from .stats_panel import StatsRowListView
+
+if TYPE_CHECKING:
+    from .book_detail_panel import BookDetailPanel
 
 logger = logging.getLogger(__name__)
 

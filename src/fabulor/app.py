@@ -10,39 +10,33 @@ from PySide6.QtWidgets import (
     QApplication, QGraphicsBlurEffect, QGraphicsOpacityEffect, QLineEdit, QLabel, QSpinBox,
 )
 from PySide6.QtCore import (
-    Qt, QTimer, QPoint, QPointF, QRect, QEvent, QPropertyAnimation, QEasingCurve, QModelIndex,
-    QRegularExpression, Signal, QObject, QElapsedTimer, QSize, QVariantAnimation, QThreadPool,
+    Qt, QTimer, QPoint, QPointF, QRect, QEvent, QPropertyAnimation, QEasingCurve,
+    Signal, QObject, QElapsedTimer, QSize, QVariantAnimation, QThreadPool,
     QItemSelectionModel,
 )
-from PySide6.QtGui import QPixmap, QColor, QIntValidator, QRegularExpressionValidator, QIcon, QPainter, QKeyEvent, QCursor, QHoverEvent
+from PySide6.QtGui import QPixmap, QColor, QIcon, QPainter, QKeyEvent, QCursor, QHoverEvent
 
 from .player import Player, _CHAPTER_BOUNDARY_EPSILON, _CHAPTER_WALK_TOLERANCE
 from .config import Config
 from . import themes
-from .themes import THEMES, _resolve_theme, get_player_stylesheet
+from .themes import _resolve_theme, get_player_stylesheet
 from .ui.chapter_list import ChapterList # Keep ChapterList here as it's a direct child of MainWindow
 from .ui.excluded_books import ExcludedBooksPopup # Same reason — direct child of MainWindow, not nested in the settings tab
 from .ui.speed_controls import SpeedControlsPanel
 from .ui.sleep_timer import SleepTimerPanel
 from .ui.sprint_panel import SprintPanel
-from .ui.theme_manager import ThemeManager, ThemeComboBox
+from .ui.theme_manager import ThemeManager
 import time # For sleep timer
 from .library_controller import LibraryController
 from .ui.controls import ClickSlider # arrow-key adjustment of a focused settings slider
-from .ui.cover_loader import CoverLoaderWorker # For async cover loading
-from .ui.library import LibraryPanel
 from .ui.panels import PanelManager # New import for PanelManager
 from .ui.visual_area_blur import ClippedBlurEffect
 from .ui import scrollbar_jump
-from .ui.stats_panel import StatsPanel
-from .ui.book_detail_panel import BookDetailPanel
-from .ui.tag_manager import TagManagerWidget
 from .ui.carousel import CoverCarousel, CAROUSEL_STRIPE_W
 from .ui.sidebar_hotspot import SidebarHotspot
 from .ui import main_window_builders as builders
 from .db import LibraryDB
 from .library.scanner import LibraryScanner
-from .book_quotes import BOOK_QUOTES
 from mpv import ShutdownError
 from .settings_controller import SettingsController
 from .session_recorder import SessionRecorder

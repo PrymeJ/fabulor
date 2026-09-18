@@ -1,14 +1,13 @@
 import hashlib
-import os
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QFrame, QButtonGroup, QFileDialog, QSizePolicy,
+    QFrame, QButtonGroup, QFileDialog,
 )
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QPixmap, QImage, QPainter, QColor, QBrush, QPen
+from PySide6.QtGui import QPixmap, QImage, QPainter, QColor, QPen
 
 from ..library.cover_manager import (
-    save_cover_image, delete_cover_file, validate_cover_file,
+    delete_cover_file, validate_cover_file,
 )
 
 
@@ -644,7 +643,6 @@ class CoverPanel(QWidget):
 
         # Save as JPEG
         from ..library.cover_manager import get_covers_dir
-        import tempfile, shutil
         try:
             dest_path_obj = get_covers_dir() / f"{book_hash}_{slot_index}.jpg"
             saved = img.save(str(dest_path_obj), "JPEG")

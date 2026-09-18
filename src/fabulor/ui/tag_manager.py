@@ -6,7 +6,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtWidgets import QApplication
 from PySide6.QtCore import Qt, Signal, QTimer, QThreadPool, QSize, QByteArray, QEvent
-from PySide6.QtGui import QPixmap, QImage, QColor, QIcon, QPainter
+from PySide6.QtGui import QPixmap, QColor, QIcon, QPainter
 from PySide6.QtSvg import QSvgRenderer
 from .cover_loader import CoverLoaderWorker, to_grayscale
 from .library import _cover_cache, _fold_diacritics

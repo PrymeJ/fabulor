@@ -2300,7 +2300,6 @@ class BookDetailPanel(QWidget):
             self._apply_cover(QPixmap(cover_pixmap))
 
     def on_theme_changed(self, theme: dict):
-        from PySide6.QtGui import QColor
         self._theme = theme
         self._apply_bar_colors()
         self._style_completer_popup()

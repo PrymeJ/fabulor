@@ -6,10 +6,10 @@ import time
 import unicodedata
 from collections import namedtuple
 from PySide6.QtWidgets import (
-    QWidget, QLabel, QVBoxLayout, QGridLayout, QFrame, QPushButton, QHBoxLayout, QComboBox, QLineEdit, QProgressBar, QStyledItemDelegate, QListView, QStyleOptionViewItem, QStyle, QStyleOptionComboBox,
+    QVBoxLayout, QFrame, QPushButton, QHBoxLayout, QComboBox, QLineEdit, QStyledItemDelegate, QListView, QStyleOptionViewItem, QStyle, QStyleOptionComboBox,
 )
-from PySide6.QtCore import QThreadPool, QEvent, QAbstractListModel, QModelIndex, QSize, QTimer, QDateTime, Property, QPropertyAnimation, QVariantAnimation
-from PySide6.QtCore import Qt, Signal, QCoreApplication, QRect, QPoint
+from PySide6.QtCore import QThreadPool, QEvent, QAbstractListModel, QModelIndex, QSize, QTimer, Property, QPropertyAnimation, QVariantAnimation
+from PySide6.QtCore import Qt, Signal, QRect, QPoint
 from typing import Optional
 from ..models.book import Book
 from .icon_utils import render_logo_placeholder, render_logo_placeholder_bordered

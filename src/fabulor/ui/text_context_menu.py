@@ -1,6 +1,6 @@
 from pathlib import Path
 from PySide6.QtWidgets import QWidget, QHBoxLayout, QToolButton, QApplication
-from PySide6.QtCore import Qt, QEvent, QPoint, QSize
+from PySide6.QtCore import Qt, QPoint, QSize
 from PySide6.QtGui import QIcon
 
 from .icon_utils import load_themed_icon

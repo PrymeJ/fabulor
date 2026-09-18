@@ -1,4 +1,4 @@
-from PySide6.QtWidgets import QLayout
+from PySide6.QtWidgets import QLayout, QWidget, QStyle
 from PySide6.QtCore import Qt, QRect, QSize, QPoint
 
 
@@ -87,7 +87,6 @@ class FlowLayout(QLayout):
         parent = self.parent()
         if parent is None:
             return -1
-        from PySide6.QtWidgets import QWidget, QStyle
         if isinstance(parent, QWidget):
             return parent.style().pixelMetric(pm, None, parent)
         return self.spacing()

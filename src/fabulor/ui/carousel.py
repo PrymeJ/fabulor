@@ -5,7 +5,7 @@ scroll left at a slow continuous pace, or sit static and centered when there
 are too few to fill the strip.
 """
 from PySide6.QtWidgets import QWidget
-from PySide6.QtCore import Qt, QTimer, QElapsedTimer
+from PySide6.QtCore import QTimer, QElapsedTimer
 from PySide6.QtGui import QPainter, QColor
 
 def _auto_stripe_line_color(hex_color: str) -> str:

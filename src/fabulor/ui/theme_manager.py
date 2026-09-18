@@ -2,7 +2,7 @@ import logging
 import random
 import time
 import warnings
-from PySide6.QtWidgets import QLabel, QGraphicsOpacityEffect, QPushButton, QComboBox, QWidget
+from PySide6.QtWidgets import QLabel, QGraphicsOpacityEffect, QComboBox
 from PySide6.QtCore import Qt, QPropertyAnimation, QTimer, Signal, QObject, QEasingCurve
 from PySide6.QtGui import QFont, QFontMetrics, QColor, QCursor
 from ..themes import (

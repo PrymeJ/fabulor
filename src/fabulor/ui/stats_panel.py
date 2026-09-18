@@ -14,7 +14,7 @@ from PySide6.QtCore import (
     Qt, QRect, QRectF, Signal, QSize, QPoint, QPointF, QEvent, QThreadPool, QTimer, Property,
     QPropertyAnimation, QEasingCurve, QAbstractListModel, QModelIndex, QObject, QRunnable, Slot,
 )
-from PySide6.QtGui import QPainter, QColor, QFont, QFontMetrics, QPixmap, QImage, QIcon, QEnterEvent, QPen, QPainterPath, QKeyEvent, QCursor, QPolygon
+from PySide6.QtGui import QPainter, QColor, QFont, QFontMetrics, QPixmap, QImage, QIcon, QPen, QPainterPath, QKeyEvent, QCursor, QPolygon
 from PySide6.QtWidgets import QAbstractScrollArea
 from .cover_loader import CoverLoaderWorker, to_grayscale
 from .library import _cover_cache

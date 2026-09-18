@@ -1,7 +1,7 @@
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QGridLayout
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor
-from ..themes import THEMES, preset_ramp_rgb
+from ..themes import preset_ramp_rgb
 from .ramp_highlight_fade import RampHighlightFade
 from mpv import ShutdownError
 

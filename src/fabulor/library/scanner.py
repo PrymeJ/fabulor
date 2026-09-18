@@ -6,7 +6,7 @@ import platformdirs
 import mutagen
 from pathlib import Path
 from PIL import Image
-from PySide6.QtCore import QObject, Signal, QThread, Qt
+from PySide6.QtCore import QObject, Signal, QThread
 from PySide6.QtGui import QImage
 from ..db import LibraryDB
 
