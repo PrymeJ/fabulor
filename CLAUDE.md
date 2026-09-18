@@ -1827,9 +1827,28 @@ single-level walk — flattened to match every other row's shape), and none of t
 had mouse-wheel support (`ClickSlider.wheel_step`, opt-in so the three transport sliders' own
 wheel handling in `MainWindow.wheelEvent` isn't disturbed). A third gap, found investigating how
 sliders should read under the "fill highlight" keyboard-nav style, turned out to be "nothing at
-all" (the QSS-only fill can't match a custom-painted widget) — sliders now keep the traveling
-marker under both styles. All live-verified by Pryme across multiple themes. Commits `3dcab5c`,
-`9ce9e83`.
+all" (the QSS-only fill can't match a custom-painted widget) — sliders were first given the
+traveling marker as a fallback under both styles (SUPERSEDED same session, see below). All
+live-verified by Pryme across multiple themes. Commits `3dcab5c`, `9ce9e83`.
+
+**Same session, continued (`718b466`, `7b8af25`):** three more rounds of live feedback. The EQ
+freq labels were left-aligned in a fixed-width box, leaving visibly more space on the right side
+of each slider than the left — fixed via right-alignment plus narrowing the label box from 20 to
+16px so the slider (`stretch=1`) reclaims the freed width. The traveling-marker fallback for
+sliders under "fill highlight" (just above) didn't read right in practice — Pryme: "not too happy
+with the traveling marker... brighten the slider background slightly... just barely lighter to
+signal that it is active" — replaced with `ClickSlider.kbd_fill_active`/`set_kbd_fill_active`, a
+widget-local flag `paintEvent` reads to paint `bg_color.lighter(120)` instead of the marker;
+`MainWindow._update_focus_marker` syncs it directly on the focused slider (tracked via
+`self._kbd_fill_slider`, since the panel-wide `kbdnav_fill_active` QSS property every other
+control uses is scoped to `QPushButton:focus` and structurally can't reach a custom-painted
+widget). Finally, wheel/arrow-key stepping had no equivalent of the mouse's existing
+`snap_to_center` — a step could jump straight past a slider's midpoint without ever landing on it
+exactly. `ClickSlider.step_by(delta)` (now shared by `wheelEvent` and `app.py`'s arrow-key
+handler) lands exactly on the midpoint first whenever the CURRENT value is closer to it than one
+full step, then continues by full steps on subsequent presses — a one-time waypoint, not a
+magnet. Verified by hand against Pryme's own worked example (step=5, value=3, stepping toward
+center: 3 → 0 → -5) before shipping.
 
 *Previously: 2026-09-18 Session 3 — Fixed mono/swap/L/R balance (silently broken against mpv's
 own native `pan` filter shadowing ffmpeg's filter of the same name — confirmed live against a real

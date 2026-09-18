@@ -42,14 +42,54 @@ highlight" keyboard-nav style, was found and fixed in the same pass. Commit `9ce
   app still does exactly what it always did (chapter nav / chapter scrub / volume) — confirms
   the new per-slider wheel support didn't leak into or override the existing transport behavior
 
-### Fill-highlight keyboard-nav style + sliders (new)
+### Fill-highlight keyboard-nav style + sliders — SUPERSEDED, see the 2026-09-19 (cont.)
+section below for the shipped behavior
+- [x] ~~the traveling border marker still shows on the slider~~ — corrected: Pryme's live
+  verdict on this was "not too happy with the traveling marker" — replaced with a brightened
+  slider background instead. Re-verify against the checklist below, not this one.
+
+## EQ/balance: label alignment, fill-highlight brightening, midpoint-snap stepping — 2026-09-19 (cont.)
+
+Direct continuation of the section above, same session. Three more rounds of live feedback:
+the freq labels had uneven left/right spacing around the slider, the traveling-marker fallback
+for sliders under "fill highlight" (shipped in the section above) didn't feel right in practice,
+and wheel/arrow-key stepping couldn't land exactly on a slider's midpoint the way a mouse
+click/drag already could. Commits `718b466`, `7b8af25`.
+
+### EQ freq label alignment
+- [ ] Each EQ slider's freq label ("100"/"300"/"1K"/"3K"/"8K") sits flush against the slider's
+  own right edge — no visible gap between slider and label bigger than the slider's own left
+  margin from the panel edge
+- [ ] The gap between the slider and its label looks the same (or very close) on the left side
+  (panel edge to slider start) as on the right side (slider end to label) across all 5 rows,
+  including the shorter labels ("1K", "3K", "8K") which previously floated with extra dead space
+
+### Fill-highlight keyboard-nav style + sliders (corrected behavior)
 - [ ] In Settings → Look, switch the keyboard-nav marker style to "Fill highlight"
-- [ ] Tab/arrow focus onto L/R balance or any EQ slider in the Audio tab — the traveling border
-  marker still shows on the slider (square corners), NOT a flat fill and NOT nothing
-- [ ] Move focus off the slider onto a button (e.g. Voice boost) — that button now shows the
-  flat fill-highlight style, not the traveling marker (confirms sliders are a deliberate,
-  narrow exception, not a break in fill_highlight generally)
-- [ ] Switch back to "Traveling marker" style — sliders behave exactly as before
+- [ ] Tab/arrow focus onto L/R balance or any EQ slider in the Audio tab — the slider's own
+  background brightens slightly (a subtle, barely-there lightening, NOT the traveling border
+  marker and NOT nothing)
+- [ ] Move focus off the slider onto a button (e.g. Voice boost) — the slider's background
+  returns to normal, and that button now shows the ordinary flat fill-highlight style
+- [ ] Move focus between two different EQ sliders (e.g. 100Hz → 300Hz) — only the currently
+  focused slider is brightened; the previous one returns to normal, never both lit at once
+- [ ] Switch back to "Traveling marker" style while a slider is focused — the brightened
+  background clears and the slider correctly shows the traveling marker instead
+- [ ] Switch from "Traveling marker" back to "Fill highlight" while a slider is focused — the
+  marker clears and the slider brightens (confirms the sync isn't one-directional)
+
+### Wheel/arrow-key stepping visits the midpoint (new)
+- [ ] Click-drag an EQ slider or L/R balance away from center with the mouse, to a value NOT a
+  clean multiple of the step size (e.g. drag balance to roughly 3, not 0/5/10)
+- [ ] Scroll the mouse wheel toward center — the slider lands EXACTLY on the midpoint (0) on
+  one scroll tick, not overshooting past it in one step
+- [ ] Scroll again in the same direction — the slider now moves a full step away from center
+  (e.g. to -5), not stuck at 0
+- [ ] Repeat with arrow keys (Left/Right on a focused slider) instead of the wheel — same
+  midpoint-landing behavior
+- [ ] From a value already a full step or more away from center, scrolling/arrow-keying toward
+  OR away from center behaves as a normal, un-snapped step (confirms the midpoint-snap only
+  engages when already closer than one step)
 
 ## 5-band EQ + Settings tab spacing/row fixes — 2026-09-18 Session 3
 
