@@ -109,10 +109,20 @@ class AudioSettingsTab(QWidget):
             # lives inside a panel where that rule doesn't apply.
             slider.setFocusPolicy(Qt.FocusPolicy.TabFocus)
             slider.valueChanged.connect(lambda v, k=freq: self._on_eq_changed(k, v))
+            eq_row.setSpacing(4)
             eq_row.addWidget(slider, stretch=1, alignment=Qt.AlignmentFlag.AlignVCenter)
             freq_label = QLabel(label)
             freq_label.setObjectName("eq_freq_label")
-            freq_label.setFixedWidth(20)
+            # 16, not 20 — narrowed 4px so the slider (stretch=1, claims whatever this
+            # label doesn't) extends further right, per live feedback 2026-09-19.
+            # The label stays right-aligned so its own text position doesn't move.
+            freq_label.setFixedWidth(16)
+            # Right-aligned so the label's own text sits flush against the slider's own
+            # right edge instead of floating left inside its fixed-width box — a
+            # left-aligned label in a fixed box left visibly more empty space between the
+            # slider and the label than the slider's own left margin (live report,
+            # 2026-09-19: "the right side has more space than the left").
+            freq_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             eq_row.addWidget(freq_label, alignment=Qt.AlignmentFlag.AlignVCenter)
             layout.addLayout(eq_row)
             # Kept tight between EQ rows specifically (was eq_rows.setSpacing(2) before
