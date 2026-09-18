@@ -557,8 +557,13 @@ def test_non_cover_tab_f_arms_finished_toggle_normally(qapp):
 class _FocusSpyBookDetailPanel(BookDetailPanel):
     def __init__(self):
         QWidget.__init__(self)   # bypass BookDetailPanel.__init__ (needs db/config)
-        from PySide6.QtWidgets import QLineEdit
+        from PySide6.QtWidgets import QLineEdit, QCompleter
         self._tag_input = QLineEdit(self)
+        # Real QCompleter, not a mock — _clear_tag_input (2026-09-18 fix) calls
+        # self._tag_completer.popup().hide() to close a completer popup that clearFocus()
+        # alone does not close (confirmed live and via an isolated Qt test — see that
+        # method's own docstring). A minimal real completer exercises the actual call.
+        self._tag_completer = QCompleter([], self._tag_input)
         self._title_label = QLineEdit(self)
         self._author_label = QLineEdit(self)
         self._narrator_label = QLineEdit(self)
