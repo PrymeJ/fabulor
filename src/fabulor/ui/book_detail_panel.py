@@ -172,6 +172,9 @@ class BookDetailPanel(QWidget):
         self._tag_suggest_timer.setSingleShot(True)
         self._tag_suggest_timer.setInterval(200)
         self._tag_suggest_timer.timeout.connect(self._do_tag_suggestions)
+        # Set True for the single textChanged call caused by the completer's own arrow-key
+        # inline preview, so _on_tag_input_changed can skip it — see _on_tag_completer_highlighted.
+        self._tag_input_change_from_completer = False
 
     def _build_ui(self):
         layout = QVBoxLayout(self)
@@ -632,6 +635,12 @@ class BookDetailPanel(QWidget):
         self._tag_completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
         self._tag_completer.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
         self._tag_completer.activated.connect(self._on_tag_completer_activated)
+        # Arrow-key navigation through the popup writes the highlighted completion's text
+        # into the field as an inline preview (standard QCompleter behavior) — this fires
+        # BEFORE textChanged for that same keypress, so _on_tag_input_changed can tell "the
+        # completer just wrote this" apart from "the user actually typed this." See
+        # _on_tag_input_changed's own docstring for why this distinction matters.
+        self._tag_completer.highlighted.connect(self._on_tag_completer_highlighted)
         self._tag_input.setCompleter(self._tag_completer)
         self._tag_input.textChanged.connect(self._on_tag_input_changed)
         self._style_completer_popup()
@@ -872,7 +881,34 @@ class BookDetailPanel(QWidget):
         any time _tag_display_tags is populated."""
         self._rebuild_tag_display(self._tag_display_tags)
 
+    def _on_tag_completer_highlighted(self, text: str) -> None:
+        """Fires when the popup's highlighted row changes (arrow-key navigation) — Qt's
+        QCompleter writes that row's text into the line edit as an inline preview immediately
+        BEFORE this, which is what triggers the textChanged this flag lets
+        _on_tag_input_changed recognize and skip. Reset in _on_tag_input_changed itself, right
+        after being read, so it only ever suppresses the ONE textChanged call it caused — a
+        genuine keystroke right afterward still restarts the debounce timer normally."""
+        self._tag_input_change_from_completer = True
+
     def _on_tag_input_changed(self, text: str):
+        """Restarts the 200ms debounce that re-queries tag suggestions — UNLESS this text
+        change was the completer's own arrow-key inline preview, not something the user typed.
+
+        Root cause of a real bug, live-reported and log-confirmed 2026-09-18 ("Down-arrow
+        selecting immediately... quickly selects one as if I clicked/pressed Enter on it"): no
+        activation ever actually fired (confirmed via [TAGCOMPLETE-TRACE] instrumentation — no
+        `activated` signal, no `_on_add_tag` call) — what the user was seeing was this method
+        treating the completer's OWN inline-preview text (e.g. arrowing onto "ai [listened]"
+        writes that full string into the field, standard QCompleter behavior) as if it were
+        freshly typed, restarting the debounce timer, and 200ms later re-querying suggestions
+        for that one exact string — which of course narrows the list to 1 result and reshapes
+        the popup, visually reading as "the arrow key just picked something." Confirmed directly
+        in the log: a Down press at 05:05:47,655 was followed ~193ms later by
+        `_do_tag_suggestions firing... text='ai [listened]' suggestions=1` — the debounced
+        re-query firing against the PREVIEW text, not anything the user had typed."""
+        if self._tag_input_change_from_completer:
+            self._tag_input_change_from_completer = False
+            return
         self._tag_suggest_timer.start()  # restarts if already running
 
     def _do_tag_suggestions(self):
@@ -948,7 +984,17 @@ class BookDetailPanel(QWidget):
         handle_forward/hide_all_panels-reaching handlers call hide_all_panels() unconditionally,
         this silently closed the whole panel (confirmed live, 2026-07-12). Fix: explicitly
         reclaim focus for the panel itself afterward, same target _claim_panel_focus already
-        grants StrongFocus to on open."""
+        grants StrongFocus to on open.
+
+        The completer's popup must be closed explicitly too (2026-09-18 fix) — confirmed directly
+        (an isolated QLineEdit+QCompleter test) that `clearFocus()` does NOT close an open
+        QCompleter popup; it stays visible, orphaned, floating over the now-cleared/defocused
+        field. Reported live as Tab wiping the typed text but leaving "the caret still flashing"
+        with typing then broken or limited to one character — the visible artifact was this
+        leftover popup, not the QLineEdit's own caret. `hidePopup()` is what a completer's own
+        Escape/QLineEdit-focus-loss code path calls internally; calling it explicitly here closes
+        the same gap this app-level Tab/Escape gesture doesn't otherwise trigger."""
+        self._tag_completer.popup().hide()
         self._tag_input.clear()
         self._tag_input.clearFocus()
         self.setFocus(Qt.FocusReason.OtherFocusReason)
@@ -1587,7 +1633,27 @@ class BookDetailPanel(QWidget):
         same shape, so a future rebuild/hide/delete elsewhere in this panel can't silently
         reintroduce the bug. Cheap and safe to call on every keypress: setFocus() on an
         already-focused widget is a no-op, and this never steals focus from a genuinely
-        focused child (isAncestorOf covers that case)."""
+        focused child (isAncestorOf covers that case).
+
+        MUST decline while the tag-add field's QCompleter popup is active (2026-09-18) — same
+        underlying fact as BookDetailPanel's/TagManagerWidget's `safe`-allowlist gotcha for their
+        own popups (see CLAUDE.md's "Keyboard focus ownership" section, consequence 5): a
+        completer's popup is a genuine top-level `Qt.WindowType.Popup` window, never a descendant
+        of this panel, so `isAncestorOf` reads it as 'outside' exactly like it reads any other
+        popup — without this guard, this method (running on every keypress) would fight the
+        popup for focus while the user arrows through it. `QApplication.activePopupWidget()` is
+        the direct Qt API for "is some popup currently active," checked the same way the
+        modal-dialog guard above checks `activeModalWidget()`.
+
+        NOTE: this guard alone did NOT fix the "Down-arrow selecting immediately" bug reported
+        the same session — added on a plausible-but-unconfirmed theory, then live-tested and
+        found to make no difference. The real cause was in `_on_tag_input_changed`/
+        `_do_tag_suggestions` (see that method's own docstring) — a debounced re-query treating
+        the completer's own arrow-key inline-preview text as genuine typing. This guard is kept
+        because it is still independently correct (the same shape as the modal-dialog case right
+        above it), not because it turned out to be the fix."""
+        if QApplication.activePopupWidget() is not None:
+            return
         focus = QApplication.focusWidget()
         if focus is None or not self.isAncestorOf(focus):
             self.setFocus(Qt.FocusReason.OtherFocusReason)
