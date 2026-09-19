@@ -1810,7 +1810,27 @@ Any `QWidget` subclass (not `QFrame`, not `QLabel`) that owns a background-color
 
 *Reorganization note (2026-07-13): the "Critical Architecture Rules" section was restructured to remove repetition — it previously existed as two passes (a full-prose section and a later condensed second pass covering many of the same rules). The two were merged: rules that appeared in both now appear once, under whichever fact they share, with no information dropped. Rules unique to either pass are unchanged. See the note directly under the "Critical Architecture Rules" heading for detail.*
 
-*Last updated: 2026-09-19 Session 1 — EQ/balance sliders got gradient fills, replacing the flat
+*Last updated: 2026-09-19 Session 2 — Book Detail's Tags tab tag chip grid gained full keyboard
+navigation (design settled in TODO.md the same day, implemented directly against it): Down
+enters the grid at the first chip; Left/Right wrap reading-order across rows, Up/Down move
+column-aware (clamped to shorter rows), both derived from real `FlowLayout` geometry rather than
+a bin-packing cache; the tag-add text field stays Tab-only, never arrow-reachable; Right/Down off
+the last chip reaches "Tag management" (Up/Left returns); Del removes the selected tag via the
+same call the mouse's × uses; Space/Enter filters via the same signal and inert-tag check a mouse
+click uses; digits 1-5 jump to a chip. A real mechanism problem was caught before shipping:
+`BookDetailPanel.keyPressEvent` only fires while the PANEL ITSELF holds real Qt focus (this class
+never uses Qt's native per-widget focus/Tab order), so granting "Tag management" real focus (the
+original plan) would have silently killed all further keyboard dispatch — fixed with a plain
+virtual-cursor flag instead, same shape as the chip-selection index. Neither the chip grid nor
+"Tag management" can use the traveling marker (neither holds real focus, so the marker has
+nothing to trace) — found live right after first shipping, fixed with a dedicated QSS
+keyboard-selected fill, the same structural answer the Themes swatch grid already uses for the
+identical gap. New `tests/test_book_detail_tag_chips_keys.py` (22 tests) against real multi-row
+`FlowLayout` geometry — a first draft's zero-size test chips would have silently made every
+multi-row test meaningless, caught before commit by inspecting real chip geometry rather than
+trusting green tests alone. Live-verified by Pryme. Commit `1a268a7`.
+
+*Previously: 2026-09-19 Session 1 — EQ/balance sliders got gradient fills, replacing the flat
 fill color (`ClickSlider.gradient_style`, a `_center_fill_brush` helper returning a
 `QLinearGradient` anchored to the slider's PHYSICAL edges rather than the current fill boundary —
 anchoring to the fill boundary instead would compress the whole dark-to-bright range into whatever

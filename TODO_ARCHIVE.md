@@ -5,6 +5,38 @@ list scannable. Kept, not deleted, per the project's normal practice of not thro
 that isn't fully duplicated in NOTES.md/SESSION.md/a commit message. Order is the same relative
 order these entries had in TODO.md before the split (2026-07-30).
 
+- **[2026-09-15, scope corrected 2026-09-17, design settled + IMPLEMENTED 2026-09-19] Book Detail
+  panel's Tags tab tag chip grid gained full keyboard navigation.** Design was walked through
+  directly by Pryme and confirmed via AskUserQuestion, then implemented the same day against it:
+  Down enters the chip grid at the first chip; Left/Right wrap reading-order across rows (past a
+  row's last chip, Right continues onto the next row's first — same convention
+  `_handle_themes_swatch_arrows` established for the Themes swatch grid); Up/Down move
+  column-aware to the row above/below, clamped to a shorter row's own length, derived from real
+  `FlowLayout` geometry (`_tag_chip_rows()`, groups by `chip.y()`); the tag-add text field stays
+  explicitly OUT of arrow reach at every boundary (Tab only); Right/Down off the LAST chip reaches
+  "Tag management" (Up/Left returns) — the one boundary that continues past the grid rather than
+  wrapping within it; Del removes the selected chip's tag via the exact same `_on_remove_tag` the
+  mouse's × button calls; Space/Enter filters via the exact same `tag_filter_requested` signal and
+  inert-tag exclusion (`_tag_chip_is_clickable`) a mouse click uses; digits 1-5 jump straight to
+  the Nth chip. A "G opens Tags panel" shortcut was considered and explicitly dropped per Pryme's
+  own call. New `_TagChip` class (replacing a bare `QWidget()` chip construction) holds a
+  `keyboard_selected` property; "Tag management" is tracked via a plain flag
+  (`_tag_manager_kbd_selected`), NOT real Qt focus — granting it real focus would have silently
+  stopped `BookDetailPanel.keyPressEvent` from ever firing again (this class doesn't use Qt's
+  native per-widget focus/Tab order at all), a real mechanism problem caught before it shipped.
+  Neither the chip grid nor "Tag management" can use the traveling marker (neither ever holds
+  real Qt focus, so the marker — which only traces real focus — has nothing to trace under either
+  keyboard-nav style) — found live immediately after first shipping ("neither fill nor marker
+  works"), fixed with a dedicated `QWidget#tag_chip[keyboard_selected="true"]` QSS fill, the same
+  structural answer the Themes swatch grid already has for the identical gap. New
+  `tests/test_book_detail_tag_chips_keys.py` (22 tests) exercises the real navigation logic
+  against genuine multi-row `FlowLayout` geometry — a first draft's zero-size test chips silently
+  made every "multi-row" test meaningless (FlowLayout placed everything on one row regardless of
+  container width) until caught by directly inspecting chip geometry rather than trusting the
+  tests passing. The panel's tab bar itself was intentionally left OUT of scope (not wired into
+  the shared `_kbdnav_active_panel_key` mechanism) — see TODO.md's own still-open entry for that
+  narrower, unrelated gap. Commit `1a268a7`.
+
 - **[2026-09-18, FIXED same day] REGRESSION: cover-art-theme hover previewed spuriously with no
   mouse hover at all — same-day regression of the hover-from-Off fix (`5f0c45c`).** Root cause:
   `_on_cover_pool_btn_hovered` applied its preview SYNCHRONOUSLY, with no debounce, unlike every

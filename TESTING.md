@@ -1,3 +1,65 @@
+## Book Detail Tags tab — tag chip grid keyboard navigation — 2026-09-19 Session 2
+
+Background: TODO.md's Book Detail Tags tab entry ("chip navigation design settled, not yet
+implemented") was implemented directly against its own settled design the same day. Automated
+tests (`tests/test_book_detail_tag_chips_keys.py`) cover the navigation logic itself against real
+`FlowLayout` geometry; this list is for the parts that need a live app (visual highlight, real
+mouse/keyboard interplay, real DB-backed tag removal). Commit `1a268a7`.
+
+### Entering and moving through the grid
+- [ ] Open Book Detail on a book with 3+ tags, land on the Tags tab, press Down from wherever
+  focus currently is on the tab — the FIRST tag chip highlights
+- [ ] Left/Right move between chips in reading order; past a row's last chip, Right continues
+  onto the next row's first chip (needs 2+ rows of tags — add tags until they wrap); Left mirrors
+  this in reverse
+- [ ] Up/Down move to the same column on the row above/below; on a row shorter than the one you
+  came from, landing clamps to that row's last chip rather than doing nothing
+- [ ] Left at the very first chip does nothing (does NOT jump to the tag-add text field)
+- [ ] Digits 1-5 jump straight to the Nth chip (try with fewer than 5 tags — a digit beyond the
+  tag count does nothing, doesn't crash)
+
+### Chip highlight
+- [ ] A keyboard-selected chip shows a visibly stronger fill/border than a resting chip
+- [ ] This highlight looks the same under BOTH "Traveling marker" and "Fill highlight" keyboard-
+  nav styles (Settings → Look) — the chip grid never uses the traveling marker itself, by design
+- [ ] Moving from one chip to another moves the highlight cleanly — never two chips highlighted
+  at once, never a highlight left behind on a chip you've moved away from
+
+### "Tag management" boundary
+- [ ] With focus on the LAST chip, press Right (or Down, if it's also the last row) — the
+  keyboard cursor moves to "Tag management" and its own highlight matches the chip highlight's
+  visual weight
+- [ ] From "Tag management", press Up or Left — the cursor returns to the LAST chip
+- [ ] From "Tag management", press Space or Enter — opens the Tag Manager panel (same as clicking
+  the button)
+- [ ] With a book that has 0 tags: Right/Down off the grid does nothing observable extra since
+  there's nothing to navigate FROM — confirm this doesn't crash
+- [ ] If Book Detail was opened FROM the Tags panel itself (so "Tag management" is hidden),
+  Right/Down off the last chip does nothing (no crash, no phantom highlight)
+
+### Del / Space-Enter actions
+- [ ] With a chip keyboard-selected, press Delete (or X) — that tag is removed from the book,
+  same as clicking its × button; the chip list updates and the keyboard cursor doesn't crash or
+  point at a stale chip afterward
+- [ ] Open Book Detail FROM the Library, keyboard-select a tag chip, press Space or Enter — the
+  library search field filters to that tag, same as clicking the chip
+- [ ] Re-select the SAME tag chip that's now the active filter, press Space/Enter again — no-op
+  (matches the mouse's own inert-chip behavior for a tag that's already the active filter)
+- [ ] Open Book Detail from Stats or Tags (not Library), keyboard-select a chip, press Space/Enter
+  — no crash, no unexpected library-panel interaction (there's no library search field to filter
+  in this context)
+
+### Doesn't disturb other tabs/behavior
+- [ ] Left/Right still cycles Stats → History → Tags → Cover normally when NO chip is currently
+  keyboard-selected (confirms the new Tags-tab-local Left/Right claim doesn't leak into ordinary
+  tab cycling)
+- [ ] Tab still toggles focus into/out of the tag-add text field exactly as before, regardless of
+  whether a chip is currently keyboard-selected
+- [ ] Switching away from the Tags tab (Left/Right, or clicking another tab) and back clears any
+  chip/Tag-management highlight — you don't return to find an old selection still lit
+- [ ] Closing and reopening Book Detail on a different book doesn't carry over a stale
+  chip-selected index from the previous book
+
 ## EQ/balance gradient fills, Audio tab reorder, EQ keyboard/wheel nav — 2026-09-19
 
 Background: after the 5-band EQ shipped (below), live feedback across multiple themes and
