@@ -117,6 +117,32 @@ class _HistoryRowBarContainer(QWidget):
         super().resizeEvent(event)
 
 
+class _TagChip(QWidget):
+    """One tag chip in the Tags tab's FlowLayout grid. Holds its own keyboard-selection
+    visual state (a `keyboard_selected` dynamic property, QSS-driven — see themes.py's
+    `#tag_chip[keyboard_selected="true"]` rule), mirroring `_HistoryRow.set_keyboard_selected`'s
+    shape: the grid has no native Qt focus (chips are plain non-interactive widgets, clicked
+    via a `mousePressEvent` monkeypatch, not real QPushButtons), so a keyboard cursor position
+    needs an explicit, QSS-visible marker of its own rather than relying on `:focus`. Extracted
+    out of `_rebuild_tag_chips`'s previous inline `QWidget()` construction (2026-09-19, tag
+    chip keyboard navigation) specifically so this state has somewhere to live."""
+
+    def __init__(self, tag: str, parent=None):
+        super().__init__(parent)
+        self.tag = tag
+        self._keyboard_selected = False
+        self.setObjectName("tag_chip")
+        self.setAttribute(Qt.WA_StyledBackground, True)
+
+    def set_keyboard_selected(self, selected: bool) -> None:
+        if selected == self._keyboard_selected:
+            return
+        self._keyboard_selected = selected
+        self.setProperty("keyboard_selected", "true" if selected else "false")
+        self.style().unpolish(self)
+        self.style().polish(self)
+
+
 class BookDetailPanel(QWidget):
     close_requested = Signal()
     history_deleted = Signal()
@@ -161,6 +187,23 @@ class BookDetailPanel(QWidget):
         # _on_history_delete_confirmed (single-row delete) — no single existing choke point
         # covers all four cases, so each needs its own reset line.
         self._history_selected_index: int = -1
+        # Keyboard-navigated "current" chip in the Tags tab's tag grid (-1 = none), same
+        # shape as _history_selected_index above. Reset in _rebuild_tag_chips (full rebuild
+        # invalidates any index into the old chip list) and hideEvent/_on_tab_changed
+        # (leaving the tab/closing the panel) — mirrors every _history_selected_index reset
+        # site 1:1, added 2026-09-19 for tag chip keyboard navigation.
+        self._tag_chip_selected_index: int = -1
+        # Whether "Tag management" is the current keyboard-cursor target, one boundary step
+        # past the chip grid (Right/Down off the last chip — see _tag_chip_key_event).
+        # Deliberately NOT real Qt focus: BookDetailPanel.keyPressEvent only fires while the
+        # PANEL ITSELF holds real focus (this class doesn't use Qt's native per-widget
+        # focus/Tab order at all — see that method's own docstring), so granting the button
+        # real focus would silently stop this method from ever running again, making the
+        # Up/Left-returns-to-grid path unreachable. Same "virtual cursor position, no real
+        # focus" shape as _tag_chip_selected_index/_history_selected_index — a third state
+        # this tab's keyboard cursor can be in, alongside "no chip selected" (-1) and "chip N
+        # selected" (0..n-1).
+        self._tag_manager_kbd_selected: bool = False
         self.setObjectName("book_detail_panel")
         self.setAttribute(Qt.WA_StyledBackground, True)
         self._assets_dir = os.path.normpath(
@@ -680,12 +723,12 @@ class BookDetailPanel(QWidget):
                 item.widget().deleteLater()
         self.setFocus(Qt.FocusReason.OtherFocusReason)
 
+        self._tag_chip_selected_index = -1
+        self._set_tag_manager_kbd_selected(False)
         tags = self.db.get_book_tags(self._book_data['id'])
         tag_colors = {t: self.db.get_tag_color(t) for t in tags}
         for tag in tags:
-            chip = QWidget()
-            chip.setObjectName("tag_chip")
-            chip.setAttribute(Qt.WA_StyledBackground, True)
+            chip = _TagChip(tag)
             row = QHBoxLayout(chip)
             row.setContentsMargins(10, 5, 7, 5)
             row.setSpacing(6)
@@ -702,8 +745,10 @@ class BookDetailPanel(QWidget):
             # Inert (regular cursor, no click) when this tag is already the active library
             # filter — exact string match against the snapshot taken when this panel opened
             # (see load_book), same "#tag == current search text" comparison style as the
-            # author/narrator/year toggle-off. Live-scoped to library context only.
-            if self._context == 'library' and f"#{tag}" != self._active_search_text:
+            # author/narrator/year toggle-off. Live-scoped to library context only. Also read
+            # by _tag_chip_key_event's Space/Enter branch (_tag_chip_is_clickable), so mouse
+            # click and keyboard activation can never diverge on which tags are inert.
+            if self._tag_chip_is_clickable(tag):
                 chip.setCursor(Qt.CursorShape.PointingHandCursor)
                 chip.mousePressEvent = lambda event, t=tag: self.tag_filter_requested.emit(t)
             x_btn = QPushButton("✕")
@@ -1040,6 +1085,208 @@ class BookDetailPanel(QWidget):
             self._rebuild_tag_chips()
             self.tags_changed.emit()
 
+    def _tag_chip_is_clickable(self, tag: str) -> bool:
+        """Whether a chip for `tag` should act as a library-filter trigger — shared by the
+        mouse's own mousePressEvent monkeypatch (_rebuild_tag_chips) and the keyboard's
+        Space/Enter (_tag_chip_key_event), so the two can never disagree on which tags are
+        inert. Same "#tag == current search text" comparison as the author/narrator/year
+        toggle-off, live-scoped to library context only — outside the library context there
+        is no active search text to compare against, so a chip has nothing keyboard
+        Space/Enter could meaningfully do (see _tag_chip_key_event's own Space/Enter branch)."""
+        return self._context == 'library' and f"#{tag}" != self._active_search_text
+
+    def _tag_chip_rows(self) -> list:
+        """The tag chip grid's widgets grouped into real visual rows, for Up/Down's
+        column-aware move — same purpose as ThemeManager.swatch_grid_rows() for the Themes
+        swatch grid, but derived directly from live geometry (chip.y()) rather than a
+        bin-packing cache, since FlowLayout has already laid the chips out by the time this
+        runs and there is no separate packing step to cache. Chips are grouped by identical
+        y() (FlowLayout lays out a full row at one y before advancing) — relies on
+        FlowLayout.setGeometry having already run for this frame, true any time a key
+        handler reads this (the grid is visible and laid out before it can hold focus)."""
+        rows = []
+        for chip in self._tag_chips():
+            y = chip.y()
+            if rows and rows[-1][0].y() == y:
+                rows[-1].append(chip)
+            else:
+                rows.append([chip])
+        return rows
+
+    def _select_tag_chip(self, new_index: int) -> None:
+        """Move the keyboard cursor to `new_index` in the flat chip list, updating both
+        _tag_chip_selected_index and the two chips' own visual state. Shared tail for every
+        arrow branch in _tag_chip_key_event."""
+        chips = self._tag_chips()
+        if 0 <= self._tag_chip_selected_index < len(chips):
+            chips[self._tag_chip_selected_index].set_keyboard_selected(False)
+        self._tag_chip_selected_index = new_index
+        chips[new_index].set_keyboard_selected(True)
+
+    def _set_tag_manager_kbd_selected(self, selected: bool) -> None:
+        """Sets/clears the "Tag management" virtual keyboard-cursor state — see
+        _tag_manager_kbd_selected's own comment in __init__ for why this is a plain flag +
+        QSS property rather than real Qt focus. No-op if already correct, same guard shape
+        as _TagChip.set_keyboard_selected."""
+        if selected == self._tag_manager_kbd_selected:
+            return
+        self._tag_manager_kbd_selected = selected
+        self._tag_manager_btn.setProperty("keyboard_selected", "true" if selected else "false")
+        self._tag_manager_btn.style().unpolish(self._tag_manager_btn)
+        self._tag_manager_btn.style().polish(self._tag_manager_btn)
+
+    def _tag_chip_key_event(self, key) -> bool:
+        """Tags-tab-local key handling for the tag chip grid AND the "Tag management"
+        button one step past it. Returns True if the key was claimed here (caller must not
+        also apply a top-level meaning to the same press) — same contract as
+        _history_key_event/_cover_key_event.
+
+        Design settled 2026-09-19 (TODO.md), confirmed directly by Pryme via AskUserQuestion
+        before implementation:
+          * Down (from no chip selected, i.e. wherever else focus was on the tab) enters the
+            grid at the FIRST chip. This is the sole entry point — there is no Up-from-
+            elsewhere-on-the-tab entry, mirroring the Themes swatch grid's own Down-only
+            entry via _focus_settings_control.
+          * Left/Right, once a chip is selected: reading-order wrap ACROSS rows — past the
+            last chip of a row, Right continues onto the next row's first chip; past a row's
+            first chip, Left continues onto the previous row's last chip. Off the very first
+            chip, Left is a no-op (nowhere to go — Tab is the only way to reach the text
+            field, deliberately excluded from arrow reach, see below). Off the very LAST
+            chip, Right moves to "Tag management" — the ONE boundary that continues past the
+            grid rather than stopping/wrapping within it, deliberately asymmetric with the
+            text-field exclusion.
+          * Up/Down, once a chip is selected: column-aware move to the row above/below,
+            clamped to that row's own (possibly shorter) length — same shape as the Themes
+            swatch grid's Up/Down. Down off the LAST row also reaches "Tag management".
+          * Once on "Tag management": Up/Left return to the LAST chip (the mirror-image
+            boundary); Space/Enter activates it (open_tag_manager_requested, the same
+            signal its own click() already emits).
+          * The tag-add TEXT FIELD is explicitly OUT of arrow-key reach at every boundary —
+            it stays reachable by Tab only (the existing two-state toggle in eventFilter is
+            unchanged). This was chosen specifically to keep arrow-navigation and
+            Tab-navigation as two clean, non-overlapping mechanisms.
+          * Del removes the selected chip's tag from the book (_on_remove_tag) — same action
+            the mouse's own × button performs. Not applicable to "Tag management".
+          * Space/Enter on a chip activates it exactly like a mouse click would
+            (_tag_chip_is_clickable's own inert-tag exclusion applies identically) — sets it
+            as the active library filter when Book Detail was opened from the Library; a
+            no-op (but still consumed, matching every other tab's "claimed, nothing to do"
+            shape) otherwise, since there is no non-library click behavior for a tag chip to
+            mirror.
+          * 1-5 jump straight to the Nth chip (the per-book tag limit is 5, so this covers
+            every possible position) — a no-op if that position doesn't exist. These fire
+            regardless of whether a chip is already selected, same as the Themes/Library
+            digit-jump conventions elsewhere in the app. Also exits "Tag management" back to
+            a chip, same as Left/Up would.
+          * "G" to open the Tags panel directly was considered and explicitly dropped by
+            Pryme ("I am not keen on this") — not bound here or anywhere in this method.
+        """
+        chips = self._tag_chips()
+        n = len(chips)
+
+        if self._tag_manager_kbd_selected:
+            if key in (Qt.Key.Key_Up, Qt.Key.Key_Left):
+                self._set_tag_manager_kbd_selected(False)
+                if n:
+                    self._select_tag_chip(n - 1)
+                return True
+            if key in (Qt.Key.Key_Space, Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                self.open_tag_manager_requested.emit()
+                return True
+            digit_keys = {Qt.Key.Key_1: 0, Qt.Key.Key_2: 1, Qt.Key.Key_3: 2,
+                          Qt.Key.Key_4: 3, Qt.Key.Key_5: 4}
+            if key in digit_keys and digit_keys[key] < n:
+                self._set_tag_manager_kbd_selected(False)
+                self._select_tag_chip(digit_keys[key])
+                return True
+            return False
+
+        digit_keys = {
+            Qt.Key.Key_1: 0, Qt.Key.Key_2: 1, Qt.Key.Key_3: 2,
+            Qt.Key.Key_4: 3, Qt.Key.Key_5: 4,
+        }
+        if key in digit_keys:
+            idx = digit_keys[key]
+            if idx < n:
+                self._select_tag_chip(idx)
+            return True
+
+        if n == 0:
+            # No tags on this book — nothing to navigate onto; only "Tag management" is a
+            # possible target, but it lives outside this grid and is reached via Tab/the
+            # generic settings-arrow dispatch, same as when the grid has never been entered.
+            return False
+
+        if self._tag_chip_selected_index == -1:
+            if key == Qt.Key.Key_Down:
+                self._select_tag_chip(0)
+                return True
+            return False  # not yet in the grid — every other key falls through
+
+        idx = self._tag_chip_selected_index
+
+        if key == Qt.Key.Key_Delete or key == Qt.Key.Key_X:
+            self._on_remove_tag(chips[idx].tag)
+            return True
+
+        if key in (Qt.Key.Key_Space, Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            tag = chips[idx].tag
+            if self._tag_chip_is_clickable(tag):
+                self.tag_filter_requested.emit(tag)
+            return True
+
+        if key == Qt.Key.Key_Right:
+            if idx + 1 < n:
+                self._select_tag_chip(idx + 1)
+            else:
+                self._enter_tag_manager_from_grid()
+            return True
+
+        if key == Qt.Key.Key_Left:
+            if idx > 0:
+                self._select_tag_chip(idx - 1)
+            # else: no-op — the text field is deliberately not arrow-reachable (Tab only).
+            return True
+
+        if key in (Qt.Key.Key_Up, Qt.Key.Key_Down):
+            rows = self._tag_chip_rows()
+            # Find the selected chip's (row, col) — derived fresh each time rather than
+            # tracked separately, since _tag_chip_selected_index is the single source of
+            # truth for "which chip" and row/col are just a view onto that.
+            row_i = col_i = 0
+            for r_i, row in enumerate(rows):
+                if chips[idx] in row:
+                    row_i, col_i = r_i, row.index(chips[idx])
+                    break
+            if key == Qt.Key.Key_Down:
+                if row_i + 1 < len(rows):
+                    target_row = rows[row_i + 1]
+                    self._select_tag_chip(chips.index(target_row[min(col_i, len(target_row) - 1)]))
+                else:
+                    self._enter_tag_manager_from_grid()
+            else:  # Key_Up
+                if row_i > 0:
+                    target_row = rows[row_i - 1]
+                    self._select_tag_chip(chips.index(target_row[min(col_i, len(target_row) - 1)]))
+                # else: no-op — row 0, nothing above (Down is the sole entry point; Up here
+                # would have nowhere meaningful to exit to, unlike the swatch grid's tab bar).
+            return True
+
+        return False
+
+    def _enter_tag_manager_from_grid(self) -> None:
+        """Right/Down off the grid's last chip lands on "Tag management" — the one boundary
+        that continues past the grid rather than stopping/wrapping within it (see
+        _tag_chip_key_event's own docstring). No-op if the button isn't currently visible
+        (hidden entirely when this panel was opened FROM the Tags panel — see its
+        setVisible(context != 'tags') call site — in which case there is genuinely nowhere
+        for Right/Down to go past the last chip, so the key is still consumed but does
+        nothing, matching every other "claimed, nothing to do" shape in this dispatch)."""
+        if not self._tag_manager_btn.isVisible():
+            return
+        self._clear_tag_chip_selection()
+        self._set_tag_manager_kbd_selected(True)
+
     def _sync_header_from_fields(self):
         self._title_label.setText(self._book_data.get('title') or self._book_data.get('book_title', ''))
         self._author_label.setText(self._book_data.get('author') or self._book_data.get('book_author', ''))
@@ -1363,6 +1610,7 @@ class BookDetailPanel(QWidget):
         self._cancel_finished_confirm()
         self._dismiss_history_confirm()
         self._clear_history_selection()
+        self._clear_tag_chip_selection()
         super().hideEvent(event)
 
     _COVER_FIT_KEYS = {
@@ -1432,6 +1680,15 @@ class BookDetailPanel(QWidget):
                 return
             super().keyPressEvent(event)
             return
+
+        # Tags is checked BEFORE the top-level Left/Right tab-cycle below — it is the only
+        # tab whose own local handling needs Left/Right for something other than switching
+        # tabs (moving the keyboard cursor within the tag chip grid). History/Cover never
+        # needed this: neither claims Left/Right in its own _key_event, so checking them
+        # AFTER the tab-cycle (their original position, unchanged) never conflicted.
+        if self._on_tags_tab():
+            if self._tag_chip_key_event(key):
+                return
 
         if key in (Qt.Key.Key_Left, Qt.Key.Key_Right):
             self._cycle_tab(-1 if key == Qt.Key.Key_Left else 1)
@@ -1865,6 +2122,29 @@ class BookDetailPanel(QWidget):
             self._history_rows[self._history_selected_index].set_keyboard_selected(False)
         self._history_selected_index = -1
 
+    def _tag_chips(self) -> list:
+        """The current tag chips in grid order, read live off the FlowLayout — same "derive
+        from the live layout, no separate list to keep in sync" approach panels.py's
+        settings_tab_button_rows() uses for button rows."""
+        return [self._tag_chip_layout.itemAt(i).widget()
+                for i in range(self._tag_chip_layout.count())]
+
+    def _clear_tag_chip_selection(self):
+        """Clears keyboard chip selection in the Tags tab, same shape as
+        _clear_history_selection — reset from hideEvent, leaving the Tags tab, and a full
+        _rebuild_tag_chips rebuild (see _tag_chip_selected_index's declaration). Also clears
+        "Tag management"'s own keyboard-cursor state — the two are mutually exclusive
+        virtual-cursor positions on this tab (see _tag_manager_kbd_selected's own comment),
+        so anything that resets one resets both. _enter_tag_manager_from_grid calls this
+        FIRST and then sets the manager flag True immediately after, so this clearing it is
+        harmless there — it's the other three callers (hideEvent, tab-change, rebuild) that
+        actually need it."""
+        chips = self._tag_chips()
+        if 0 <= self._tag_chip_selected_index < len(chips):
+            chips[self._tag_chip_selected_index].set_keyboard_selected(False)
+        self._tag_chip_selected_index = -1
+        self._set_tag_manager_kbd_selected(False)
+
     def _on_tab_changed(self):
         if self._editing:
             self._exit_edit_mode(save=False)
@@ -1872,6 +2152,8 @@ class BookDetailPanel(QWidget):
         if self.tabs.currentIndex() != 1:
             self._dismiss_history_confirm()
             self._clear_history_selection()
+        if not self._on_tags_tab():
+            self._clear_tag_chip_selection()
 
     def _on_field_click(self, event, field):
         QLineEdit.mousePressEvent(field, event)

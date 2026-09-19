@@ -26,6 +26,7 @@ from PySide6.QtCore import Qt, QEvent
 from PySide6.QtGui import QKeyEvent
 
 from fabulor.ui.book_detail_panel import BookDetailPanel
+from fabulor.ui.flow_layout import FlowLayout
 
 
 @pytest.fixture(scope="module")
@@ -140,6 +141,16 @@ class _FakeBookDetailPanel(BookDetailPanel):
         # 2026-09-09 — see _history_key_event's own comment for the design.
         self._delete_history_btn = _FakeVisibilityWidget(delete_history_btn_visible)
         self._delete_history_confirm_label = _FakeVisibilityWidget(delete_history_confirming)
+        # Tags-tab chip-grid keyboard nav (2026-09-19) — exercises the REAL
+        # _tag_chip_key_event/_tag_chips/_tag_chip_rows against a genuinely empty grid
+        # (no test double standing in for the method under test), so an empty-grid Tags
+        # tab behaves exactly like it would in the real app: every key falls through to
+        # this fake's own tab-cycle/Del/X assertions, same as before this feature existed.
+        # See tests/test_book_detail_tag_chips_keys.py for the populated-grid cases.
+        self._tag_chip_layout = FlowLayout(QWidget())
+        self._tag_chip_selected_index = -1
+        self._tag_manager_kbd_selected = False
+        self._tag_manager_btn = _FakeVisibilityWidget(False)
         self.calls = []
 
     def _on_finished_clicked(self):

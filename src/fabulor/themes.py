@@ -5197,6 +5197,20 @@ def get_stats_stylesheet(theme_name="default"):
             border: 1px solid rgba({_hex_to_rgb(t['accent'])}, 0.40);
             border-radius: 0px;
         }}
+        /* Keyboard-cursor state (2026-09-19, tag chip grid navigation) — a tag chip never
+           holds real Qt focus (see _TagChip.set_keyboard_selected's own docstring), and the
+           traveling marker only ever traces real focus, so neither the marker NOR a
+           :focus-gated fill can reach this widget regardless of the configured keyboard-nav
+           style — same structural gap the Themes swatch grid has its own synthetic-hover
+           highlight for. This plain dynamic property is that highlight for tag chips: a
+           visibly stronger fill/border than the resting state, applied under BOTH marker
+           styles (there is no style-specific branch here, unlike the balance/EQ sliders'
+           kbd_fill_active — a chip's affordance was never the marker to begin with, so
+           there is nothing for a style toggle to switch away from). */
+        QWidget#tag_chip[keyboard_selected="true"] {{
+            background-color: rgba({_hex_to_rgb(t['accent'])}, 0.30);
+            border: 1px solid {t['accent']};
+        }}
         QWidget#tag_chip QLabel#tag_chip_label {{
             color: {t['accent_light']};
             font-size: 14px;
@@ -5255,6 +5269,15 @@ def get_stats_stylesheet(theme_name="default"):
         }}
         QPushButton#tag_manager_nav_btn:pressed {{
             background: {t['accent_dark']};
+            color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
+        }}
+        /* Keyboard-cursor state (2026-09-19, tag chip grid navigation) — this button never
+           holds real Qt focus (see BookDetailPanel._tag_manager_kbd_selected's own comment
+           for why), so its "the keyboard cursor is here" indicator is a plain dynamic
+           property instead of :focus, reusing the same fill this button's own :hover
+           already uses for visual consistency. */
+        QPushButton#tag_manager_nav_btn[keyboard_selected="true"] {{
+            background: {t['accent']};
             color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
         }}
     """
