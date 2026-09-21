@@ -505,6 +505,14 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # _update_ui_sync for the full story of why this must be a CACHED VALUE, not a
         # one-shot "have we tried" flag.
         self._eof_dur_fallback: float | None = None
+        # True while the post-revert "Finished status reverted." banner is showing and
+        # its own 5s auto-hide timer hasn't fired yet. _eof_book_id is already None by
+        # the time this banner shows (the revert already cleared it), so it can't be
+        # used to detect this state — this flag exists specifically to let a book
+        # switch retire THIS banner without also touching an unrelated one (e.g. a
+        # library scan's cancel banner, which legitimately outlives a book switch).
+        # See _on_revert_finish / _dismiss_status_banner.
+        self._post_revert_banner_pending: bool = False
 
         # Session recording
         self._current_book = None
@@ -1752,6 +1760,11 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self._banner_anim.start()
 
     def _slide_banner_out(self):
+        # Whatever banner state was showing is ending now — including a still-pending
+        # post-revert banner (see _on_revert_finish/_post_revert_banner_pending). This
+        # is the single choke point both the natural 5s auto-hide timeout and every
+        # explicit dismiss path route through, so it's the correct place to clear it.
+        self._post_revert_banner_pending = False
         if not self.status_banner.isVisible():
             return
         h = self.height()
@@ -1803,6 +1816,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 return
             self.db.unfinish_book(book_id, self.config.get_day_start_hour())
             self._eof_book_id = None
+            self._post_revert_banner_pending = True
             # show_banner intentionally omitted (left None): the banner is already
             # visible from the "Marked as finished." prompt, so re-passing True
             # would re-run _slide_banner_in, which forces the banner off-screen
@@ -2187,6 +2201,16 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             return
 
         self._dismiss_eof_prompt()
+        if self._post_revert_banner_pending:
+            # Live report, 2026-09-21: "If I revert, then load a book though, the
+            # banner showing the revert prompt bleeds into the newly loaded book."
+            # _dismiss_eof_prompt() alone doesn't catch this — it's gated on
+            # _eof_book_id, which a revert has ALREADY cleared by this point, so its
+            # early-return skips right past this banner entirely. The post-revert
+            # "Finished status reverted." banner has its own independent 5s
+            # auto-hide timer (_on_revert_finish) that a book switch has no reason
+            # to wait out.
+            self._dismiss_status_banner()
         self._save_current_progress()
         self._paused_time = None
         # Smart rewind is per-book: a pause timestamp armed on the outgoing book must
