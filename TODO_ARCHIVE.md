@@ -5,8 +5,9 @@ list scannable. Kept, not deleted, per the project's normal practice of not thro
 that isn't fully duplicated in NOTES.md/SESSION.md/a commit message. Order is the same relative
 order these entries had in TODO.md before the split (2026-07-30).
 
-- **[2026-09-17, escalated 2026-09-19, fixed 2026-09-21] "Resuming an M4B after unfinishing it
-  freezes the app" — ten fixes across one sustained investigation, all live-verified working
+- **[2026-09-17, escalated 2026-09-19, fixed 2026-09-21, eleventh fix added 2026-09-22]
+  "Resuming an M4B after unfinishing it freezes the app" — eleven fixes across one sustained
+  investigation plus a dedicated follow-up stress-testing pass, all live-verified working
   together across VT and M4B.** Root causes and fixes, in the order they were found:
   1. **The freeze itself**: `_restore_position` (app.py) pre-set `self.player.is_seeking = True`
      before calling `seek_async` for a book saved at/near its own duration — `seek_async`'s
@@ -110,14 +111,54 @@ order these entries had in TODO.md before the split (2026-07-30).
       writes the event against the right book. Another instance of this file's "two sources of
       truth" family of bugs (see fix 5's `_logical_pos`/`_eof` shape) — `current_file` and
       `_current_book` were assumed to always be in lockstep and were not.
+  11. **A rapid second switch could permanently zero the OUTGOING book's saved progress**
+      (found 2026-09-22, one day after fixes 1-10 shipped, during a stress-testing pass
+      explicitly requested to probe this historically fragile zone further before closing the
+      investigation out). Live report: "Shadow reset to 0 along the way, I had to type the
+      name to find and load it." `_current_book` (the `Book` object populated by
+      `_restore_position`/`_on_file_ready` with a book's TRUE saved position) is only
+      reassigned inside `_on_file_ready` — which DEFERS itself (`BookSwitchState.
+      mark_file_ready_deferred()`) whenever the library panel is still mid-close-animation.
+      `BookSwitchState.begin()`, called at the START of every new book selection,
+      unconditionally resets `_file_ready_deferred = False` — silently DISCARDING a
+      still-pending deferred call rather than ever running it. Traced via
+      `[BOOKSWITCH-TRACE]`/`[PERSIST-TRACE]` log correlation (not guessed) to the exact
+      sequence: switch to book X while the library is still closing from the PREVIOUS switch
+      → `_on_file_ready` for X logs "DEFERRED (library still animating)" → a second, rapid
+      switch to book Y begins before X's library-close animation ever finishes → `begin()`
+      silently drops X's deferred restore → `player.time_pos` for X is still whatever raw,
+      untouched transient mpv reported for the freshly-loaded file (~0.0, since
+      `_restore_position` never ran for X) → the switch-away's own `_save_current_progress()`
+      call (at the top of `_on_book_selected_from_library`, which still correctly targets the
+      OUTGOING book X by path) persists that raw ~0.0 as X's new saved progress, permanently
+      overwriting its real one. Fixed by requiring `self._current_book.path ==
+      self.current_file` before `_save_current_progress` trusts `player.time_pos` for a DB
+      write — reusing the EXACT staleness signal fix 10 already established (`_current_book`
+      only ever reflects a book whose restore has actually completed), applied at a second call
+      site. If they disagree, the save is skipped entirely rather than writing a
+      guaranteed-wrong value — the book's last correctly-saved position is simply left
+      untouched, not overwritten with a worse one. Live-verified via a rigorous stress-testing
+      pass across all three books at varying progress (including one left at 100%) plus a
+      screenshot-vs-DB cross-check confirming the Library grid's displayed percentages matched
+      the DB exactly for all three afterward.
   New/extended tests: `tests/test_restore_position_eof.py` (new, 34 tests total across fixes
   1-7, including direct `Player._on_time_pos_change` and `Player.load_book` exercises), `tests/
-  test_vt_seek.py` (2 new tests for fix 3, 2 more for fix 6). Fixes 8-10 are inside heavily
+  test_vt_seek.py` (2 new tests for fix 3, 2 more for fix 6). Fixes 8-11 are inside heavily
   Qt-widget-dependent `MainWindow` methods (banner animation/timers, the 200ms UI tick) not
   practically unit-testable in isolation — verified live instead, each confirmed via targeted,
   removed-after-use debug tracing (`[ICONFLASH-TRACE]`, `[REVERTBLEED-TRACE]`) rather than
-  guessed, per CLAUDE.md's standing rule for this zone. Commits `94c5187`, `8cd5a9d`, `bd1ffde`,
-  `8b14231`, and one more for fix 10.
+  guessed, per CLAUDE.md's standing rule for this zone. Fix 11 additionally got three new
+  dedicated test files, written specifically to stress-test the whole investigation's logic
+  beyond the exact reported repros: `tests/test_eof_race_fuzz.py` (21 randomized-ordering
+  tests driving real `Player` state through adversarial interleavings of load/seek/raw-sample
+  operations, each asserting a set of invariants after EVERY step — verified to catch two of
+  fixes 1-10 when each was deliberately reintroduced, so the harness is proven to have real
+  bite, not just tautologically pass), `tests/test_eof_finished_write_integration.py` (real-DB
+  integration tests for fix 10's staleness guard, including a randomized rapid-switch
+  simulation across three books), `tests/test_eof_save_progress_staleness.py` (real-DB
+  integration tests for fix 11, confirmed to reproduce the exact corruption against the
+  pre-fix logic before verifying the fix closes it). Commits `94c5187`, `8cd5a9d`, `bd1ffde`,
+  `8b14231`, `0cd6ed9` (fix 10), `97abfb4` (fix 11).
 
 - **[2026-09-15, scope corrected 2026-09-17, design settled + IMPLEMENTED 2026-09-19] Book Detail
   panel's Tags tab tag chip grid gained full keyboard navigation.** Design was walked through
