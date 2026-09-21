@@ -2840,7 +2840,31 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             if is_eof:
                 pos = dur
                 self._set_play_icon("restart")
-                if not self._eof_event_written and self._current_book is not None:
+                # `and self._current_book.path == self.current_file` (2026-09-22): closes a
+                # genuine cross-tick staleness gap, not just a defensive belt-and-suspenders
+                # check. `current_file` (a plain string) is updated SYNCHRONOUSLY in
+                # _on_book_selected_from_library, but `_current_book` (the Book object this
+                # branch reads) is only reassigned inside _on_file_ready — a QueuedConnection
+                # handler that runs LATER, once book_ready is actually delivered. Player.
+                # load_book's own near-EOF pre-arm (see that method's own comment) sets
+                # `_eof = True` SYNCHRONOUSLY too, at the very top of load_book — well before
+                # _on_file_ready has any chance to run. So a 200ms UI tick landing in this
+                # narrow window (current_file already the NEW book, _eof already True for
+                # the new book, but _current_book still the OLD book) wrote a 'finished'
+                # event against the WRONG book entirely: `_current_book.path`/`.id` were the
+                # previous book's, while the banner text and visible book were the new one's.
+                # Live report, 2026-09-22: switching A Drop of Corruption -> A Shadow in
+                # Summer (both saved at their own EOF) re-showed "Marked as finished." for
+                # A Shadow in Summer, but the actual DB write — confirmed via
+                # [REVERTBLEED-TRACE] plus a direct query — used A Drop of Corruption's own
+                # id, silently corrupting THAT book's finished-event history instead of
+                # touching A Shadow in Summer's at all. This is a straightforward instance of
+                # this file's "two sources of truth" family of bugs (see the _logical_pos/
+                # `_eof` fixes above) — `current_file` and `_current_book` must be checked
+                # for agreement before anything derives a book identity from `_current_book`
+                # inside this branch, not assumed to always be in lockstep.
+                if (not self._eof_event_written and self._current_book is not None
+                        and self._current_book.path == self.current_file):
                     self.db.write_book_event(self._current_book.path, 'finished', book_id=self._current_book.id, day_start_hour=self.config.get_day_start_hour())
                     self._eof_event_written = True
                     self._eof_book_id = self._current_book.id if self._current_book else None
