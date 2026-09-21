@@ -2268,6 +2268,16 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # Distinct from a deliberate manual cancel (sidebar X / panel button), which
         # stays silent — this shows "Sprint cancelled" (2026-08-11).
         self.sprint_panel.cancel_for_book_switch()
+        # Undo is per-book: an anchored seek-undo from the OUTGOING book must not
+        # survive into the incoming book. Live report 2026-09-22: "Scrub to make
+        # Undo appear, switch to another book, Undo is still there. Click on it,
+        # it takes the new book to the previous book's anchored percentage." Same
+        # shape as the smart-rewind timestamp and sprint clears just above —
+        # player.undo_seek() has no way to know its stashed _undo_pos belongs to a
+        # book that is no longer current, so it must be discarded here instead.
+        if self.undo_overlay.isVisible():
+            self._hide_undo_banner()
+        self.player._undo_pos = None
         # Enter the switch lifecycle: capture the current slider values as flow-animation
         # start points, arm the deadzone, and reset the per-switch retry/deferred flags.
         self._switch.begin(
