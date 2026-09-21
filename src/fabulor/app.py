@@ -500,7 +500,11 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.show_remaining_time = self.config.get_show_remaining_time()
         self._eof_event_written: bool = False
         self._eof_book_id: int | None = None
-        self._eof_dur_fetched: bool = False
+        # Caches the DB-sourced duration fallback for a book synthesized at EOF whose
+        # own mpv `duration` property hasn't been populated yet — see the read site in
+        # _update_ui_sync for the full story of why this must be a CACHED VALUE, not a
+        # one-shot "have we tried" flag.
+        self._eof_dur_fallback: float | None = None
 
         # Session recording
         self._current_book = None
@@ -2221,7 +2225,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # this closes (M4B progress silently resetting to ~0 on repeated book-switch).
         incoming_book_data = self.db.get_book(path)
         self._last_saved_pos = incoming_book_data.progress if incoming_book_data and incoming_book_data.progress else 0.0
-        self._eof_dur_fetched = False
+        self._eof_dur_fallback = None
         self._eof_book_id = None
         self.current_file = path
         self.session_recorder.close()
@@ -2758,10 +2762,43 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 return
 
             if is_eof and dur is None:
-                if not self._eof_dur_fetched:
+                # `self.player.duration` is mpv's own async-populated property, re-read
+                # fresh from scratch on EVERY tick — it is not cached anywhere by
+                # Player. A restore-time EOF synthesis (Player.load_book's pre-arm,
+                # player.py) can set `_eof = True` synchronously, well before mpv has
+                # even started loading the file, let alone reported its `duration`
+                # property — so `dur is None` here is the EXPECTED, normal state for
+                # several ticks in a row after a switch, not a one-time startup gap.
+                #
+                # This block used to gate the DB fallback on a one-shot boolean
+                # (`_eof_dur_fetched`) that only protected the DB CALL, not the
+                # resulting `dur` value — so the FIRST tick correctly derived `dur`
+                # from the DB and rendered "Restart", but every SUBSEQUENT tick (while
+                # mpv's own duration was STILL None) skipped the now-already-tripped
+                # DB-call guard, left the local `dur` at None, and fell through to the
+                # `dur is None or dur <= 0` early-return below — which forces "Play",
+                # even though `is_eof` was correctly True the whole time. Live report,
+                # 2026-09-21: "the M4B shows a Play icon first, then settles into
+                # Restart icon" — this is why, and it's the OPPOSITE of a timing
+                # problem the flow-animation/tick cadence can outgrow on its own:
+                # every tick this shape hits keeps re-showing "Play" until mpv's OWN
+                # duration property happens to populate (an unrelated, unbounded mpv
+                # async event), not until any deterministically-short window passes.
+                #
+                # Fix: cache the FETCHED VALUE itself (`_eof_dur_fallback`), not just
+                # whether we tried, and reuse the cached value on every subsequent
+                # tick until mpv's own `duration` catches up (at which point
+                # `self.player.duration` stops being None and this whole block is
+                # skipped again, same as always). Pryme's own framing of the
+                # constraint that shaped this fix: the chapter label could get away
+                # with showing nothing until the true value was known, but the
+                # play/pause button always has to show SOME icon — there is no
+                # "blank" state to fall back on, so the fallback must stay effective
+                # for as long as mpv's own data is missing, not just once.
+                if self._eof_dur_fallback is None:
                     book = self.db.get_book(self.current_file)
-                    dur = book.duration if book and book.duration else 0.0
-                    self._eof_dur_fetched = True
+                    self._eof_dur_fallback = book.duration if book and book.duration else 0.0
+                dur = self._eof_dur_fallback
 
             # If we aren't at EOF and don't have a position, we can't update —
             # unless we're paused and have a cached position from before the seek.

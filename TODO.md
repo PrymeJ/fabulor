@@ -9,31 +9,24 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
 
 ## Summary index
 
-### Play button briefly shows before settling into Restart on reselecting a finished book (M4B only)
-- [2026-09-21] Live-observed the same session the chapter-flash and its underlying cross-thread
-  race (below) were fixed, and almost certainly the SAME mechanism reapplied to a different
-  consumer of `_eof` — not yet confirmed via trace, flagged here rather than guess-patched, per
-  CLAUDE.md's standing rule for this zone. Pryme's own diagnosis, and it matches the code exactly:
-  "Why does the VT show a Restart icon directly but the M4B shows a Play icon first, then settles
-  into Restart icon? Because VT has its own logic and knows the progress earlier while the M4B
-  uses the internal mpv logic and it takes time for it to get that information?" — yes:
-  `_update_ui_sync`'s `is_eof = self.player.eof_reached` is a direct passthrough of `self._eof`
-  (`Player.eof_reached`, player.py), the exact same flag whose VT-vs-M4B `book_ready`-ordering
-  asymmetry caused the chapter-label flash (see the fixed entry below — VT fires `book_ready`
-  before `instance.play()`, so `_eof` synthesis always lands before any mpv sample; non-VT only
-  fires it from mpv's OWN `file-loaded` event thread, racing the Qt-queued `_restore_position`).
-  **Reported AFTER the `load_book` pre-arm fix (below, fix 7) was already live** (restart confirmed
-  at 21:42:42) — meaning that fix, which closes the exact same race for the chapter walk, did NOT
-  also close it for the Restart icon, which is surprising given they share the same underlying
-  `self._eof` read and the pre-arm sets `_eof` synchronously before any mpv thread activity can
-  begin. Needs live [trace]-style investigation (not assumption) into why the icon still lags —
-  candidates worth checking first: whether `_set_play_icon("restart")` requires `dur` to already
-  be non-`None` (see `_update_ui_sync`'s `if dur is None or dur <= 0: self._set_play_icon("play");
-  return` early-return, which fires BEFORE the `is_eof` branch and could mask a correctly-set
-  `_eof=True` behind a still-unpopulated `player.duration` for M4B specifically, since `dur` there
-  comes from `self.player.duration if self.current_file else None` — an mpv-populated value, not
-  the DB-sourced one `load_book`'s pre-arm reads); or a UI-timer/tick-cadence gap between when
-  `load_book` runs and when `_update_ui_sync` next ticks with the new `current_file` in place.
+### Play button briefly showed before settling into Restart on reselecting a finished book (M4B only) — FIXED, live-verified 2026-09-21
+- [2026-09-21, fixed same day] Confirmed live via `[ICONFLASH-TRACE]` id-tagged logging: `restart`
+  fired correctly on the FIRST tick after a book switch (`_eof=True`, `dur` resolved via the DB
+  fallback), then `play` fired ~145ms later on the NEXT tick, still `_eof=True` but `dur=None`
+  again. Root cause: `_update_ui_sync`'s DB-duration-fallback block (for a book synthesized at EOF
+  whose own mpv `duration` property hasn't populated yet — `self.player.duration` is read fresh
+  from mpv every tick, never cached by `Player`) was gated on a ONE-SHOT boolean
+  (`_eof_dur_fetched`) that only protected the DB *call*, not the resulting `dur` *value*. The
+  first tick correctly derived `dur` from the DB and showed Restart; every SUBSEQUENT tick, while
+  mpv's own duration was STILL `None` (an unbounded, independent mpv async event — not a short,
+  deterministic window), the now-already-tripped one-shot guard skipped re-deriving `dur`, leaving
+  the local `dur` at `None` and falling into the `dur is None or dur <= 0` early-return, which
+  forces "Play" — even though `is_eof` was correctly `True` the whole time. Pryme's own framing of
+  the constraint that shaped the fix: unlike the chapter label (which can show nothing until the
+  correct value is known), the play/pause button always has to show SOME icon, so the fallback
+  must stay effective for as long as mpv's own data is missing, not just once. Fixed by caching the
+  FETCHED VALUE itself (`_eof_dur_fallback`, replacing the boolean) and reusing it on every
+  subsequent tick until mpv's own `duration` eventually populates.
 
 ### Resuming an M4B after unfinishing it freezes the app — FIXED, live-verified 2026-09-21
 - [2026-09-17, escalated 2026-09-19, fixed 2026-09-21] The freeze, the VT chapter-slider retreat,
@@ -96,9 +89,10 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
      (idempotent). Both fixes live-verified 2026-09-21 (chapter flash gone for both VT and M4B).
   New/extended tests: `tests/test_restore_position_eof.py` (new, 34 tests total across all fixes,
   including direct `Player._on_time_pos_change` and `Player.load_book` exercises), `tests/
-  test_vt_seek.py` (2 new tests for fix 3, 2 more for fix 6). See the "Play button briefly shows
-  before settling into Restart" entry above for a related, still-open residual — same underlying
-  `_eof` flag, different consumer, not yet confirmed to share fix 7's exact mechanism.
+  test_vt_seek.py` (2 new tests for fix 3, 2 more for fix 6). A related residual — the play/pause
+  button briefly showing "Play" before settling into "Restart" for M4B, same underlying `_eof`
+  flag but a DIFFERENT root cause (a one-shot vs. cached DB-duration-fallback bug, not the
+  cross-thread race fix 7 closes) — was found and fixed the same day; see the entry above.
 
 ### Book Detail panel's tab bar — not wired into the shared `_kbdnav_active_panel_key` mechanism
 - [2026-09-15, scope corrected 2026-09-17] Still true and unrelated to the (now implemented, see
