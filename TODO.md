@@ -393,16 +393,6 @@ correctly — the contrast is what made these visible, so they are not regressio
 
 ### VT / seek / progress tracking
 - [2026-07-18] `closeEvent` can save near-zero progress on a SIGTERM race (narrow, not confirmed to matter)
-- [2026-07-14, re-tested 2026-09-17] VT progress restore silently resets on book-switch — root
-  cause confirmed, not fixed; Pryme's 2026-09-17 manual re-test found no resets, only the separate,
-  already-tracked slider-stutter-with-cover-theme issue (see "Right-click / theme-restyle
-  performance" below). Per Pryme: "not much evidence, needs an automated test later" — manual
-  re-testing isn't enough to close a race condition like this; the targeted re-test this entry has
-  always asked for should be an automated harness (`tools/fs_race_harness.py`/
-  `vt_restore_race_harness.py` already exist from the earlier P1↔P2 race work — extend one of
-  those to specifically catch `_on_file_loaded` winning against a still-pending
-  `_restore_position`, rather than writing a new one from scratch), not another manual pass. See
-  Pending write-up.
 - [2026-07-14, confirmed live 2026-09-17] VT missing-file handling — consolidated design, not yet
   implemented. Pryme reproduced the documented gap directly: deleting a file mid-VT-book shows the
   missing-file banner correctly, but navigating TO that chapter resets to the book's start (the
@@ -729,40 +719,6 @@ isolation.
   interrupted before restore ever ran. Real usage doesn't SIGTERM the app mid-book-load, so it's
   unclear this narrow race is worth pursuing on its own. Not triaged as a priority; revisit only if
   a similar shape shows up from real usage, not from stress-test cadence alone.
-
-- **[2026-07-14, re-tested 2026-09-17 — still not conclusively closed, see below] VT progress
-  restore silently resets on book-switch (not cold app-launch) — root cause confirmed, NOT fixed.**
-  Root cause: `_restore_position` (sets `_vt_restore_pending`) runs from a `Qt.QueuedConnection`
-  slot on the Qt main thread; `_on_file_loaded` (consumes it) fires on mpv's own independent event
-  thread. Nothing guarantees the former runs before the latter — it does at cold launch (nothing
-  else competes for the Qt event loop) but not on book-switch, where a slow synchronous operation
-  on the Qt thread can let `_on_file_loaded` win the race, find nothing pending, and never re-check.
-  Confirmed live trigger at the time: cover-art-driven theme application (~325-400ms synchronous
-  `_apply_stylesheets` pass) — every failing switch coincided with it.
-  **2026-07-18 update, not a fix:** the `_apply_pending_cover_theme` deferral work
-  (`1025b0a`/`c281ee3`) means the expensive `apply_cover_theme`/`clear_cover_theme` synchronous
-  work this bug's trigger depends on now runs LATER on a book-switch than it used to — deferred
-  until both sliders finish `when_animations_done`, rather than immediately. This may narrow or
-  close the window this race needs, but that was a hypothesis, not a verified fix.
-  **2026-09-17 update, Pryme's own re-test:** switching between VT books repeatedly with cover-theme
-  ON now loads and restores progress correctly every time — no near-zero resets observed. The
-  remaining, now clearly separate complaint is slider **stutter** during the book-switch flow
-  animation with cover-theme ON, not a progress-value reset — that's the pre-existing "Theme-apply
-  ordering/deferral for book-switch flow stutter" item (see "Right-click / theme-restyle
-  performance" above and its own Pending write-up), still open, described as long-standing ("since
-  the early days").
-  **Pryme's own call on this evidence:** "not much evidence, needs an automated test later" — a
-  manual re-test, however clean, isn't the right bar for closing a race condition whose whole
-  premise is that it depends on precise thread-scheduling timing a human tester can't control or
-  guarantee they exercised. This is NOT the TARGETED re-test this entry has always asked for
-  (catching `_on_file_loaded` winning against a still-pending `_restore_position` specifically, via
-  the `[BOOKSWITCH-TRACE]` instrumentation) — do not close this entry on manual testing alone, no
-  matter how many clean passes accumulate. When picked up: `tools/fs_race_harness.py` and
-  `tools/vt_restore_race_harness.py` already exist from the earlier P1↔P2 race investigation (see
-  the "Seek/position tracking — VT+Undo is the known-fragile zone" CLAUDE.md rule) — extend one of
-  those to deliberately force the race window (e.g. artificially delaying `_restore_position`'s
-  queued slot, or forcing `_on_file_loaded` to fire before it) rather than writing a new harness
-  from scratch or relying on repeated manual switching to happen to hit the window.
 
 - **[2026-07-14, confirmed live 2026-09-17] VT missing-file handling — consolidated design
   (supersedes three earlier, narrower entries from the same night: the cross-file

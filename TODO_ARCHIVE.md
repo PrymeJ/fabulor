@@ -5,6 +5,37 @@ list scannable. Kept, not deleted, per the project's normal practice of not thro
 that isn't fully duplicated in NOTES.md/SESSION.md/a commit message. Order is the same relative
 order these entries had in TODO.md before the split (2026-07-30).
 
+- **[2026-07-14, re-tested 2026-09-17, CLOSED 2026-09-22] "VT progress restore silently resets on
+  book-switch" — stale entry; the fix that closes it landed 2026-07-17 (`f601da0`), a full two
+  months before this closure, and the entry was simply never cleaned up afterward.** Found while
+  auditing TODO.md for anything related to the eleven-fix EOF/book-switch investigation directly
+  below — Pryme's own framing once shown the timeline: "Apparently that's fixed but never got
+  deleted from TODO. In 9 weeks of soaking the app, I would have caught it again at some point.
+  But investigate it for the peace of mind." That investigation is the closing evidence here.
+  Root cause this entry described: `_restore_position` (sets `_vt_restore_pending`) runs from a
+  `Qt.QueuedConnection` slot on the Qt main thread; `_on_file_loaded` (consumes it) fires on mpv's
+  own independent event thread — nothing guaranteed the former ran before the latter, and a
+  book-switch (unlike cold launch) could let `_on_file_loaded` win, find nothing pending, and never
+  re-check, silently dropping the restore seek. `f601da0` (2026-07-17, "Bug 2 fix" per its own code
+  comments in `player.py`) fixed this with an order-independent handoff: whichever side runs
+  first — `defer_vt_restore` (stashing `_vt_restore_pending`) or `_on_file_loaded`'s VT branch
+  (consuming it) — marks its own "I arrived early" flag
+  (`_vt_file_loaded_awaiting_restore`/`_vt_restore_pending` itself) instead of assuming the other
+  side already ran; the LATER side checks that flag and issues the seek itself. This entry had
+  always insisted manual re-testing (even Pryme's own clean 2026-09-17 pass) wasn't sufficient
+  evidence to close a timing-dependent race, and asked specifically for
+  `tools/vt_restore_race_harness.py` (already built, never run against this question) to be pointed
+  at it. Run 2026-09-22: the harness deterministically forces both orderings via a controllable
+  fake mpv (no `time.sleep`-based approximation) and confirms the OLD (pre-`f601da0`) shape fails
+  every time under the real book_ready-before-`play()` ordering, while the current code succeeds
+  every time under the identical ordering, plus a natural-file-advance control confirming no
+  spurious re-seek. This is a DIFFERENT mechanism from the eleven-fix investigation directly below
+  it — that family is about `_current_book`/`_eof`/`_on_file_ready` staleness across the
+  `book_ready → _on_file_ready` chain and `BookSwitchState`'s deferred-handler flags; this one is
+  specifically about `_vt_restore_pending`/`_on_file_loaded`'s VT-branch consumption race. Worth
+  recording that distinction here since the symptom (progress resetting near-zero on a VT
+  book-switch) reads identically from the outside.
+
 - **[2026-09-17, escalated 2026-09-19, fixed 2026-09-21, eleventh fix added 2026-09-22]
   "Resuming an M4B after unfinishing it freezes the app" — eleven fixes across one sustained
   investigation plus a dedicated follow-up stress-testing pass, all live-verified working
