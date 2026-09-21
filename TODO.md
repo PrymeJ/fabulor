@@ -9,6 +9,70 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
 
 ## Summary index
 
+### Chapter label briefly flashes chapter[0] before settling on reselecting a finished book
+- [2026-09-21] Residual of the freeze/0%-corruption fix below, not yet fixed. Reselecting a book
+  left at 100% (VT or M4B) now correctly settles on the true last chapter's label — but for a
+  split second during load it first shows chapter[0]/whatever the previous book left behind,
+  THEN flips to the correct last chapter, a visible flash. Pryme's own diagnosis, live-tested
+  2026-09-21, and it matches the code: "If I press < and go back 5 seconds, it doesn't show the
+  chapter[0], shows the last chapter's label directly. So I am guessing that there is a guard for
+  this which doesn't apply when the file is at EOF." `_update_chapter_label_from_index` already
+  guards against exactly this shape of flash for a real seek (`if self.player.is_seeking: return`
+  — suppresses intermediate chapter_changed emits from mpv scanning through boundaries mid-seek,
+  settling once on the correct final index) — but the restore-time EOF synthesis
+  (`_restore_position`, app.py) never sets `is_seeking = True` at all (deliberately — no real mpv
+  seek is issued, see that method's own comment), so that guard never engages, and whatever
+  `_update_ui_sync`'s EOF branch renders on its first ticks before the forced
+  `_update_chapter_label_from_index(last_index)` call lands is briefly visible. Needs a proper
+  look at what's actually racing here (something else must be writing chapter[0] into the label
+  first — check `_on_file_ready`/`_on_book_selected_from_library`'s own initial-load path,
+  which likely primes the label/list at index 0 before `_update_ui_sync`'s first EOF tick ever
+  runs) rather than a guess-and-patch, per CLAUDE.md's standing rule for this zone.
+
+### Resuming an M4B after unfinishing it freezes the app — FIXED, live-verified 2026-09-21
+- [2026-09-17, escalated 2026-09-19, fixed 2026-09-21] The freeze, the VT chapter-slider retreat,
+  the VT scrub-near-EOF freeze, the duplicate "asks again whether to revert" prompt, and the
+  "goes to 0%" DB-corruption bug are all fixed and live-verified working together. Root causes and
+  fixes, in the order they were found:
+  1. **The freeze itself**: `_restore_position` (app.py) pre-set `self.player.is_seeking = True`
+     before calling `seek_async` for a book saved at/near its own duration — `seek_async`'s
+     near-EOF guard silently no-ops in exactly that case (never reaching the `is_seeking`/
+     `_seek_target` assignment it normally makes together), stranding `is_seeking` at `True`
+     forever. Fixed: `_restore_position` no longer pre-sets `is_seeking`; for a book saved within
+     2s of its own duration it instead synthesizes `player._eof = True` (the same state
+     `_advance_or_finish` sets on genuine natural completion) plus `_logical_pos = duration`,
+     which `_update_ui_sync`'s existing `is_eof` branch already renders correctly every tick.
+  2. **VT chapter slider retreating to the previous chapter's start**: `_update_ui_sync`'s EOF
+     branch forced the overall progress slider/labels to 100% but never touched the chapter
+     slider/labels. Fixed: same branch now also forces `chapter_progress_slider` to 1000 and the
+     chapter time labels to the last chapter's remaining time.
+  3. **VT scrub-past-remaining-time freeze**: a second, self-inflicted instance of the same
+     stranded-`is_seeking` shape — `seek_async`'s VT same-file branch had its own near-EOF guard
+     positioned AFTER the `is_seeking`/`_seek_target` assignment instead of before. Fixed by
+     reordering to match the non-VT branch's already-correct shape.
+  4. **Duplicate revert-prompt**: the synthesized `_eof = True` re-triggered the "just now
+     finished" DB-write/banner side effect on every reselect, since `_eof_event_written` resets
+     `False` on every book load. Fixed: `_restore_position` also sets `_eof_event_written = True`
+     for the synthesized case (leaving `_eof_book_id` at `None`, so the revert banner never arms).
+  5. **"Goes to 0%" DB corruption**: `Player.time_pos` returns `_logical_pos`, which
+     `_restore_position` correctly set to `duration` — but `_on_time_pos_change`'s own
+     "logical-position maintenance" block unconditionally resyncs `_logical_pos` to mpv's raw
+     sample whenever `_last_raw_global is None` (always true right after a fresh load), silently
+     dragging it back to ~0 within one real observer tick, which `_save_current_progress` then
+     wrote straight into the DB on the next switch-away. Fixed by guarding that whole block on
+     `not self._eof`, so `_logical_pos` stays frozen at a synthesized-or-genuine EOF value until a
+     real seek (which always clears `_eof` first) resumes normal tracking.
+  6. **VT wheel-scroll-forward near-a-chapter's-end no-op**: fix (3) above turned a legitimate
+     "advance into the next VT file" wheel-scroll request into a silent no-op whenever the
+     computed target (`min(current_pos + skip, chap_end)`) landed within 2s of the CURRENT file's
+     own end but the chapter boundary itself wasn't also a file boundary. Fixed: the same-file
+     near-end guard now redirects into the next file (mirroring the cross-file branch) whenever a
+     next file exists in the timeline; the genuinely-last-file case still correctly no-ops.
+  New/extended tests: `tests/test_restore_position_eof.py` (new, 22 tests, including direct
+  `Player._on_time_pos_change` exercises for fix 5), `tests/test_vt_seek.py` (2 new tests for fix
+  3, 2 more for fix 6). See the "Chapter label briefly flashes chapter[0]" entry above for the one
+  known residual, still open.
+
 ### Book Detail panel's tab bar — not wired into the shared `_kbdnav_active_panel_key` mechanism
 - [2026-09-15, scope corrected 2026-09-17] Still true and unrelated to the (now implemented, see
   TODO_ARCHIVE.md) tag chip grid navigation: Book Detail's own tab bar was never wired into the
@@ -74,10 +138,6 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
   (frosted region half-stale, half-live after excluding the playing book) sounds similar enough
   that these may be the same underlying issue reached via a different removal path (deleted outright
   vs. excluded from Book Detail); check for overlap before treating as fully separate.
-- [2026-09-17] BUG, visual, needs repro/confirmation: finishing a book to 100%, switching to another
-  book, then switching back can show 0.0% progress text while both the overall and chapter sliders
-  sit all the way to the right (visually 100%). A display/state mismatch between the percentage
-  label and the sliders' own position — needs to be reproduced and confirmed before diagnosing.
 
 ### VT missing-file handling — design already covers most of this (see "VT / seek / progress tracking")
 - [2026-09-17] Pryme's own restated version of the already-designed-but-unimplemented VT

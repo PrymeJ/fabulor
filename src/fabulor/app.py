@@ -2531,7 +2531,98 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             # creep: the 200ms persistence sync saved the epsilon-inflated landing,
             # which became the next restore's input, nudging ~0.35s forward every
             # restart until EOF. The VT branch never added it and never crept.
-            if self.player._virtual_timeline is not None:
+            if book_data.duration and book_data.duration - book_data.progress < 2.0:
+                # A book saved at/near its own end (left at 100% EOF, then reselected) must
+                # NOT reach seek_async at all here — for EITHER book type. seek_async's own
+                # near-EOF guard ("too close to EOF — let natural EOF handle it") silently
+                # no-ops in exactly this case, on both its VT and non-VT branches (the VT
+                # path reaches the same guard indirectly, via defer_vt_restore ->
+                # _on_file_loaded -> seek_async once mpv confirms load). Two live-found bugs
+                # from getting this branch wrong, in order:
+                #
+                # 1. The ORIGINAL bug this fix targets: both branches used to pre-set
+                #    is_seeking=True immediately before calling into seek_async (directly for
+                #    non-VT, or via the deferred call for VT). Since the near-EOF guard
+                #    returns before ever reaching its own is_seeking=True/_seek_target=pos
+                #    assignment, that pre-set was left permanently stranded — is_seeking stuck
+                #    True with _seek_target staying None forever (the settle branch in
+                #    _on_time_pos_change requires _seek_target is not None to ever clear it) —
+                #    which froze the app on the next Play (TODO.md, "Resuming an M4B after
+                #    unfinishing it freezes the app", 2026-09-19).
+                # 2. A FIRST FIX ATTEMPT for (1) just skipped the seek and left it at that —
+                #    wrong, found live: mpv loads every fresh file at position 0 regardless
+                #    (or, for VT, at the start of whichever file the saved position falls in),
+                #    so skipping the seek entirely silently reset the visible position to 0%/
+                #    chapter-start instead of leaving it at its true saved 100%. This is what
+                #    produced the VT report "progress retreats back to the beginning of the
+                #    last chapter" and the M4B report "goes to 0%" — same underlying gap,
+                #    reached via the VT and non-VT branches respectively.
+                #
+                # The correct fix: synthesize the SAME `_eof = True` state `_advance_or_finish`
+                # sets on genuine natural completion (player.py) — no mpv command of any kind
+                # (no seek, no `time_pos =` direct assignment either — that setter still issues
+                # `self.instance.time_pos = value`, an mpv property write that IS a seek and
+                # carries the identical hang risk). `_update_ui_sync`'s existing is_eof branch
+                # already reads this flag every tick and renders the finished slider/
+                # percentage/"Restart" state correctly regardless of mpv's actual (irrelevant,
+                # since the book is done) position — this is the exact state a book that
+                # genuinely just finished playing already ends up in, not a new one.
+                #
+                # Checking book_data.duration (scanner-sourced, always available with no mpv
+                # round-trip) here — rather than relying on seek_async's own guard, which reads
+                # the async-populated _cached_duration and can race it — closes the hole
+                # outright instead of narrowing the window. Applies to VT and non-VT alike, so
+                # this check runs BEFORE the VT/non-VT split below, not duplicated in both arms.
+                #
+                # _eof_event_written must ALSO be set True here, not just _eof — without this,
+                # _update_ui_sync's is_eof branch reads _eof_event_written freshly False (reset
+                # on every book load, _on_file_ready) and treats this synthesized restore as a
+                # BRAND NEW completion: it writes a second 'finished' book_event to the DB and
+                # re-shows the "Marked as finished" revert-prompt banner, every single time the
+                # book is reselected — live report, 2026-09-21 (VT): "Revert the finished
+                # status, load another book, come back, it asks again whether to revert... I am
+                # assuming that it finishes it again just because it is going back to 100%
+                # although it wasn't even playing." That side effect belongs ONLY to genuinely
+                # crossing into EOF via live playback (a completely different code path,
+                # _update_ui_sync's own is_eof branch reached through _advance_or_finish, never
+                # through this method) — marking it already-written here suppresses it
+                # correctly for a mere reselect. _eof_book_id is deliberately left untouched
+                # (None) so the revert button/banner machinery it gates never arms for this
+                # synthetic case either.
+                self.player._eof = True
+                self._eof_event_written = True
+                self.player.is_seeking = False
+                # _logical_pos must ALSO be set here, not just _eof — without this, the
+                # book's TRUE position (its own saved duration) is never recorded anywhere
+                # player-side. player.time_pos's getter returns _logical_pos when set, but
+                # falls back to raw _cached_time_pos otherwise — and _cached_time_pos is
+                # still whatever load_book's reset left it (None/effectively 0), since mpv
+                # loads every fresh file at position 0 regardless of this flag. The very
+                # next switch-away calls _save_current_progress (app.py), which reads
+                # player.time_pos and writes IT to the DB's progress column — silently
+                # overwriting the book's correct saved duration with ~0. Live report,
+                # 2026-09-21: "Library not showing 100% anymore, there are two sources of
+                # truth. Then it incorrectly catches up and goes to 0% on a click on the
+                # same book or another book" — the transport view read the (correct)
+                # in-memory _eof flag while the Library grid read the (now-corrupted) DB
+                # column, and the very next save made the corruption permanent. Setting
+                # _logical_pos directly is a plain Python attribute write, same as _eof —
+                # NOT an mpv property/command call, so it carries none of seek_async's
+                # near-EOF hang risk; every _logical_pos write site in player.py is this
+                # same shape (see _on_time_pos_change's settle branch). GLOBAL, matching
+                # _logical_pos's own established convention (never add _file_offset) —
+                # correct for VT here too, since book_data.duration/progress are already
+                # whole-book (global) values, not any one VT file's own local duration.
+                # Deliberately does NOT also touch _cached_time_pos — CLAUDE.md is
+                # explicit that the two must stay decoupled ("Do NOT couple a
+                # _logical_pos write to any _cached_time_pos write") and that
+                # _cached_time_pos is FILE-LOCAL for VT (this value is global), so
+                # writing it here would be wrong for VT specifically. time_pos's own
+                # getter already checks _logical_pos first, before ever falling back to
+                # _cached_time_pos, so this alone is sufficient — no fallback path is
+                # reachable once _logical_pos is set.
+                self.player._logical_pos = book_data.duration
+            elif self.player._virtual_timeline is not None:
                 # VT restore-on-load race fix: book_ready (which triggers this call) fires
                 # BEFORE instance.play() for VT books, so calling seek_async here directly
                 # can reach mpv before it has loaded the file, and the seek is silently
@@ -2715,12 +2806,54 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                         self.library_panel.refresh()
                 self._paused_time = None
                 self.progress_slider.setValue(1000)
+                # Force the percentage label alongside the slider — without this it can go
+                # stale at whatever transient value the live 200ms tick last computed right
+                # before is_eof flipped True (e.g. a near-zero pos sample during the book's
+                # duration-race window — see CLAUDE.md's "Duration race corollary"), since
+                # nothing else revisits this label once the EOF branch takes over the
+                # slider. Same "force to the known-correct EOF value" treatment the slider
+                # and time labels below already get.
+                self.progress_percentage_label.setText("100.0%")
                 self.current_time_label.setText(self.player.format_time(pos / speed))
                 if self.show_remaining_time:
                     self.total_time_label.setText("-00:00:00")
                     self.chap_duration_label.setText("-00:00:00")
                 else:
                     self.total_time_label.setText(self.player.format_time(dur / speed))
+                # Force the CHAPTER slider/labels too, same reasoning as the overall
+                # progress ones above — this branch never falls through to
+                # _sync_chapter_ui (it returns below), so without this the chapter
+                # slider is left wherever the book-switch reset (_on_book_removed's
+                # chapter_progress_slider.setValue(0)) or the fresh load happened to
+                # leave it, reading as "retreated to the start of the last chapter"
+                # even though the overall progress correctly shows finished. Live
+                # report, 2026-09-21 (VT): "progress retreats back to the beginning
+                # of the last chapter" — same gap, surfaced by the new near-EOF
+                # restore path (_restore_position) synthesizing is_eof=True at a
+                # moment the chapter slider was never driven to 100% by real
+                # playback, unlike natural EOF (reached by playing forward, which
+                # already ticks the chapter slider to its end before EOF fires).
+                if self.player.chapter_list:
+                    self.chapter_progress_slider.setValue(1000)
+                    last_chap = self.player.chapter_list[-1]
+                    chap_dur = max(0.0, dur - last_chap.get('time', 0))
+                    self.chap_elapsed_label.setText(self.player.format_time(chap_dur / speed))
+                    if self.show_remaining_time:
+                        self.chap_duration_label.setText("-00:00:00")
+                    else:
+                        self.chap_duration_label.setText(self.player.format_time(chap_dur / speed))
+                    # Force the chapter NAME label (and list-overlay selection) to the
+                    # last chapter too — live report, 2026-09-21 (both VT and M4B):
+                    # "the chapter shown in the main window and the chapter list do not
+                    # agree. Main window shows chapter[0]." This branch never fires a
+                    # real seek (no mpv command issued for a restore-time EOF synthesis
+                    # — see _restore_position), so chapter_changed never emits and
+                    # _update_chapter_label_from_index is never called by anything else
+                    # here; the label is left at whatever the previous book, or the
+                    # fresh load's initial state, last wrote. Call it directly with the
+                    # true last-chapter index, same "force to the known-correct EOF
+                    # value" treatment as the slider/time labels immediately above.
+                    self._update_chapter_label_from_index(len(self.player.chapter_list) - 1)
                 return
             else:
                 # Left EOF (user seeked/rewound away) — retire any pending

@@ -29,13 +29,18 @@ _TEMP_MP3.close()
 
 
 class _FakeMpv:
-    """Minimal mpv stand-in: records command_async, exposes a settable `path`."""
+    """Minimal mpv stand-in: records command_async/play, exposes a settable `path`."""
     def __init__(self, path=""):
         self.path = path
         self.commands = []
+        self.play_calls = []
 
     def command_async(self, *args):
         self.commands.append(args)
+
+    def play(self, path):
+        self.play_calls.append(path)
+        self.path = path
 
 
 def _vt_player(timeline):
@@ -449,3 +454,111 @@ def test_seek_async_existing_vt_file_unaffected_by_missing_file_guard(tmp_path):
     assert p._is_seeking is True
     assert p._seek_target == 20.0
     assert p.instance.commands == [('seek', 20.0, 'absolute+exact')]
+
+
+# --------------------------------------------------------------------------- #
+# VT same-file near-file-end guard must not strand is_seeking — live bug,
+# 2026-09-21: "If the scrub duration is longer than the remaining time, it
+# freezes the remaining chapter time, remaining total time and the chapter
+# slider on click to skip or mouse wheel scroll until I click again."
+#
+# Root cause: the `target_file['duration'] - local_pos < 2.0` early-return used
+# to sit AFTER the is_seeking=True/_seek_target=pos assignment in the VT
+# same-file branch, not before it (unlike the non-VT branch's own equivalent
+# guard, which was already correctly ordered first). A scrub landing inside
+# the current VT file's own last ~2s set is_seeking/_seek_target and then
+# returned without ever issuing a real mpv seek command — no settle could ever
+# fire (no seek was actually in flight), stranding is_seeking True until the
+# NEXT seek_async call happened to overwrite it. Fixed by moving the guard
+# before the assignment, mirroring the non-VT branch's shape exactly.
+# --------------------------------------------------------------------------- #
+def test_seek_async_vt_samefile_near_end_redirects_to_next_file():
+    """A same-file scrub whose target lands within 2s of the CURRENT VT file's
+    own end, with a NEXT file available in the timeline, must redirect into
+    that next file rather than silently no-op.
+
+    History: the near-end guard originally (2026-09-21, same session) just
+    returned with no state mutation for this case — that fixed a real
+    stranded-is_seeking freeze, but introduced a live-reported regression the
+    same day: wheel-scroll-forward near a chapter's end (app.py's wheelEvent
+    deliberately lands exactly on the next chapter's boundary, min(pos+skip,
+    chap_end)) silently did nothing whenever that boundary happened to sit
+    near this file's own end but not past it — "no-op in the same chapter
+    when it near the end... only for VT." A chapter boundary is not always a
+    VT file boundary, so this is reachable on any file that isn't the last
+    one. Fixed by redirecting to the next file's start, mirroring the
+    cross-file branch. See test_seek_async_vt_samefile_near_end_on_last_file_
+    still_noops below for the one case where a plain no-op remains correct."""
+    timeline = [
+        {"file_path": _TEMP_MP3.name, "cumulative_start": 0.0, "duration": 47.2},
+        {"file_path": "f01.mp3", "cumulative_start": 47.2, "duration": 4216.3},
+    ]
+    p = _vt_player(timeline)
+    p.instance = _FakeMpv(path=_TEMP_MP3.name)
+    p._current_vt_index = 0
+    p._file_offset = 0.0
+    p._cached_time_pos = 40.0
+    p._is_seeking = False
+    p._seek_target = None
+
+    # Target lands at local_pos=46.0 in file 0 (duration 47.2) — 1.2s from the
+    # end, inside the guard's 2.0s zone. Same file (target_idx stays 0), so
+    # this exercises the same-file branch specifically, not cross-file.
+    p.seek_async(46.0)
+
+    assert p.instance.commands == []           # no in-file seek command — redirected instead
+    assert p.instance.play_calls == ["f01.mp3"]  # jumped straight to the next file
+    assert p._is_seeking is True
+    assert p._seek_target == 47.2               # next file's cumulative_start (GLOBAL)
+    assert p._logical_pos == 47.2
+    assert p._current_vt_index == 1
+    assert p._file_offset == 47.2
+    assert p._pending_local_pos == 0.0
+    assert p._is_vt_file_switch is True
+
+
+def test_seek_async_vt_samefile_near_end_on_last_file_still_noops():
+    """The ORIGINAL fix's behavior must survive for the one case where it's
+    still correct: the current file IS the last file in the timeline, so
+    there is no next file to redirect into. Genuinely too close to EOF —
+    is_seeking/_seek_target must stay exactly as they were, matching the
+    non-VT branch's identical guard."""
+    timeline = [
+        {"file_path": "f00.mp3", "cumulative_start": 0.0, "duration": 4000.0},
+        {"file_path": _TEMP_MP3.name, "cumulative_start": 4000.0, "duration": 47.2},
+    ]
+    p = _vt_player(timeline)
+    p.instance = _FakeMpv(path=_TEMP_MP3.name)
+    p._current_vt_index = 1
+    p._file_offset = 4000.0
+    p._cached_time_pos = 40.0
+    p._is_seeking = False
+    p._seek_target = None
+
+    # Global pos 4046.0 -> local_pos=46.0 in file 1 (duration 47.2, the LAST file).
+    p.seek_async(4046.0)
+
+    assert p.instance.commands == []
+    assert p.instance.play_calls == []
+    assert p._is_seeking is False
+    assert p._seek_target is None
+
+
+def test_seek_async_vt_samefile_well_within_file_still_seeks_normally():
+    """Sanity control: a same-file scrub NOT near the file's own end is
+    completely unaffected by the reordered guard — the seek still fires."""
+    timeline = [
+        {"file_path": _TEMP_MP3.name, "cumulative_start": 0.0, "duration": 47.2},
+        {"file_path": "f01.mp3", "cumulative_start": 47.2, "duration": 4216.3},
+    ]
+    p = _vt_player(timeline)
+    p.instance = _FakeMpv(path=_TEMP_MP3.name)
+    p._current_vt_index = 0
+    p._file_offset = 0.0
+    p._cached_time_pos = 10.0
+
+    p.seek_async(20.0)  # local_pos=20.0, well clear of the 47.2s file end
+
+    assert p.instance.commands == [('seek', 20.0, 'absolute+exact')]
+    assert p._is_seeking is True
+    assert p._seek_target == 20.0

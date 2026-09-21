@@ -294,7 +294,33 @@ class Player(QObject):
         # window where a restore seek is "still pending" (requested but not yet issued) for
         # this block to race against. VT MID-PLAYBACK seeks (the validated Finding 2/8 path)
         # settle exactly as before and are unaffected by this fix.
-        if value is not None and not self._is_seeking:
+        #
+        # `and not self._eof` (2026-09-21): a book restored at/near its own end
+        # (app.py's _restore_position) sets _logical_pos = duration directly, WITHOUT
+        # is_seeking=True — deliberately, since a real seek this close to EOF is the
+        # documented mpv-hang hazard this whole restore path exists to avoid (see that
+        # method's own comment). But this block's OWN job is to keep _logical_pos honestly
+        # tracking mpv's real raw stream over time via delta-accumulation, resyncing on any
+        # large jump (_LOGICAL_POS_RESYNC_THRESHOLD) — and the first raw sample mpv reports
+        # after a fresh load is always near 0 (mpv starts every file there regardless of
+        # this flag), which is a huge jump from `duration`. Without this guard, that very
+        # first post-restore sample silently resyncs _logical_pos back to ~0 within one
+        # tick (confirmed live via [PERSIST-TRACE] logging, 2026-09-21) — even though
+        # is_seeking correctly stayed False and no seek was ever "stranded." Seeding
+        # _last_raw_global to mask this was tried and does NOT work: the very next sample's
+        # delta against that seeded value is itself a huge, real jump, so the discontinuity
+        # branch (line ~309 below) resyncs anyway, just one tick later. There is no seed
+        # value that survives this block's own resync logic — the block has to be told
+        # explicitly "this position is deliberately decoupled from mpv right now," which is
+        # exactly what _eof=True already means. While _eof is True, _logical_pos stays
+        # frozen wherever it was last set (this restore-time synthesis, or a genuine
+        # _advance_or_finish natural completion, which already correctly tracks up to
+        # duration via normal accumulation before _eof ever flips True — this guard changes
+        # nothing for that case, since nothing needs to keep updating an already-correct
+        # value). The guard lifts the instant _eof clears (any real seek_async call, which
+        # sets self._eof = False as one of its very first assignments — see every seek_async
+        # branch above), so normal tracking resumes immediately and unmodified.
+        if value is not None and not self._is_seeking and not self._eof:
             global_value = value + (self._file_offset or 0)
             if settled_this_call:
                 pass                                       # settle branch owns _logical_pos this call
@@ -967,6 +993,59 @@ class Player(QObject):
             if target_idx == self._current_vt_index:
                 if local_pos >= target_file['duration']:
                     return  # past end — no state mutation, let natural EOF handle it
+                if target_file['duration'] - local_pos < 2.0:
+                    # Checked BEFORE the is_seeking/_seek_target assignment below, not
+                    # after — this used to sit after that assignment, so a scrub landing
+                    # inside this file's own last ~2s left is_seeking stranded True with
+                    # _seek_target pinned at the never-issued target (no real mpv seek
+                    # ever went out to settle from), freezing the chapter/total-time
+                    # labels and the chapter slider until the NEXT seek_async call
+                    # happened to overwrite the stuck state. Live report, 2026-09-21:
+                    # "If the scrub duration is longer than the remaining time, it
+                    # freezes the remaining chapter time, remaining total time and the
+                    # chapter slider on click to skip or mouse wheel scroll until I
+                    # click again." Same class of bug as _restore_position's near-EOF
+                    # fix (app.py) — same file, self-inflicted rather than caused by an
+                    # external caller. Matches the non-VT branch's already-correct shape
+                    # (its own near-EOF guard, below, runs before its own assignment).
+                    #
+                    # Regression found the SAME day this guard shipped (live report,
+                    # 2026-09-21): "Mouse wheel scroll forward doesn't always tide over
+                    # to the next chapter, but act as no-op in the same chapter when it
+                    # near the end. VT only." Cause: the chapter-slider wheel handler
+                    # (app.py wheelEvent) deliberately computes new_pos = min(current_pos
+                    # + skip, chap_end) — landing EXACTLY on the next chapter's start
+                    # boundary rather than overshooting past it. When that boundary sits
+                    # near (but not past — see the >= guard above) THIS file's own end
+                    # (a chapter boundary that is NOT also a file boundary — VT chapters
+                    # and files are not 1:1), this guard turned a legitimate "advance
+                    # into the next file" request into a silent no-op, because a plain
+                    # early return here has no way to express "the target is fine, it
+                    # just isn't reachable as a same-file seek." Whereas skipping the
+                    # seek at RESTORE time (app.py's _restore_position) is correct — the
+                    # book is already sitting at that position, nothing needs to move —
+                    # a live wheel-scroll request that resolves to the same file index
+                    # only because it's mpv-hang-adjacent genuinely wants to land in the
+                    # NEXT file, not go nowhere. Redirect there directly (mirrors the
+                    # cross-file branch below) instead of returning, UNLESS this is
+                    # already the last file in the timeline — there is no next file to
+                    # redirect into, and genuine natural EOF is the correct outcome.
+                    if target_idx + 1 < len(self._virtual_timeline):
+                        next_file = self._virtual_timeline[target_idx + 1]
+                        self._eof = False
+                        self.is_seeking = True
+                        self._seek_target = next_file['cumulative_start']
+                        self._logical_pos = next_file['cumulative_start']
+                        self._pending_local_pos = 0.0
+                        self._current_vt_index = target_idx + 1
+                        self._file_offset = next_file['cumulative_start']
+                        self._is_vt_file_switch = True
+                        self._seek_state_trace(
+                            "seek_async_VT_samefile_NEAR_END_redirected_to_next_file"
+                        )
+                        self.instance.play(next_file['file_path'])
+                        return
+                    return  # last file in the timeline — genuinely too close to EOF
                 self._eof = False
                 self.is_seeking = True
                 self._seek_target = pos
@@ -982,8 +1061,6 @@ class Player(QObject):
                         and not self._mp3_seek_reload_pending):
                     self._mp3_stop_and_load(pos, file_path=target_file['file_path'], local_pos=local_pos)
                     return
-                if target_file['duration'] - local_pos < 2.0:
-                    return  # too close to file end — let natural EOF handle it
                 logger.debug(
                     f"seek_async: VT same-file branch local_pos={local_pos} "
                     f"final_seek_target={pos}"
@@ -1008,6 +1085,17 @@ class Player(QObject):
         else:
             dur = self._cached_duration
             if dur and dur - pos < 2.0:
+                # No-op return: this branch never reaches the is_seeking/_seek_target
+                # assignment below. A caller MUST NOT pre-set self.is_seeking = True before
+                # calling seek_async — this method is the sole owner of setting
+                # is_seeking/_seek_target together, and only on a path that actually issues
+                # a seek. A caller that pre-sets is_seeking and then hits this early return
+                # strands is_seeking at True forever (settle in _on_time_pos_change requires
+                # _seek_target is not None to ever clear it) — this exact bug shipped once
+                # via app.py's _restore_position (2026-09-19, "Resuming an M4B after
+                # unfinishing it freezes the app"), and again SELF-INFLICTED within the VT
+                # same-file branch above, which had the identical guard-after-assignment
+                # ordering mistake (2026-09-21). See that method's own guard for the fix.
                 return  # too close to EOF — let natural EOF handle it
             if (self._play_target is not None
                     and self._play_target.lower().endswith('.mp3')
