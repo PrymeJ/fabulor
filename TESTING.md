@@ -1,3 +1,85 @@
+## Resuming a book left at its own EOF — 2026-09-21 Session 1
+
+Background: TODO.md's "Resuming an M4B after unfinishing it freezes the app" investigation, ten
+fixes across one sustained session (see TODO_ARCHIVE.md for the full root-cause writeup). This is
+squarely CLAUDE.md's documented "known-fragile" seek/EOF/VT zone, and per that file's own standing
+rule, every fix here must be re-checked against BOTH book types (VT and M4B/embedded) even when a
+fix looks like it only touches one — several of the ten fixes were found precisely because a VT
+fix didn't automatically cover the M4B case, or vice versa. `tests/test_restore_position_eof.py`
+and `tests/test_vt_seek.py` cover the state-machine logic directly; this list is for what only a
+live app can show (visible timing, banner behavior, real DB writes). Commits `94c5187`, `8cd5a9d`,
+`bd1ffde`, `8b14231`, and the fix-10 commit for the stale-`_current_book` finished-write bug.
+
+### The original freeze + VT chapter retreat (fixes 1-2)
+- [ ] Finish a book (VT and separately M4B) to 100% via real playback all the way to natural EOF
+- [ ] Switch to a different book, then switch back to the finished one
+- [ ] Press Play — no freeze, no stuck labels requiring a transport press to unstick
+- [ ] For the VT book specifically: the chapter slider and chapter time labels show the LAST
+  chapter at 100%, not retreated to some earlier chapter's start
+- [ ] Mark the finished book unfinished via Book Detail, switch away, switch back, press Play —
+  still no freeze (this was the original, most severe reported symptom)
+
+### VT scrub-near-EOF freeze (fix 3)
+- [ ] On a VT (multi-file) book, scrub or mouse-wheel-scroll the chapter slider to a position
+  within ~2 seconds of the CURRENT file's own end (not necessarily the whole book's end) — no
+  freeze, no stuck chapter/total-time labels
+- [ ] If a next file exists in the VT timeline, that same near-file-end scrub correctly ADVANCES
+  into the next file rather than silently doing nothing (this is fix 6, tested together since
+  fix 3's guard reorder is what originally exposed the fix-6 regression)
+- [ ] If the CURRENT file is the LAST file in the VT timeline, a scrub near its end still
+  correctly no-ops (nothing to advance into) rather than freezing
+
+### Duplicate "asks again whether to revert" prompt (fix 4)
+- [ ] Finish a book to 100%, revert the finished status via the banner's revert button, switch to
+  a different book, switch back — does NOT show "Marked as finished." again (the book should
+  just sit at its correct finished-but-reverted display state, no fresh prompt)
+
+### "Goes to 0%" DB corruption (fix 5)
+- [ ] Finish a book to 100% (VT and separately M4B), switch away, switch back — Library grid shows
+  the book at 100% progress, not 0%, and the transport view's percentage/sliders agree with the
+  Library grid (no "two sources of truth" mismatch)
+- [ ] Repeat the switch-away/switch-back cycle several times in a row on the SAME finished book —
+  progress stays pinned at 100%, never drifts toward 0% on any cycle
+
+### Chapter label flash (fix 7, both halves)
+- [ ] Reselect a book finished at 100% (VT and separately M4B) — the chapter name label and the
+  chapter-list overlay's selected row go DIRECTLY to the true last chapter, with no visible flash
+  of chapter 1 / a stale previous-book chapter first
+- [ ] This must hold on BOTH book types — the underlying bug was VT-clean/M4B-broken at one point
+  mid-investigation (a genuine cross-thread race between mpv's own event thread and Qt's queued
+  signal chain), so don't consider this closed from a VT-only check
+
+### Play/Restart icon (fix 8)
+- [ ] Reselect a finished M4B — the play/pause button shows "Restart" (the circular-arrow icon)
+  IMMEDIATELY, not a brief flash of "Play" that then corrects itself a moment later
+- [ ] Same check on a finished VT book (this side was already correct before fix 8, included here
+  as a control — should still be immediate)
+
+### Post-revert banner bleeding into the next book (fix 9)
+- [ ] Finish a book to 100%, revert via the banner's revert button (banner now reads "Finished
+  status reverted."), IMMEDIATELY switch to a different book (within a couple seconds, before the
+  banner's own 5s auto-hide would have fired on its own) — the banner does NOT carry over onto
+  the newly loaded book's view
+- [ ] Contrast case: finish a book, do NOT revert, switch to a different book before the "Marked
+  as finished." banner would auto-retire on its own — banner is dismissed correctly (this path
+  worked before fix 9 too; confirms the fix didn't regress it)
+- [ ] Start a library scan (Settings → Library → Rescan) while a post-revert banner is still
+  showing — the scan's own cancel banner takes over normally; the post-revert flag doesn't
+  interfere with an unrelated banner state
+
+### Finished-event written against the wrong book (fix 10)
+- [ ] Rapidly switch between two or more books that are EACH saved at their own 100%/EOF (finish
+  multiple books ahead of time, then switch between them quickly in succession) — the "Marked as
+  finished." banner, when it appears, is for the book actually on screen, and stays that way
+- [ ] After such a rapid-switch session, spot-check the Library/Stats history for each of the
+  books involved — no book's finished-event history shows an event it didn't earn (i.e., a book
+  you never actually revisited from a fresh 0% play shouldn't have gained a NEW finished-event
+  timestamp from a switch that only ever displayed some OTHER book's banner)
+- [ ] This is the hardest of the ten to reproduce deliberately — it depends on a 200ms UI tick
+  landing in a narrow window right after a fast switch. If it doesn't reproduce on the first few
+  tries, that's expected; several fast back-to-back switches between 2-3 pre-finished books (as
+  in the original live repro) is the shape that found it
+
 ## Book Detail Tags tab — tag chip grid keyboard navigation — 2026-09-19 Session 2
 
 Background: TODO.md's Book Detail Tags tab entry ("chip navigation design settled, not yet

@@ -5,6 +5,120 @@ list scannable. Kept, not deleted, per the project's normal practice of not thro
 that isn't fully duplicated in NOTES.md/SESSION.md/a commit message. Order is the same relative
 order these entries had in TODO.md before the split (2026-07-30).
 
+- **[2026-09-17, escalated 2026-09-19, fixed 2026-09-21] "Resuming an M4B after unfinishing it
+  freezes the app" — ten fixes across one sustained investigation, all live-verified working
+  together across VT and M4B.** Root causes and fixes, in the order they were found:
+  1. **The freeze itself**: `_restore_position` (app.py) pre-set `self.player.is_seeking = True`
+     before calling `seek_async` for a book saved at/near its own duration — `seek_async`'s
+     near-EOF guard silently no-ops in exactly that case (never reaching the `is_seeking`/
+     `_seek_target` assignment it normally makes together), stranding `is_seeking` at `True`
+     forever. Fixed: `_restore_position` no longer pre-sets `is_seeking`; for a book saved within
+     2s of its own duration it instead synthesizes `player._eof = True` (the same state
+     `_advance_or_finish` sets on genuine natural completion) plus `_logical_pos = duration`,
+     which `_update_ui_sync`'s existing `is_eof` branch already renders correctly every tick.
+  2. **VT chapter slider retreating to the previous chapter's start**: `_update_ui_sync`'s EOF
+     branch forced the overall progress slider/labels to 100% but never touched the chapter
+     slider/labels. Fixed: same branch now also forces `chapter_progress_slider` to 1000 and the
+     chapter time labels to the last chapter's remaining time.
+  3. **VT scrub-past-remaining-time freeze**: a second, self-inflicted instance of the same
+     stranded-`is_seeking` shape — `seek_async`'s VT same-file branch had its own near-EOF guard
+     positioned AFTER the `is_seeking`/`_seek_target` assignment instead of before. Fixed by
+     reordering to match the non-VT branch's already-correct shape.
+  4. **Duplicate revert-prompt**: the synthesized `_eof = True` re-triggered the "just now
+     finished" DB-write/banner side effect on every reselect, since `_eof_event_written` resets
+     `False` on every book load. Fixed: `_restore_position` also sets `_eof_event_written = True`
+     for the synthesized case (leaving `_eof_book_id` at `None`, so the revert banner never arms).
+  5. **"Goes to 0%" DB corruption**: `Player.time_pos` returns `_logical_pos`, which
+     `_restore_position` correctly set to `duration` — but `_on_time_pos_change`'s own
+     "logical-position maintenance" block unconditionally resyncs `_logical_pos` to mpv's raw
+     sample whenever `_last_raw_global is None` (always true right after a fresh load), silently
+     dragging it back to ~0 within one real observer tick, which `_save_current_progress` then
+     wrote straight into the DB on the next switch-away. Fixed by guarding that whole block on
+     `not self._eof`, so `_logical_pos` stays frozen at a synthesized-or-genuine EOF value until a
+     real seek (which always clears `_eof` first) resumes normal tracking.
+  6. **VT wheel-scroll-forward near-a-chapter's-end no-op**: fix (3) above turned a legitimate
+     "advance into the next VT file" wheel-scroll request into a silent no-op whenever the
+     computed target (`min(current_pos + skip, chap_end)`) landed within 2s of the CURRENT file's
+     own end but the chapter boundary itself wasn't also a file boundary. Fixed: the same-file
+     near-end guard now redirects into the next file (mirroring the cross-file branch) whenever a
+     next file exists in the timeline; the genuinely-last-file case still correctly no-ops.
+  7. **Chapter label briefly flashed chapter[0] before settling** (found after fixes 1-6 shipped;
+     VT was clean, M4B still flashed). `_on_time_pos_change`'s own chapter-walk-and-emit block
+     (separate from the `_logical_pos` maintenance block fix 5 guards) reads mpv's raw `value`
+     directly with no `_eof` awareness — mpv's genuine first raw sample for a freshly loaded file
+     resolves to chapter 0 and fires a real `chapter_changed(0)` that lands after the correct
+     restore-time label write and briefly overwrites it. First fix: guard the whole
+     walk-and-emit block on `not self._eof`, mirroring fix 5's own guard — this alone fixed VT but
+     NOT M4B, because closing THIS gap exposed a deeper one: a genuine cross-thread data race.
+     python-mpv runs its event loop (and every `observe_property` callback) on its own background
+     thread, independent of Qt. For VT, `book_ready` fires before `instance.play()`, so the
+     Qt-queued `_restore_position` (which sets `_eof=True`) always wins before any mpv sample
+     exists to race against. For non-VT, `book_ready` only fires from mpv's OWN `file-loaded`
+     event handler, so mpv's first raw sample can be processed on that same background thread
+     BEFORE the queued `_restore_position` ever runs — confirmed via live `id()`-tagged tracing,
+     not assumed. Second, real fix: `Player.load_book` now pre-resolves the identical near-EOF
+     check via `self.db.get_book(path)` and sets `_eof=True` synchronously at entry — before
+     `_resolve_playlist`'s worker thread is even constructed, i.e. strictly before any possible
+     mpv-thread activity for the new book can begin, closing the race by construction rather than
+     timing luck. `_restore_position` still runs afterward and reapplies the same state
+     (idempotent).
+  8. **Play button briefly showed before settling into Restart (M4B only)**: confirmed live via
+     id-tagged tracing — `restart` fired correctly on the FIRST tick after a book switch
+     (`_eof=True`, `dur` resolved via a DB fallback), then `play` fired ~145ms later on the NEXT
+     tick, still `_eof=True` but `dur=None` again. `_update_ui_sync`'s DB-duration-fallback block
+     (for a book synthesized at EOF whose own mpv `duration` property hasn't populated yet —
+     `self.player.duration` is read fresh from mpv every tick, never cached by `Player`) was
+     gated on a ONE-SHOT boolean (`_eof_dur_fetched`) that only protected the DB *call*, not the
+     resulting `dur` *value*. The first tick correctly derived `dur` and showed Restart; every
+     subsequent tick, while mpv's own duration was still `None` (an unbounded, independent mpv
+     async event, not a short deterministic window), the now-tripped guard skipped re-deriving
+     `dur`, falling into the `dur is None` early-return, forcing "Play" even though `is_eof` was
+     correctly `True` the whole time. Pryme's own framing of the constraint that shaped the fix:
+     unlike the chapter label (which can show nothing until the correct value is known), the
+     play/pause button always has to show SOME icon, so the fallback must stay effective for as
+     long as mpv's own data is missing, not just once. Fixed by caching the FETCHED VALUE itself
+     (`_eof_dur_fallback`, replacing the boolean) and reusing it every tick until mpv's own
+     `duration` eventually populates.
+  9. **Post-revert "Finished status reverted." banner bled into the next loaded book**: switching
+     away WITHOUT reverting worked correctly (`_dismiss_eof_prompt()`, gated on `_eof_book_id is
+     not None`, catches it) — but a revert already clears `_eof_book_id` before ITS OWN banner
+     even shows, so that gate skips right past it. The post-revert banner has an independent 5s
+     auto-hide timer that nothing retired on a book switch, so it bled into the newly loaded book
+     if the switch happened within that window. Fixed via a dedicated
+     `_post_revert_banner_pending` flag, set when the post-revert banner shows and cleared at
+     `_slide_banner_out` (the single choke point both the natural timeout and any explicit
+     dismiss route through) — `_on_book_selected_from_library` now checks it and force-dismisses
+     the banner on switch, scoped narrowly so an unrelated banner (e.g. a library scan's cancel
+     banner) still survives a book switch.
+  10. **"Marked as finished." re-appeared for the wrong book, silently corrupting a DIFFERENT
+      book's finished-event history**: reported as "Mark as finished showed again... for A Shadow
+      in Summer," but a direct DB query after reproducing it showed the `'finished'` event that
+      actually got written used a completely different book's id — the PREVIOUS book on screen
+      before the switch (confirmed via `[REVERTBLEED-TRACE]` id/path logging plus a direct
+      `sqlite3` query, not assumed). Root cause: `current_file` (a plain string) is updated
+      SYNCHRONOUSLY in `_on_book_selected_from_library`, but `_current_book` (the `Book` object
+      `_update_ui_sync`'s finished-write branch reads for both the path AND the id) is only
+      reassigned inside `_on_file_ready` — a `QueuedConnection` handler that runs LATER. `Player.
+      load_book`'s own near-EOF pre-arm (fix 7's second half, above) sets `_eof = True`
+      SYNCHRONOUSLY, well before `_on_file_ready` has any chance to run — so a 200ms UI tick
+      landing in that narrow window saw `current_file` already the NEW book, `_eof` already
+      `True` for the new book, but `_current_book` still the OLD book, and wrote a `'finished'`
+      event against the OLD book's identity while showing the banner over the NEW book. Fixed by
+      requiring `self._current_book.path == self.current_file` before this branch derives any
+      book identity from `_current_book` — the skipped tick leaves `_eof_event_written`/
+      `_eof_book_id` untouched, so the very next tick (once `_current_book` catches up) correctly
+      writes the event against the right book. Another instance of this file's "two sources of
+      truth" family of bugs (see fix 5's `_logical_pos`/`_eof` shape) — `current_file` and
+      `_current_book` were assumed to always be in lockstep and were not.
+  New/extended tests: `tests/test_restore_position_eof.py` (new, 34 tests total across fixes
+  1-7, including direct `Player._on_time_pos_change` and `Player.load_book` exercises), `tests/
+  test_vt_seek.py` (2 new tests for fix 3, 2 more for fix 6). Fixes 8-10 are inside heavily
+  Qt-widget-dependent `MainWindow` methods (banner animation/timers, the 200ms UI tick) not
+  practically unit-testable in isolation — verified live instead, each confirmed via targeted,
+  removed-after-use debug tracing (`[ICONFLASH-TRACE]`, `[REVERTBLEED-TRACE]`) rather than
+  guessed, per CLAUDE.md's standing rule for this zone. Commits `94c5187`, `8cd5a9d`, `bd1ffde`,
+  `8b14231`, and one more for fix 10.
+
 - **[2026-09-15, scope corrected 2026-09-17, design settled + IMPLEMENTED 2026-09-19] Book Detail
   panel's Tags tab tag chip grid gained full keyboard navigation.** Design was walked through
   directly by Pryme and confirmed via AskUserQuestion, then implemented the same day against it:
