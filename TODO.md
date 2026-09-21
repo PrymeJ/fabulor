@@ -9,25 +9,31 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
 
 ## Summary index
 
-### Chapter label briefly flashes chapter[0] before settling on reselecting a finished book
-- [2026-09-21] Residual of the freeze/0%-corruption fix below, not yet fixed. Reselecting a book
-  left at 100% (VT or M4B) now correctly settles on the true last chapter's label — but for a
-  split second during load it first shows chapter[0]/whatever the previous book left behind,
-  THEN flips to the correct last chapter, a visible flash. Pryme's own diagnosis, live-tested
-  2026-09-21, and it matches the code: "If I press < and go back 5 seconds, it doesn't show the
-  chapter[0], shows the last chapter's label directly. So I am guessing that there is a guard for
-  this which doesn't apply when the file is at EOF." `_update_chapter_label_from_index` already
-  guards against exactly this shape of flash for a real seek (`if self.player.is_seeking: return`
-  — suppresses intermediate chapter_changed emits from mpv scanning through boundaries mid-seek,
-  settling once on the correct final index) — but the restore-time EOF synthesis
-  (`_restore_position`, app.py) never sets `is_seeking = True` at all (deliberately — no real mpv
-  seek is issued, see that method's own comment), so that guard never engages, and whatever
-  `_update_ui_sync`'s EOF branch renders on its first ticks before the forced
-  `_update_chapter_label_from_index(last_index)` call lands is briefly visible. Needs a proper
-  look at what's actually racing here (something else must be writing chapter[0] into the label
-  first — check `_on_file_ready`/`_on_book_selected_from_library`'s own initial-load path,
-  which likely primes the label/list at index 0 before `_update_ui_sync`'s first EOF tick ever
-  runs) rather than a guess-and-patch, per CLAUDE.md's standing rule for this zone.
+### Play button briefly shows before settling into Restart on reselecting a finished book (M4B only)
+- [2026-09-21] Live-observed the same session the chapter-flash and its underlying cross-thread
+  race (below) were fixed, and almost certainly the SAME mechanism reapplied to a different
+  consumer of `_eof` — not yet confirmed via trace, flagged here rather than guess-patched, per
+  CLAUDE.md's standing rule for this zone. Pryme's own diagnosis, and it matches the code exactly:
+  "Why does the VT show a Restart icon directly but the M4B shows a Play icon first, then settles
+  into Restart icon? Because VT has its own logic and knows the progress earlier while the M4B
+  uses the internal mpv logic and it takes time for it to get that information?" — yes:
+  `_update_ui_sync`'s `is_eof = self.player.eof_reached` is a direct passthrough of `self._eof`
+  (`Player.eof_reached`, player.py), the exact same flag whose VT-vs-M4B `book_ready`-ordering
+  asymmetry caused the chapter-label flash (see the fixed entry below — VT fires `book_ready`
+  before `instance.play()`, so `_eof` synthesis always lands before any mpv sample; non-VT only
+  fires it from mpv's OWN `file-loaded` event thread, racing the Qt-queued `_restore_position`).
+  **Reported AFTER the `load_book` pre-arm fix (below, fix 7) was already live** (restart confirmed
+  at 21:42:42) — meaning that fix, which closes the exact same race for the chapter walk, did NOT
+  also close it for the Restart icon, which is surprising given they share the same underlying
+  `self._eof` read and the pre-arm sets `_eof` synchronously before any mpv thread activity can
+  begin. Needs live [trace]-style investigation (not assumption) into why the icon still lags —
+  candidates worth checking first: whether `_set_play_icon("restart")` requires `dur` to already
+  be non-`None` (see `_update_ui_sync`'s `if dur is None or dur <= 0: self._set_play_icon("play");
+  return` early-return, which fires BEFORE the `is_eof` branch and could mask a correctly-set
+  `_eof=True` behind a still-unpopulated `player.duration` for M4B specifically, since `dur` there
+  comes from `self.player.duration if self.current_file else None` — an mpv-populated value, not
+  the DB-sourced one `load_book`'s pre-arm reads); or a UI-timer/tick-cadence gap between when
+  `load_book` runs and when `_update_ui_sync` next ticks with the new `current_file` in place.
 
 ### Resuming an M4B after unfinishing it freezes the app — FIXED, live-verified 2026-09-21
 - [2026-09-17, escalated 2026-09-19, fixed 2026-09-21] The freeze, the VT chapter-slider retreat,
@@ -68,10 +74,31 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
      own end but the chapter boundary itself wasn't also a file boundary. Fixed: the same-file
      near-end guard now redirects into the next file (mirroring the cross-file branch) whenever a
      next file exists in the timeline; the genuinely-last-file case still correctly no-ops.
-  New/extended tests: `tests/test_restore_position_eof.py` (new, 22 tests, including direct
-  `Player._on_time_pos_change` exercises for fix 5), `tests/test_vt_seek.py` (2 new tests for fix
-  3, 2 more for fix 6). See the "Chapter label briefly flashes chapter[0]" entry above for the one
-  known residual, still open.
+  7. **Chapter label briefly flashed chapter[0] before settling** (found after fixes 1-6 shipped;
+     VT was clean, M4B still flashed). `_on_time_pos_change`'s own chapter-walk-and-emit block
+     (separate from the `_logical_pos` maintenance block fix 5 guards) reads mpv's raw `value`
+     directly with no `_eof` awareness — mpv's genuine first raw sample for a freshly loaded file
+     resolves to chapter 0 and fires a real `chapter_changed(0)` that lands after the correct
+     restore-time label write and briefly overwrites it. First fix: guard the whole
+     walk-and-emit block on `not self._eof`, mirroring fix 5's own guard — this alone fixed VT but
+     NOT M4B, because closing THIS gap exposed a deeper one: a genuine cross-thread data race.
+     python-mpv runs its event loop (and every `observe_property` callback) on its own background
+     thread, independent of Qt. For VT, `book_ready` fires before `instance.play()`, so the
+     Qt-queued `_restore_position` (which sets `_eof=True`) always wins before any mpv sample
+     exists to race against. For non-VT, `book_ready` only fires from mpv's OWN `file-loaded`
+     event handler, so mpv's first raw sample can be processed on that same background thread
+     BEFORE the queued `_restore_position` ever runs — confirmed via live `id()`-tagged tracing,
+     not assumed. Second, real fix: `Player.load_book` now pre-resolves the identical near-EOF
+     check via `self.db.get_book(path)` and sets `_eof=True` synchronously at entry — before
+     `_resolve_playlist`'s worker thread is even constructed, i.e. strictly before any possible
+     mpv-thread activity for the new book can begin, closing the race by construction rather than
+     timing luck. `_restore_position` still runs afterward and reapplies the same state
+     (idempotent). Both fixes live-verified 2026-09-21 (chapter flash gone for both VT and M4B).
+  New/extended tests: `tests/test_restore_position_eof.py` (new, 34 tests total across all fixes,
+  including direct `Player._on_time_pos_change` and `Player.load_book` exercises), `tests/
+  test_vt_seek.py` (2 new tests for fix 3, 2 more for fix 6). See the "Play button briefly shows
+  before settling into Restart" entry above for a related, still-open residual — same underlying
+  `_eof` flag, different consumer, not yet confirmed to share fix 7's exact mechanism.
 
 ### Book Detail panel's tab bar — not wired into the shared `_kbdnav_active_panel_key` mechanism
 - [2026-09-15, scope corrected 2026-09-17] Still true and unrelated to the (now implemented, see

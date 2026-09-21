@@ -430,3 +430,220 @@ def test_natural_eof_via_advance_or_finish_is_unaffected_non_vt():
     p._on_time_pos_change("time-pos", 3599.5)
 
     assert p._logical_pos == 3599.0
+
+
+# --------------------------------------------------------------------------- #
+# THIRD bug in this chain (2026-09-21, live-confirmed after both fixes above
+# shipped): the chapter LABEL briefly flashed chapter[0] before settling on
+# the true last chapter when reselecting a book synthesized at EOF. Traced
+# via live [CHAPFLASH-TRACE] logging (not guessed) to a THIRD, separate spot
+# in _on_time_pos_change: the chapter-walk-and-emit block at the tail of the
+# method reads mpv's raw `value` directly and has no _eof awareness of its
+# own — the earlier `not self._eof` guard only covered the "logical-position
+# maintenance" block above it. mpv still reports its own genuine first raw
+# sample (~0.0) for a freshly loaded file regardless of any Fabulor-side
+# flag; that walks to chapter 0 (since _last_*_chapter resets to -1 on
+# load_book, 0 != -1 unconditionally), firing a real chapter_changed(0) that
+# lands (QueuedConnection) shortly after the correct restore-time chapter
+# label write and briefly overwrites it. Confirmed live: index=43 (correct,
+# from _on_file_loaded_populate_chapters) -> index=0 (this spurious emit,
+# ~32ms later) -> index=43 again (next real tick). Pryme's own diagnosis,
+# exactly right: "If I press < and go back 5 seconds, it doesn't show
+# chapter[0]... I am guessing there is a guard for this which doesn't apply
+# when the file is at EOF" — a real seek sets is_seeking=True, which
+# _update_chapter_label_from_index's own guard already uses to suppress
+# every intermediate chapter_changed until settle; the synthesized-EOF
+# restore path never sets is_seeking (no real seek is issued), so nothing
+# suppressed this one. Fixed by skipping the whole walk-and-emit block
+# (both VT and non-VT branches) whenever _eof is True, mirroring the
+# maintenance block's own guard.
+# --------------------------------------------------------------------------- #
+def test_chapter_walk_does_not_emit_while_synthesized_at_eof_non_vt():
+    p = Player(db=None, config=None)
+    p.instance = types.SimpleNamespace(command_async=lambda *a: None, chapter_list=[])
+    p._chapter_list = [{"time": 0.0}, {"time": 1000.0}, {"time": 3500.0}]
+    p._last_nonvt_chapter = -1
+    p._eof = True  # synthesized restore-time EOF, no real seek ever issued
+
+    emitted = []
+    p.chapter_changed.connect(lambda idx: emitted.append(idx))
+
+    # mpv's own genuine first raw sample for a freshly loaded file — would
+    # normally walk to chapter 0 and emit, since -1 != 0.
+    p._on_time_pos_change("time-pos", 0.0)
+
+    assert emitted == []
+    assert p._last_nonvt_chapter == -1  # untouched, not silently advanced either
+
+
+def test_chapter_walk_does_not_emit_while_synthesized_at_eof_vt():
+    p = Player(db=None, config=None)
+    p.instance = types.SimpleNamespace(command_async=lambda *a: None)
+    p._virtual_timeline = [{"file_path": "a.mp3", "cumulative_start": 0.0, "duration": 1000.0}]
+    p._chapter_list = [{"time": 0.0}, {"time": 500.0}]
+    p._file_offset = 0.0
+    p._last_vt_chapter = -1
+    p._eof = True
+
+    emitted = []
+    p.chapter_changed.connect(lambda idx: emitted.append(idx))
+
+    p._on_time_pos_change("time-pos", 0.0)
+
+    assert emitted == []
+    assert p._last_vt_chapter == -1
+
+
+def test_chapter_walk_resumes_emitting_once_eof_clears():
+    # The guard must lift the instant a real seek begins, same as the
+    # logical-position maintenance block's own guard — not a permanent
+    # suppression, only a while-at-EOF one.
+    p = Player(db=None, config=None)
+    p.instance = types.SimpleNamespace(command_async=lambda *a: None, chapter_list=[])
+    p._chapter_list = [{"time": 0.0}, {"time": 1000.0}, {"time": 3500.0}]
+    p._last_nonvt_chapter = -1
+    p._eof = True
+
+    emitted = []
+    p.chapter_changed.connect(lambda idx: emitted.append(idx))
+
+    p._on_time_pos_change("time-pos", 0.0)
+    assert emitted == []  # still suppressed
+
+    # A real seek begins (e.g. user pressed Prev) — seek_async clears _eof
+    # as one of its first assignments on every branch that issues a seek.
+    p._eof = False
+    p._on_time_pos_change("time-pos", 1200.0)
+
+    assert emitted == [1]  # chapter walk resumed and correctly emitted
+
+
+# --------------------------------------------------------------------------- #
+# FOURTH bug in this chain (2026-09-21, live-confirmed: "Flash gone for VT,
+# not gone for M4B"): the _eof guard above closes the chapter-walk-emit race
+# only when _eof is ALREADY True by the time a raw mpv sample is processed —
+# but for non-VT books, that is NOT guaranteed. python-mpv runs its event
+# loop (and therefore every observe_property callback, including
+# _on_time_pos_change) on its OWN background thread, entirely independent of
+# Qt's queued-signal chain. app.py's _restore_position (which synthesizes
+# _eof=True) is only reached via book_ready -> _on_file_ready, a
+# QueuedConnection on the Qt thread. For a VT book, book_ready fires BEFORE
+# instance.play() is ever called, so _restore_position always wins — no
+# samples exist yet to race against. For non-VT, book_ready is only emitted
+# from _on_file_loaded — the mpv event-thread's OWN file-loaded handler — so
+# mpv's first raw time-pos sample can be processed on that same background
+# thread BEFORE app.py's queued _restore_position ever runs. Confirmed via
+# live id()-tagged tracing: the SAME Player object, _restore_position's "SET
+# _eof=True" firing before a raw sample's own debug line by wall-clock time,
+# yet that raw sample's own _eof read still False — a genuine data race, not
+# an ordering bug fixable by reasoning about call order alone.
+#
+# Fix: Player.load_book (called synchronously on the Qt thread, well before
+# _resolve_playlist's QRunnable worker — and therefore before any possible
+# mpv thread activity for this book — even starts) now pre-resolves the
+# identical near-EOF check via self.db.get_book(path) and sets _eof=True
+# right there, synchronously, closing the race by construction rather than
+# by timing luck. app.py's _restore_position still runs afterward and
+# reapplies the same state (plus _logical_pos/_eof_event_written, which stay
+# app.py's sole responsibility) — harmless and idempotent.
+# --------------------------------------------------------------------------- #
+class _FakeDbForLoadBook:
+    def __init__(self, book):
+        self._book = book
+
+    def get_book(self, path):
+        return self._book
+
+
+def test_load_book_pre_arms_eof_for_a_book_saved_at_its_own_end():
+    book = Book(path="book.m4b", duration=3600.0, progress=3600.0)
+    p = Player(db=_FakeDbForLoadBook(book), config=None)
+    p.instance = types.SimpleNamespace(
+        observe_property=lambda *a: None,
+        event_callback=lambda *a: (lambda f: f),
+        chapter_list=[],
+    )
+
+    p.load_book("book.m4b")
+
+    # This assertion must hold IMMEDIATELY after load_book returns — before
+    # any queued signal or worker thread has had a chance to run — since
+    # that is the entire point of the fix (synchronous, not eventually-
+    # consistent).
+    assert p._eof is True
+
+
+def test_load_book_pre_arms_eof_for_a_book_within_two_seconds_of_its_end():
+    book = Book(path="book.m4b", duration=3600.0, progress=3599.2)
+    p = Player(db=_FakeDbForLoadBook(book), config=None)
+    p.instance = types.SimpleNamespace(
+        observe_property=lambda *a: None,
+        event_callback=lambda *a: (lambda f: f),
+        chapter_list=[],
+    )
+
+    p.load_book("book.m4b")
+
+    assert p._eof is True
+
+
+def test_load_book_does_not_pre_arm_eof_for_an_ordinary_midbook_resume():
+    book = Book(path="book.m4b", duration=3600.0, progress=1200.0)
+    p = Player(db=_FakeDbForLoadBook(book), config=None)
+    p.instance = types.SimpleNamespace(
+        observe_property=lambda *a: None,
+        event_callback=lambda *a: (lambda f: f),
+        chapter_list=[],
+    )
+
+    p.load_book("book.m4b")
+
+    assert p._eof is False
+
+
+def test_load_book_does_not_pre_arm_eof_for_a_book_with_no_saved_progress():
+    book = Book(path="book.m4b", duration=3600.0, progress=0.0)
+    p = Player(db=_FakeDbForLoadBook(book), config=None)
+    p.instance = types.SimpleNamespace(
+        observe_property=lambda *a: None,
+        event_callback=lambda *a: (lambda f: f),
+        chapter_list=[],
+    )
+
+    p.load_book("book.m4b")
+
+    assert p._eof is False
+
+
+def test_load_book_does_not_pre_arm_eof_when_the_book_is_unknown_to_the_db():
+    # A brand-new path the DB has never seen (get_book returns None) must not
+    # crash and must leave _eof at its normal load_book(False) default.
+    p = Player(db=_FakeDbForLoadBook(None), config=None)
+    p.instance = types.SimpleNamespace(
+        observe_property=lambda *a: None,
+        event_callback=lambda *a: (lambda f: f),
+        chapter_list=[],
+    )
+
+    p.load_book("brand_new_book.m4b")
+
+    assert p._eof is False
+
+
+def test_load_book_survives_a_db_that_raises_on_get_book():
+    # Defensive: this pre-arm check must never be able to break a book load
+    # outright, even if the DB call itself misbehaves.
+    class _RaisingDb:
+        def get_book(self, path):
+            raise RuntimeError("boom")
+
+    p = Player(db=_RaisingDb(), config=None)
+    p.instance = types.SimpleNamespace(
+        observe_property=lambda *a: None,
+        event_callback=lambda *a: (lambda f: f),
+        chapter_list=[],
+    )
+
+    p.load_book("book.m4b")  # must not raise
+
+    assert p._eof is False

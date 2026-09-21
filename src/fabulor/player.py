@@ -348,10 +348,40 @@ class Player(QObject):
                 and self._post_settle_target is not None
                 and value < self._post_settle_target - _POST_SETTLE_BACKWARD_TOLERANCE):
             return
+        # `and not self._eof` on both branches below (2026-09-21): a book restored at
+        # synthesized EOF (app.py's _restore_position, near-EOF branch) never issues a
+        # real seek — mpv still loads the file fresh and reports its own genuine first
+        # raw sample (~0.0), completely independent of is_seeking/_eof/_logical_pos, none
+        # of which this chapter walk reads. That raw ~0.0 resolves to chapter 0 (since
+        # _last_*_chapter was reset to -1 by load_book, 0 != -1 unconditionally on the
+        # first sample), firing a genuine chapter_changed(0) — QueuedConnection, so it is
+        # delivered a tick or two LATER, landing after _on_file_loaded_populate_chapters's
+        # own correct _update_chapter_label_from_index(last_index) call and silently
+        # overwriting it back to chapter 0 for one visible frame before the NEXT correct
+        # walk (this same block, next real sample) corrects it again. Confirmed via
+        # [CHAPFLASH-TRACE]/live log, 2026-09-21: index=43 (correct) -> index=0 (this
+        # emit, ~32ms later) -> index=43 again (~700ms later, next tick). Live report:
+        # "It first shows the chapter[0] briefly for a split second while loading before
+        # settling to the final chapter... If I press < and go back 5 seconds, it doesn't
+        # show chapter[0]... So I am guessing that there is a guard for this which
+        # doesn't apply when the file is at EOF" — exactly right: a real seek (the < case)
+        # sets is_seeking=True, and _update_chapter_label_from_index's own guard already
+        # suppresses every intermediate chapter_changed emit until settle; the synthesized
+        # EOF restore path never sets is_seeking (no real seek is issued — see that
+        # method's own comment), so nothing suppressed this one. This mirrors the
+        # "logical-position maintenance" block's own `not self._eof` guard above (same
+        # underlying fact: a raw mpv sample must not overwrite state a synthesized-or-
+        # genuine EOF has deliberately decoupled from mpv's real position) — extended here
+        # because that guard only covered _logical_pos, not this separate chapter-walk-
+        # and-emit block, which reads raw `value` directly and has no _eof awareness of
+        # its own. Lifts the instant _eof clears, same as the block above.
+        #
         # VT: use self._chapter_list directly — it holds the virtual timeline chapter
         # data (exact DB times, global positions). self._file_offset translates the
         # local mpv time_pos into the global VT position.
-        if self._virtual_timeline is not None and self._chapter_list and value is not None:
+        if self._eof:
+            pass
+        elif self._virtual_timeline is not None and self._chapter_list and value is not None:
             global_pos = (value or 0.0) + self._file_offset
             curr = 0
             for i, chap in enumerate(self._chapter_list):
@@ -558,6 +588,57 @@ class Player(QObject):
         self._eof = False
         self._start_paused = start_paused
         self._play_gated = True
+        # Pre-arm the near-EOF-restore synthesis HERE, synchronously, before any
+        # mpv load/play is even scheduled — closes a genuine cross-thread race
+        # found live 2026-09-21: python-mpv runs its event loop (and therefore
+        # every observe_property callback, including _on_time_pos_change) on its
+        # OWN background thread, entirely independent of Qt's queued-signal
+        # chain. app.py's _restore_position (which also synthesizes _eof=True
+        # for this exact case — see that method's own extensive comment) is
+        # only reached via book_ready -> _on_file_ready, a QueuedConnection on
+        # the Qt thread. For a VT book, book_ready fires BEFORE instance.play()
+        # is ever called (see _on_playlist_resolved/ungate_play), so
+        # _restore_position always wins the race — no samples exist yet to
+        # race against. For non-VT (M4B/CUE/single-file), book_ready is only
+        # emitted from _on_file_loaded — the mpv event-thread's OWN
+        # file-loaded handler — so mpv's first raw time-pos sample (delivered
+        # on that same background thread, moments earlier or later depending
+        # on scheduling) can arrive and be processed BEFORE app.py's queued
+        # _restore_position ever runs, with _eof still reading False. Confirmed
+        # via live [CHAPFLASH3-TRACE]/id() logging: same Player object,
+        # _restore_position's own "SET _eof=True" debug line firing BEFORE a
+        # raw sample's debug line by wall-clock time, yet that raw sample's own
+        # _eof read still False — a data race, not just an ordering mistake
+        # (see CLAUDE.md's "never substitute a plausible explanation for a
+        # checked one" — three earlier fixes at _on_time_pos_change's own
+        # chapter-walk block, all correct in isolation, were insufficient
+        # because none of them closed this thread race). Live report,
+        # 2026-09-21: "Flash gone for VT, not gone for M4B" — exactly the VT/
+        # non-VT book_ready-ordering asymmetry above predicts.
+        #
+        # Fix: resolve the SAME near-EOF check _restore_position performs,
+        # synchronously, right here — before _resolve_playlist's QRunnable
+        # worker (which is what eventually calls instance.play(), the true
+        # start of any possible mpv sample) is even constructed, let alone
+        # started. This is strictly BEFORE the earliest point any mpv thread
+        # activity for this book can begin, so it cannot lose the race by
+        # construction, not by timing luck. Cheap and safe to call
+        # synchronously (self.db is already used this way throughout
+        # player.py, e.g. _resolve_playlist's own CUE-duration lookup a few
+        # lines below). _restore_position (app.py) still runs afterward and
+        # re-applies the identical state — harmless and idempotent, kept as
+        # the sole authority for _eof_event_written/_logical_pos so this
+        # duplication stays minimal and single-purpose (only _eof, only to
+        # win the race for the one consumer — the chapter walk — that a late
+        # _restore_position arrival cannot protect).
+        if self.db is not None:
+            try:
+                pre_book = self.db.get_book(path)
+            except Exception:
+                pre_book = None
+            if pre_book and pre_book.duration and pre_book.progress is not None:
+                if pre_book.duration - pre_book.progress < 2.0:
+                    self._eof = True
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", RuntimeWarning)
             try:
