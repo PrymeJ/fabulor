@@ -2153,6 +2153,50 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
     def _save_current_progress(self):
         """Saves the current playback position to both DB and Config."""
         if self.current_file and self.player.is_initialized:
+            # `_current_book is not None and _current_book.path == self.current_file`
+            # (2026-09-22): an eleventh bug in the same EOF/book-switch family, found
+            # live via [PERSIST-TRACE]/[BOOKSWITCH-TRACE] log correlation after the
+            # first ten fixes (see TODO_ARCHIVE.md), not guessed. `_current_book` (the
+            # `Book` object `_restore_position` populates with the book's TRUE saved
+            # position) is only assigned inside `_on_file_ready` — which defers itself
+            # (`BookSwitchState.mark_file_ready_deferred`) whenever the library panel
+            # is still mid-animation, and `BookSwitchState.begin()` (called at the
+            # START of every new book selection) unconditionally resets
+            # `_file_ready_deferred = False`, silently DISCARDING a still-pending
+            # deferred call rather than ever running it — so a rapid second switch,
+            # landing before the first switch's library-close animation finishes, can
+            # permanently skip `_restore_position` for the book that was briefly
+            # current. `player.time_pos` at that point still reflects whatever raw,
+            # untouched transient mpv reported for the freshly-loaded file (typically
+            # ~0.0, since `_restore_position` — the ONLY thing that would seek to or
+            # synthesize the book's true saved position — never ran) — and THIS
+            # method, called at the very top of the NEXT `_on_book_selected_from_library`
+            # (switching AWAY from that book), would otherwise persist that raw ~0.0
+            # as the book's new saved progress, permanently overwriting its real one.
+            # Live report, 2026-09-22: "Shadow reset to 0 along the way, I had to type
+            # the name to find and load it" — traced via `[BOOKSWITCH-TRACE]` showing
+            # `_on_file_ready: DEFERRED (library still animating)` for that book,
+            # immediately followed by a second `_on_book_selected_from_library` before
+            # the deferral ever drained. `_current_book.path == self.current_file` is
+            # the same staleness check fix #10 already established (TODO_ARCHIVE.md) —
+            # `_current_book` only ever reflects a book whose `_restore_position` has
+            # actually run, so this reuses that exact signal rather than inventing a
+            # new one: if they disagree, this book's true position was never restored
+            # and `player.time_pos` cannot be trusted for a write. Skipping the write
+            # here is strictly safer than the alternative (running the deferred
+            # `_on_file_ready` early) — that method also owns flow-animation setup and
+            # a ONE-SHOT consuming read (`BookSwitchState.take_progress_target()`), so
+            # forcing it to run moments before `begin()` resets everything anyway would
+            # risk its own new race, not fix this one. The book's LAST correctly-saved
+            # position (from whenever it was last properly loaded) is simply left
+            # untouched instead of being overwritten with a wrong one — no state is
+            # lost, no worse than before this switch reached it.
+            if self._current_book is None or self._current_book.path != self.current_file:
+                logger.debug(f"[PERSIST-TRACE] _save_current_progress: SKIPPED — "
+                             f"current_file={self.current_file!r} but _current_book="
+                             f"{self._current_book!r} (never restored for this book; "
+                             f"see the guard's own comment)")
+                return
             pos = self.player.time_pos
             logger.debug(f"[PERSIST-TRACE] _save_current_progress: current_file={self.current_file!r} "
                          f"pos={pos!r} is_seeking={self.player.is_seeking} "
