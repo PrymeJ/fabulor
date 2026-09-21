@@ -21,10 +21,21 @@ Fix: `_on_book_selected_from_library` now also dismisses the undo overlay
 (if showing) and clears `player._undo_pos` unconditionally, at the same
 point as the other per-book teardown, before `_switch.begin(...)` runs.
 
+Follow-up (same day, flagged by Pryme for correctness/thoroughness rather
+than a live report): `_on_book_removed` had the identical gap — removing the
+currently-playing book from the library left a stale Undo overlay/anchor on
+screen, reachable only within the undo duration window (max 8s) of a
+removal. `test_undo_pos_survives_terminate_...` below already demonstrates
+why this couldn't be left to `Player.terminate()` alone (called by
+`_on_book_removed`) — it only nulls `instance`, not `_undo_pos`.
+`_on_book_removed` now clears `player._undo_pos` and dismisses the overlay
+the same way, right alongside its own existing `_last_pause_timestamp`
+clear.
+
 These tests drive `Player.undo_seek` directly (no mpv/QApplication) to pin
 the underlying mechanism: a cleared `_undo_pos` makes `undo_seek()` a
-guaranteed no-op, regardless of which book is loaded when it's later
-clicked.
+guaranteed no-op, regardless of which book is loaded (or whether the player
+was just terminated and no book is loaded at all) when it's later clicked.
 """
 from fabulor.player import Player
 
@@ -103,3 +114,28 @@ def test_undo_pos_survives_terminate_demonstrating_why_an_explicit_clear_is_need
 
     p.terminate()
     assert p._undo_pos == 0.0, "terminate() does not clear _undo_pos by itself"
+
+
+def test_undo_pos_cleared_after_removal_makes_undo_seek_a_noop_even_post_terminate():
+    """The removal-path fix: terminate() + an explicit _undo_pos clear (the
+    shape _on_book_removed now uses) together leave undo_seek() inert — no
+    instance to seek, and no stale anchor left over even if a future book
+    load reattaches a fresh instance to this same Player object."""
+    p = make_player()
+    p.instance = _FakeInstance()
+    p.save_seek_position(old_pos=0.0, new_pos=500.0, duration_limit=3, threshold=60.0)
+    assert p._undo_pos == 0.0
+
+    # _on_book_removed's fixed teardown order: clear the anchor, then terminate.
+    p._undo_pos = None
+    p.terminate()
+
+    assert p.instance is None
+    p.undo_seek()  # must not raise despite instance being None
+    assert p._undo_pos is None
+
+    # A later book load reattaching a fresh instance must not resurrect the
+    # old anchor either — it's already gone, so undo_seek() stays inert.
+    p.instance = _FakeInstance()
+    p.undo_seek()
+    assert p.instance.seek_calls == []

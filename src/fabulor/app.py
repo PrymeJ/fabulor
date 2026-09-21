@@ -1588,7 +1588,14 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # Per-book state: a pause armed on the removed book must not carry into
         # whatever book is selected next — see _on_book_selected_from_library.
         self._last_pause_timestamp = None
+        # Same class of gap as the book-switch Undo fix just above it in this
+        # file's history: removing the book currently playing left a stale
+        # Undo overlay/anchor on screen (an edge case — requires removal
+        # within the undo duration, max 8s — but the same correctness issue).
+        if self.undo_overlay.isVisible():
+            self._hide_undo_banner()
         if self.player:
+            self.player._undo_pos = None
             self.player.terminate()
 
         # Clear markers and stop all in-flight animations to prevent
