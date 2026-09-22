@@ -10,6 +10,68 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
 ## Summary index
 
 
+### Transport-bar blur got visibly stuck in the background — one-off, not reproducible, cause unknown
+- [2026-09-23] Pryme's own report, verbatim: "I was trying to open Settings or the Library, my
+  finger slipped and I pressed right click too fast by mistake. Blur got stuck in the background. I
+  can't reproduce it again as I don't know how it happened exactly. A race for sure." Screenshot
+  showed the transport bar/cover area frozen with an old blurred frame composited behind the live
+  UI, inconsistent with the panel actually open at the time. Surfaced during the same session as the
+  general-sluggishness investigation (see the entry below) but is a DIFFERENT kind of symptom — a
+  genuine stuck/stale visual state, not felt jank — and is being tracked separately rather than
+  folded into that inconclusive investigation.
+  - **Not something to chase by reading code and guessing.** Per CLAUDE.md's own standing rule
+    ("never substitute a plausible explanation for a checked one") and this exact file's history
+    with `transport_bar_blur.py` (a documented, previously-fragile area — see the "Hover-flicker"/
+    grab-feedback-loop entries already in NOTES.md), a fix attempted without first reproducing the
+    actual mechanism would be exactly the kind of unverified patch this codebase has been burned by
+    before. Pryme's own framing: log it, don't attempt a fix without knowing the mechanism.
+  - **The actual TODO item: build a synthetic rapid-click stress harness**, not a fix. Needs a
+    script (or an in-app diagnostic mode) that fires rapid right-click/panel-open events at
+    load-boundary moments — right before, during, and right after a panel's slide animation starts/
+    finishes, right before/after `frost_panel_backdrop`'s one-shot grab fires, right at a book-switch
+    boundary — specifically trying to catch a race between two panel-open requests or a grab firing
+    against a half-torn-down panel state. `is_overlay_open_or_committed()` (`panels.py`) is
+    supposed to prevent exactly this class of double-open race (see CLAUDE.md's "DO NOT add an
+    overlay-open path that skips `is_overlay_open_or_committed()`" rule) — if a real repro is found,
+    check whether it's a gap in that gate specifically, or something in `transport_bar_blur.py`'s
+    own hide/show/grab sequence racing against a panel teardown that the gate doesn't cover.
+  - No repro yet. Do not schedule fix work until one exists.
+
+### General app sluggishness — intermittent stutter, cause NOT found despite four measurement approaches and a two-month bisect
+- [2026-09-22/23] Superseded both of this section's prior entries ("Transport-bar blur's
+  `_grab_and_blur` occasionally spikes..." and "Book Detail open cost — confirmed dominated by
+  app-wide eventFilter overhead...") — both were provisional leads from mid-investigation that did
+  NOT hold up once tested directly against Pryme's live verdicts. Full trace, all four measurement
+  attempts, and the six-commit bisect: **NOTES.md, "General app sluggishness investigation"
+  (2026-09-22/23)**.
+  - Symptom, Pryme's own precise description: intermittent VISUAL STUTTER/JANK during panel-open/
+    close slides — explicitly not overall duration, not input lag, not general unresponsiveness.
+  - Four different measurements were tried (wall-clock panel-open duration; per-frame
+    `QPropertyAnimation.valueChanged` tick-gap; own-process CPU% via `os.times()`; external
+    `kwin_wayland`-vs-Fabulor compositor-load sampling) — **every one failed to correlate with a
+    live verdict**, including one case where the SINGLE WORST measured frame-gap in a batch was on
+    the one book Pryme rated smoothest.
+  - A `git worktree`-isolated bisect spanning six commits from tonight back to 2026-07-19 (the last
+    commit before the transport-bar blur system existed at all) found the SAME qualitative
+    "sometimes smooth, sometimes janky, Stats-worse-than-Tags" pattern at every point tested,
+    including the oldest, pre-blur one — arguing against a discrete code regression as the
+    explanation. Pryme's own call ending the bisect: "if 7-19 is confusing rather than clean all
+    around, that is telling by itself. We won't get anywhere by bisecting further."
+  - **The `event.type()` caching fix** (`MainWindow.eventFilter`/`BookDetailPanel.eventFilter`,
+    `app.py`/`book_detail_panel.py`) and the `valueChanged`/CPU%/loadavg additions to
+    `install_panel_timing_probe` (`panels.py`) both shipped this session regardless — real,
+    tested, harmless improvements that survive the investigation's inconclusive outcome, but
+    neither explained the symptom.
+  - **Genuinely open, not yet investigated**: whether the intermittency correlates with something
+    outside every measurement tried (thermal throttling, background I/O, other desktop processes,
+    though a structured test with other apps closed still showed "janky everywhere"); whether a
+    fundamentally different measurement layer (real screen-capture frame timing, a GPU/compositor
+    trace tool external to both Fabulor and Qt) would see something none of tonight's four
+    Qt/process-level probes could; whether Pryme's own perception/attention to the issue has
+    changed independent of the app's actual behavior (raised, never resolved). Do not re-run any of
+    the four failed measurement approaches expecting a different result without new information —
+    see NOTES.md for exactly what each one showed.
+
 ### Book Detail panel's tab bar — not wired into the shared `_kbdnav_active_panel_key` mechanism
 - [2026-09-15, scope corrected 2026-09-17] Still true and unrelated to the (now implemented, see
   TODO_ARCHIVE.md) tag chip grid navigation: Book Detail's own tab bar was never wired into the

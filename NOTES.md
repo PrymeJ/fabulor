@@ -1,4 +1,184 @@
-## 2026-09-18 — ScrollingLabel first-glyph clipping: seven attempts, none landed, closed as accepted debt
+## 2026-09-22/23 — General app sluggishness investigation: every code-level hypothesis tested and ruled out; intermittent, present as far back as bisected, cause NOT found
+
+**Scope.** Continuation of the same-session "general app slowness" thread from earlier (see the
+`878c263`/`b6f8f94` docs commits and TODO.md's now-superseded "Book Detail open cost" entry — that
+entry's own findings are folded into and superseded by this one). Pryme's live-reported symptom
+throughout: intermittent visual stutter/jank during panel-open/close slides (explicitly NOT overall
+duration, NOT input lag, NOT general app unresponsiveness — a direct answer to a discriminating
+question, see below), most noticeable on Book Detail but not exclusive to it. Four different
+measurement approaches were built and tested against live verdicts across the night; every one
+failed to correlate with what Pryme actually saw. A git bisect spanning two months of history also
+failed to find a clean regression boundary. This entry records what was tried, what the data showed,
+and the state the investigation was left in — nothing here is a fix; this is a root-cause trace that
+did not reach a root cause.
+
+### Attempt 1: wall-clock panel-open duration (`FABULOR_PANEL_TIMING`, pre-existing from earlier the
+same session)
+
+Logs `wall_ms` from `QPropertyAnimation.start()` to its `finished` signal for every panel open/close.
+Pryme ran a deliberately smooth-feeling round from Library (00:22:38-00:23:00) and reported it
+smoother than what came before. Measured: 327-436ms, averaging ~354ms — statistically
+indistinguishable from every "sluggish" round measured earlier the same night (330-450ms across
+Library/Stats/Tags). **Conclusion: wall-clock duration cannot tell smooth from janky.** This directly
+contradicted the whole earlier-session's approach of using average wall-clock time as the proxy for
+"is this panel slow" — that approach was retroactively invalidated by this result, not just shown
+incomplete.
+
+Asked Pryme directly what the symptom actually felt like, to avoid guessing: **"Visual stutter/jank
+during the slide"** — not overall duration, not input lag, not general unresponsiveness. This ruled
+out several theories in one line and set the bar for what any future probe needs to detect.
+
+### Attempt 2: per-frame animation-tick gap (`QPropertyAnimation.valueChanged`, added this session)
+
+Added `_wire_timing_probe` hooks on `valueChanged` (a signal Qt already emits once per real
+animation tick — deliberately NOT a new `QTimer`, since an earlier per-frame `QTimer` sampler had
+already been tried and reverted the same night for visibly distorting the very stutter it was
+built to measure — 7 concurrent 4ms timers is real per-frame Python work injected into the exact
+event loop under test). Tracks `max_frame_gap` (worst gap between consecutive ticks) and
+`jank_frames` (count of gaps exceeding one 60fps frame budget, 16.7ms) per animation run.
+
+Pryme ran a mixed batch (00:31:38-00:32:27) naming specific books with explicit verdicts:
+"Concrete" (smoother), "Europe Central" (worse), "Eleven Kinds" (better), "Blacktail" ×2 from Stats
+(janky), "Perdido" from Stats (smooth), "Fat City" from Library (janky), "Fool's Errand" (slightly
+better). Cross-referencing the exact log lines: **"Perdido," rated smooth, had the single WORST
+max_frame_gap of the entire batch (198.7ms on open) — worse than every book rated janky.** "Concrete"
+(smoother, 62.7ms gap) and "Europe Central" (worse, 55.0ms gap) were barely distinguishable while
+rated oppositely. A first pass mis-paired Perdido's OPEN event with Pryme's verdict; re-checked
+against his correction that the verdict was actually about the CLOSE — the close event (357.4ms
+wall, 59.5ms gap) still didn't stand out as the roughest close in the batch either way.
+**Conclusion: per-frame animation-tick gap also does not correlate with felt jank.**
+
+### Attempt 3: own-process CPU% during the animation window (`os.times()`, added this session)
+
+Added `own_cpu_ms`/`own_cpu_pct` (Fabulor's own CPU-seconds consumed during the wall-clock window,
+via stdlib `os.times()` — no new dependency) plus `os.getloadavg()`'s 1-minute system load, logged
+at both START and FINISHED. Rationale: if the app's own process isn't the one burning CPU during a
+stall, the cause is external (another process, compositor, scheduling) rather than internal.
+
+Pryme ran another batch (00:47:15-00:47:50) with per-book verdicts (Library: Seven=okay,
+Perdido=janky, Buddenbrooks=clean, Borne=clean, Butcher's=rough, China=rough, Children=okay; Stats:
+Seven/Blacktail/Perdido=all bad). Measured: `own_cpu_pct` sat at **85-104% throughout, for every
+single open regardless of verdict** — meaning Fabulor's own process WAS consistently the one doing
+the work (ruling out simple external starvation), but this number never discriminated smooth from
+janky either, since it was uniformly near 100% the whole time. **Conclusion: own-process CPU%
+confirms Fabulor's process is busy but doesn't explain why the SAME busyness sometimes looks smooth
+and sometimes doesn't.**
+
+Directly asked and confirmed: nothing was playing (paused/no book loaded) during this entire round —
+ruled out mpv's own audio thread as a contributing factor.
+
+### Attempt 4: system-wide compositor load (external Python sampler, `kwin_wayland` vs. Fabulor CPU%,
+5Hz, 10-minute window)
+
+Built `/tmp/.../scratchpad/compositor_sample.py` (a standalone script, not shipped in the repo) to
+sample `kwin_wayland`'s (the actual Wayland compositor painting every window, including Fabulor's)
+and Fabulor's own CPU% independently, external to the app, timed to a fixed wall-clock start
+(01:05:00) so Pryme could close VS Code/other apps first without needing an interactive terminal
+running during the test window. Two real bugs were found and fixed in the sampler itself before the
+data could be trusted: `pgrep -f kwin_wayland` false-matched `earlyoom` (whose own `--avoid` regex
+argument contains the literal string "kwin_wayland"), and `pgrep -f "python main.py"` false-matched
+`entr` (whose argv literally contains that string as its own argument) — both fixed by matching
+against `/proc/<pid>/comm` (the real exec'd binary name) instead of the fragile `pgrep -f` full-
+command-line match. This is worth remembering as a standing gotcha for any future PID-matching
+script on this machine.
+
+Pryme ran a structured, wide-ranging 10-minute test (01:05:00-01:15:00) covering blur on/off,
+transparent/opaque backgrounds, with/without playback, cover-art-theme on, book switches, and
+Book Detail from all three sources — with real timestamps for every mode transition. Verdict, once
+asked directly: **"Pretty much everything janky in general"** — no mode, panel, or condition stood
+out as clean. Measured: `kwin_wayland` never exceeded ~50% CPU and averaged 5-15% across every
+window — **the compositor was not under heavy load**. Fabulor's own process showed real variance
+(4% at genuine idle up to peak spikes of 204% and 199% CPU during "book unloaded/carousel scrolling"
+and "book switch with cover theme" windows specifically), but with jank reported as uniform across
+every mode, no single window's elevated CPU could be isolated as THE cause. **Conclusion: rules out
+compositor contention as the primary driver; confirms Fabulor's own process has real CPU variance,
+but that variance didn't correlate with mode/panel/source, matching the "janky everywhere" verdict.**
+
+### Attempt 5: git bisect (worktree-isolated, six commits spanning ~2 months)
+
+Given "janky everywhere regardless of mode" pointed at something systemic rather than
+feature-specific, switched to bisecting for a regression. Used `git worktree add` (isolated from
+the live `entr`-driven working tree on `main`, which had real uncommitted changes from earlier the
+same session that were never at risk) to check out historical commits and test each for general
+smoothness. **First real methodology bug, caught by Pryme, not self-discovered:** the app is
+installed editable (`pip install -e .`, `pyproject.toml`'s `[tool.setuptools.packages.find]`
+pointing at `src`), permanently resolving `import fabulor` back to the ORIGINAL repo's `src/fabulor`
+regardless of which directory `main.py` was actually run from — so the first two "bisect" runs
+(`4fecc29`, then `513631e`) were silently running current `main`'s code the whole time, caught only
+because Pryme noticed EQ (a feature added well after both of those commits) still showing up in a
+build that shouldn't have had it. **Fixed by exporting `PYTHONPATH=<worktree>/src` ahead of the
+editable install** — verified before trusting any further result by directly checking that the
+EQ-free commit's `audio_controls.py` genuinely lacked EQ code post-fix. Any future bisect/worktree
+test against this specific repo MUST use this `PYTHONPATH` override or silently re-test current
+`main` regardless of what's checked out — this is a standing trap for this codebase's specific
+editable-install setup, not a one-off mistake.
+
+Six commits tested, in order, each launched fresh via `nohup ... PYTHONPATH=<worktree>/src python
+main.py &`, tested live, then killed before the next checkout:
+
+| Commit | Date | Verdict |
+|---|---|---|
+| `4fecc29` (last night, invalid PYTHONPATH) | 2026-09-22 | bad (invalid test, ignore) |
+| `513631e` (invalid PYTHONPATH, retested after fix) | 2026-09-15 | not smooth |
+| `79ee1fb` | 2026-08-20 | bad (blur on); confusing/slow when retested with blur OFF specifically |
+| `ce4f9d6` | 2026-08-05 | "not smooth for sure, but not totally janky" — same intermittent pattern as tonight |
+| `e068d27` (last commit before transport-bar blur existed at all — `transport_bar_blur.py`
+  confirmed absent) | 2026-07-19 | "confusing run" — Stats less smooth than Tags, Library hit-and-miss; NOT clean |
+
+One genuinely sharp result came out of the `79ee1fb`/`e068d27` pair before it was walked back:
+Pryme initially reported blur-on vs. blur-off as a clean discriminator at the 2-month-back point
+("Blur on, the same level of jank. Turn it off, smooth. Panel slides finish faster as well.") — the
+first clean binary signal of the whole night. This directly contradicted his own EARLIER statement
+in the same session ("I have blur for a long time. I didn't have this sluggishness... it doesn't
+get better when I turn it off"). Before this could be chased further (planned: bisect forward from
+2026-07-20 to find when the blur-OFF path specifically broke), retesting the same 2026-08-20 commit
+with blur off specifically came back "slow" — and a subsequent retest at CURRENT code found "blur on
+and off don't make a difference" and the same smooth-then-sluggish intermittency Pryme had already
+been describing all night, at EVERY commit tested including 2026-07-19 (pre-blur, minimal
+app-wide-eventFilter surface). **Pryme's own conclusion, verbatim, ending the bisect:** "if 7-19 is
+confusing rather than clean all around, that is telling by itself. We won't get anywhere by bisecting
+further."
+
+### Where this leaves things
+
+No code-level hypothesis tested tonight — wall-clock duration, per-frame animation-tick jank,
+own-process CPU%, system-wide compositor load, blur on/off, or a two-month git bisect — explains the
+reported intermittent stutter. Four measurement approaches were built, each in direct response to
+the previous one's failure to correlate with a live verdict; each also failed. The bisect's own
+result (the same qualitative "sometimes smooth, sometimes janky, source-dependent" pattern present
+even at a pre-blur, 2026-07-19 commit with a much smaller app-wide-eventFilter surface) argues
+against a discrete code regression as the explanation — if the pattern already existed with
+dramatically less code in the hot path, bisecting further commits is unlikely to isolate a single
+cause, because the cause (if code-side at all) would need to have been present from very early and
+merely become more noticeable, not introduced at some specific point.
+
+**Genuinely open questions, not yet investigated:**
+- Whether the intermittency correlates with something OUTSIDE any of tonight's measurements
+  entirely — thermal throttling, background I/O, other desktop-session processes (VS Code, browser,
+  a system monitor were all confirmed running concurrently during parts of tonight's testing;
+  Attempt 4's structured test with those closed still showed "janky everywhere," which argues against
+  this but doesn't rule out other unmeasured system state).
+- Whether Pryme's own perception threshold/attention to the issue has itself changed, independent of
+  any change in the app's actual behavior — raised as a live possibility by Pryme himself early in
+  this thread ("I don't remember this being that bad yesterday or two days ago") but never resolved
+  either way; not something further code instrumentation can settle.
+- Whether a genuinely different measurement layer (real screen-capture frame timing, a GPU/compositor
+  trace tool external to both Fabulor and Qt, rather than anything hooking Fabulor's own event loop)
+  would see something none of tonight's four Qt/process-level probes could.
+
+**What NOT to do without new information:** re-run any of the four measurement approaches above
+expecting a different result — each was tried carefully, cross-checked against real live verdicts,
+and confirmed not to correlate. Re-bisecting further commits without a new working theory for WHERE
+to look is also unlikely to be productive, per Pryme's own read of the pre-blur result.
+
+The `event.type()` caching fix in `MainWindow.eventFilter`/`BookDetailPanel.eventFilter` (see
+`app.py`/`book_detail_panel.py`, committed this session) and the `valueChanged`/CPU-percent additions
+to `install_panel_timing_probe` (`panels.py`, also this session, both env-gated on
+`FABULOR_PANEL_TIMING`, default ON) are real, tested, harmless changes that survive this investigation
+regardless of its outcome — they reduce genuine CPU work and add diagnostic capability for a future
+session, even though neither one turned out to explain tonight's symptom.
+
+---
 
 **Scope.** Chapter-title marquee (`ScrollingLabel`, `controls.py`) clips/shears its first character
 when scroll motion begins. Pre-existing issue, first attempted 2026-07-01 (`72d80df`, shipped);
