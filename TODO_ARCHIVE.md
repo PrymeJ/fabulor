@@ -42,11 +42,21 @@ order these entries had in TODO.md before the split (2026-07-30).
   measurable anomaly worth having cleared regardless. Pryme's own framing, near the end of the
   session: "It's the filters [keyboard-navigation event filters added in the last 2 weeks]. Not the
   cause, but purge first anyway." The profiler also surfaced that 43-64% of a Book Detail open's
-  wall time is spent walking the app-wide `eventFilter` chain (MainWindow + 2x HoverTracker +
-  StatsPanel + ScrollbarJumpFilter + BookDetailPanel, plus PySide's own per-call overhead) — a
-  systemic, not-Book-Detail-specific cost Pryme attributed to the keyboard-navigation work shipped
-  over the prior two weeks (traveling focus marker, hover-pickup polling) rather than anything this
-  session touched; explicitly deferred to a future dedicated session, not investigated further here.
+  wall time is spent walking the app-wide `eventFilter` chain (MainWindow's permanent filter, plus
+  whichever panel-specific filters are currently installed — Book Detail is openable from Library,
+  Stats, OR Tags, not just Stats, per `PanelManager.active_full_panel()`; the underlay's own filter
+  stays live since Book Detail layers on top rather than replacing it). Checked, not assumed, that
+  this is NOT driven by book/tag/library count: `ScrollHoverTracker`/`GridHoverTracker`
+  (`hover_tracker.py`) install their app-wide filters once in `TagManagerWidget.__init__` at
+  startup and are never removed (unlike Sprint/Sleep/Stats/BookDetail, which correctly install on
+  `showEvent`/remove on `hideEvent`), so both stay permanently live regardless of whether Tags is
+  ever opened — one real multiplier. The other is raw event VOLUME, traced to the already-documented
+  transport-bar blur/frost grab's repeated hide/show cycling of the underlay (`_grab_and_blur`,
+  "roughly every ~65-200ms" per this file's own existing note) — a pre-existing mechanism, not
+  something the last two weeks' keyboard-nav work introduced. The keyboard-nav work raised the
+  filter-STACK depth; the blur/frost grab (older) drives the event COUNT each filter has to see —
+  two separate effects, not one, worth separating in a future dedicated session rather than
+  investigated further here.
 
 - **[2026-07-14, re-tested 2026-09-17, CLOSED 2026-09-22] "VT progress restore silently resets on
   book-switch" — stale entry; the fix that closes it landed 2026-07-17 (`f601da0`), a full two

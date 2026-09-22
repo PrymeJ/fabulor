@@ -74,12 +74,24 @@ confirmed as the cause of the general slowdown — Pryme's own read, near the en
 purge first anyway."
 
 The profiler also surfaced something bigger than either fix: 43-64% of a Book Detail open's wall
-time is spent walking the app-wide `eventFilter` chain (MainWindow + 2x HoverTracker + StatsPanel +
-ScrollbarJumpFilter + BookDetailPanel, plus PySide's own per-call `QEvent.type()`/enum/shiboken
-feature-import overhead) — systemic, not Book-Detail-specific, paid on every Qt event anywhere in
-the app. Explicitly NOT investigated further this session — flagged in TODO.md, attributed by Pryme
-to the keyboard-navigation work shipped over the prior two weeks (traveling focus marker,
-hover-pickup polling), deferred to a dedicated future session rather than chased tonight.
+time is spent walking the app-wide `eventFilter` chain — MainWindow's permanent filter plus
+whichever panel-specific filters are currently installed (Book Detail is openable from Library,
+Stats, OR Tags — checked `PanelManager.active_full_panel()` directly rather than assuming Stats was
+the only underlay after Pryme's correction; the underlay's own filter stays live since Book Detail
+layers on top rather than replacing it), plus PySide's own per-call `QEvent.type()`/enum/shiboken
+feature-import overhead — paid on every Qt event anywhere in the app. Traced the raw event-count
+question Pryme asked directly rather than leaving it as a vague "more UI activity": NOT driven by
+book/tag/library size. Two separate, real multipliers, checked in the code rather than assumed:
+(1) `ScrollHoverTracker`/`GridHoverTracker` (`hover_tracker.py`) install their app-wide filters once
+in `TagManagerWidget.__init__` at startup and are NEVER removed (unlike Sprint/Sleep/Stats/
+BookDetail, which correctly install on `showEvent`/remove on `hideEvent`) — both stay permanently
+live for the whole session regardless of whether Tags is ever opened; (2) the raw event VOLUME
+itself traces to the already-documented transport-bar blur/frost grab's repeated hide/show cycling
+of the underlay ("`_grab_and_blur`... roughly every ~65-200ms", an existing CLAUDE.md note) — a
+pre-existing mechanism, not something the last two weeks' keyboard-nav work introduced. The
+keyboard-nav work raised the filter-STACK depth (1); the blur/frost grab (older) drives the event
+COUNT (2) each filter has to see — explicitly NOT investigated further this session, flagged in
+TODO.md with both mechanisms named separately, deferred to a dedicated future session.
 
 Both timing/profiling probes are kept in the tree (`ff74d50`), off by default, following this
 file's existing `_STUTTER_PROFILE_ENABLED` convention rather than being stripped after use.

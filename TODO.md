@@ -493,14 +493,36 @@ isolation.
 - [2026-09-22] General app slowness suspected tied to the keyboard-navigation event-filter stack
   added over the prior two weeks (traveling focus marker, hover-pickup polling, GridHoverTracker,
   the per-panel eventFilters this all layered on). A `cProfile` capture of a live Book Detail open
-  (see TODO_ARCHIVE.md's now-closed "Book Detail slide-in..." entry) showed 43-64% of the open
-  window's wall time spent walking the app-wide `eventFilter` chain (MainWindow + 2x HoverTracker +
-  StatsPanel + ScrollbarJumpFilter + BookDetailPanel, plus PySide's own per-call `QEvent.type()`/
-  enum/shiboken feature-import overhead) — not application logic, and not specific to Book Detail;
-  this cost is paid on every Qt event anywhere in the app. Pryme's own framing, not yet
-  investigated further: "It's the filters. The keys are implemented in the last 2 weeks." Worth a
-  dedicated session: is this simply the unavoidable cost of N stacked filters × event volume, or is
-  something (a poll timer, a hover-tracker re-check) firing far more often than it needs to?
+  (openable from Library, Stats, OR Tags — `PanelManager.active_full_panel()` checks all six panel
+  types as a possible underlay; see TODO_ARCHIVE.md's now-closed "Book Detail slide-in..." entry)
+  showed 43-64% of the open window's wall time spent walking the app-wide `eventFilter` chain
+  (MainWindow's permanent filter + whichever panel-specific filters are currently installed, e.g.
+  Stats' own stays live as Book Detail's underlay since Book Detail layers on top rather than
+  replacing it — plus PySide's own per-call `QEvent.type()`/enum/shiboken feature-import overhead)
+  — not application logic, and not specific to Book Detail; this cost is paid on every Qt event
+  anywhere in the app.
+
+  **Root cause of the raw event VOLUME (5,873 filtered events in one ~0.5s open), checked directly
+  rather than assumed: NOT book/tag/library count** — confirmed by re-deriving the number rather
+  than guessing. Two independent multipliers: (1) how many separate `eventFilter` objects are
+  stacked and each independently re-walk the SAME event (`installEventFilter`/`removeEventFilter`
+  audited across the codebase: most panel-specific filters correctly install on `showEvent`/remove
+  on `hideEvent` — Sprint/Sleep/Tags(panel)/Stats/BookDetail all do this — but `ScrollHoverTracker`/
+  `GridHoverTracker` (`hover_tracker.py`, constructed once inside `TagManagerWidget.__init__` at
+  app startup) install in `__init__` and are NEVER removed, so both stay permanently live for the
+  app's entire session regardless of whether the Tags panel is ever opened); (2) the raw Qt event
+  count generated during the ~0.5s slide window, which is dominated by the ALREADY-DOCUMENTED
+  transport-bar blur/frost grab's repeated hide/show cycling of the underlay to capture a clean
+  backdrop (`transport_bar_blur.py`'s `_grab_and_blur`, CLAUDE.md: "hides and re-shows the active
+  panel roughly every ~65-200ms") — a pre-existing mechanism, not something new from the last two
+  weeks' keyboard-nav work. Each hide/show cycle fires a burst of Show/Hide/Enter/Leave/Paint
+  events that every stacked filter has to see and immediately discard.
+
+  So the two suspects are NOT the same thing: the recent keyboard-nav work added MORE stacked
+  filters (raising multiplier (1)), while the blur/frost grab (pre-existing) is what's actually
+  driving the raw event volume (multiplier (2)) each filter has to chew through. Worth a dedicated
+  session to separate the two effects — does disabling blur (Settings > blur toggle) meaningfully
+  drop the wall-clock cost on its own, independent of anything the keyboard-nav filters do?
   `FABULOR_BOOKDETAIL_PROFILE=1`/`FABULOR_PANEL_TIMING=1` (`panels.py`) are both still in the tree,
   off by default, ready to reuse for this.
 - [2026-07-31] ScrollHoverTracker.suspend() is the hook for mouse/keyboard highlight coexistence
