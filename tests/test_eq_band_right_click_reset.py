@@ -96,3 +96,15 @@ def test_direct_reset_eq_band_call_matches_the_right_click_path(tab, config):
 
     assert tab.eq_sliders["8000"].value() == 0
     assert config.get_eq_gain_8000() == 0.0
+
+
+def test_balance_slider_right_click_resets_to_centered(tab, config):
+    """L/R balance gets the same right-click-reset treatment as the EQ bands
+    (2026-09-22) — single slider, no freq-key indirection needed."""
+    config.set_balance(0.35)
+    tab.balance_slider.setValue(35)
+
+    tab.balance_slider.rightClicked.emit(0.5)
+
+    assert tab.balance_slider.value() == 0
+    assert config.get_balance() == 0.0

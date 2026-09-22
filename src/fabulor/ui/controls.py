@@ -390,6 +390,24 @@ class ClickSlider(QWidget):
             target = self._value + delta
         self.setValue(max(self._minimum, min(self._maximum, target)))
 
+    def jump_shift_right(self) -> None:
+        """Shift+Right on a bidirectional slider (EQ band, L/R balance): jump straight to
+        the maximum when the current value is not on the negative side (i.e. >= midpoint —
+        this INCLUDES the midpoint itself, matching Pryme's own spec), or reset to the
+        midpoint when on the negative side. Pryme's own spec (2026-09-22), restated: "from
+        anywhere falling to the right side of the middle, Shift+left first takes it to the
+        mid-point, then all the way to the left" — jump_shift_left below is this method's
+        mirror image, and together they make a value on the "wrong" side of center always
+        stop at the midpoint on its way past, never jump straight over it to the opposite
+        extreme in one press."""
+        mid = (self._minimum + self._maximum) // 2
+        self.setValue(self._maximum if self._value >= mid else mid)
+
+    def jump_shift_left(self) -> None:
+        """Mirror image of jump_shift_right — see its docstring for the full spec."""
+        mid = (self._minimum + self._maximum) // 2
+        self.setValue(self._minimum if self._value <= mid else mid)
+
     def wheelEvent(self, event):
         # See wheel_step's own comment in __init__ — off by default, opt-in per instance,
         # so this never competes with MainWindow.wheelEvent's own handling of the three

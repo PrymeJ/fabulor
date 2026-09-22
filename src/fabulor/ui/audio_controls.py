@@ -167,6 +167,8 @@ class AudioSettingsTab(QWidget):
         # Left/Right adjust its value; see MainWindow._handle_settings_arrows.
         self.balance_slider.setFocusPolicy(Qt.FocusPolicy.TabFocus)
         self.balance_slider.valueChanged.connect(self._on_balance_changed)
+        # Right-click resets to centered — same mechanism as the EQ bands above (2026-09-22).
+        self.balance_slider.rightClicked.connect(lambda _ratio: self.balance_slider.setValue(0))
         layout.addWidget(self.balance_slider)
 
         layout.addSpacing(10)

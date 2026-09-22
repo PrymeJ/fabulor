@@ -4968,6 +4968,17 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # below so a slider never falls through to them (it is always a one-item row, so
         # col_i == 0 would otherwise send Left back to the tab bar).
         if isinstance(focus, ClickSlider):
+            if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+                # Shift+Left/Right jump to an extreme (or the midpoint, on the "wrong"
+                # side of it first) instead of stepping — see ClickSlider.jump_shift_left/
+                # _right's own docstring for the full spec (2026-09-22 live request,
+                # for the EQ bands and L/R balance).
+                if key == Qt.Key.Key_Left:
+                    focus.jump_shift_left()
+                else:
+                    focus.jump_shift_right()
+                self._keep_marker_awake()
+                return True
             step = -_BALANCE_ARROW_STEP if key == Qt.Key.Key_Left else _BALANCE_ARROW_STEP
             # step_by (not a plain += clamp) so a step that would cross the midpoint lands
             # on it exactly first — see ClickSlider.step_by's own docstring.
