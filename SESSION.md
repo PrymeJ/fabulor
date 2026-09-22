@@ -81,17 +81,23 @@ the only underlay after Pryme's correction; the underlay's own filter stays live
 layers on top rather than replacing it), plus PySide's own per-call `QEvent.type()`/enum/shiboken
 feature-import overhead — paid on every Qt event anywhere in the app. Traced the raw event-count
 question Pryme asked directly rather than leaving it as a vague "more UI activity": NOT driven by
-book/tag/library size. Two separate, real multipliers, checked in the code rather than assumed:
-(1) `ScrollHoverTracker`/`GridHoverTracker` (`hover_tracker.py`) install their app-wide filters once
-in `TagManagerWidget.__init__` at startup and are NEVER removed (unlike Sprint/Sleep/Stats/
-BookDetail, which correctly install on `showEvent`/remove on `hideEvent`) — both stay permanently
-live for the whole session regardless of whether Tags is ever opened; (2) the raw event VOLUME
-itself traces to the already-documented transport-bar blur/frost grab's repeated hide/show cycling
-of the underlay ("`_grab_and_blur`... roughly every ~65-200ms", an existing CLAUDE.md note) — a
-pre-existing mechanism, not something the last two weeks' keyboard-nav work introduced. The
-keyboard-nav work raised the filter-STACK depth (1); the blur/frost grab (older) drives the event
-COUNT (2) each filter has to see — explicitly NOT investigated further this session, flagged in
-TODO.md with both mechanisms named separately, deferred to a dedicated future session.
+book/tag/library size. Two separate real MULTIPLIERS on filter-stack depth were checked in the code
+(not assumed) — `ScrollHoverTracker`/`GridHoverTracker` (`hover_tracker.py`) install their app-wide
+filters once in `TagManagerWidget.__init__` at startup and are NEVER removed (unlike Sprint/Sleep/
+Stats/BookDetail, which correctly install on `showEvent`/remove on `hideEvent`), so both stay
+permanently live for the whole session regardless of whether Tags is ever opened — a confirmed real
+leak. What raw event VOLUME the transport-bar blur/frost grab's hide/show cycling actually
+contributes is UNCONFIRMED, not settled: Pryme did an informal blur-off comparison the same session
+and didn't notice a clear difference, and separately noted that simple panels with no blur/frost
+work of their own (Sprint/Speed/Settings) have also felt less smooth recently — both are real
+observations but neither is a controlled measurement, and Pryme was explicit that this shouldn't be
+leaned on without "a real test with real numbers." Pryme's own current best guess, also unconfirmed:
+more tags/tagged-books plus the full keyboard-navigation rollout, both landed in the last two weeks.
+Two concrete, not-yet-started follow-ups Pryme named for a future session: fix the tracker leak
+(small, low-risk, ready to implement), and migrate Tags from widget-per-thumb (`_TagBookThumb`,
+2094-line `tag_manager.py`) to a delegate model matching Stats' own August `StatsRowModel`/
+`StatsRowDelegate` migration — a genuinely large undertaking, deliberately not scoped or started
+here. Full detail in TODO.md.
 
 Both timing/profiling probes are kept in the tree (`ff74d50`), off by default, following this
 file's existing `_STUTTER_PROFILE_ENABLED` convention rather than being stripped after use.

@@ -50,13 +50,18 @@ order these entries had in TODO.md before the split (2026-07-30).
   (`hover_tracker.py`) install their app-wide filters once in `TagManagerWidget.__init__` at
   startup and are never removed (unlike Sprint/Sleep/Stats/BookDetail, which correctly install on
   `showEvent`/remove on `hideEvent`), so both stay permanently live regardless of whether Tags is
-  ever opened — one real multiplier. The other is raw event VOLUME, traced to the already-documented
-  transport-bar blur/frost grab's repeated hide/show cycling of the underlay (`_grab_and_blur`,
-  "roughly every ~65-200ms" per this file's own existing note) — a pre-existing mechanism, not
-  something the last two weeks' keyboard-nav work introduced. The keyboard-nav work raised the
-  filter-STACK depth; the blur/frost grab (older) drives the event COUNT each filter has to see —
-  two separate effects, not one, worth separating in a future dedicated session rather than
-  investigated further here.
+  ever opened — a confirmed real multiplier on filter-stack depth. Whether the transport-bar blur/
+  frost grab's repeated hide/show cycling (`_grab_and_blur`, "roughly every ~65-200ms" per this
+  file's own existing note) is the other multiplier — the raw event VOLUME each stacked filter has
+  to chew through — is UNCONFIRMED: Pryme did an informal blur-off comparison the same session
+  (several Book Detail opens with blur disabled in Settings) and did not notice a clear difference,
+  and separately noted that simple panels doing no blur/frost work of their own (Sprint/Speed/
+  Settings) have also felt less smooth recently — real observations, but neither a controlled
+  measurement, and Pryme was explicit this shouldn't be leaned on without "a real test with real
+  numbers." Two concrete, not-yet-started follow-ups for a future session: fix the tracker leak
+  (small, low-risk), and migrate Tags from widget-per-thumb (`_TagBookThumb`, 2094-line
+  `tag_manager.py`) to a delegate model matching Stats' own August migration — a genuinely large
+  undertaking, deliberately not started here. Full detail in TODO.md.
 
 - **[2026-07-14, re-tested 2026-09-17, CLOSED 2026-09-22] "VT progress restore silently resets on
   book-switch" — stale entry; the fix that closes it landed 2026-07-17 (`f601da0`), a full two

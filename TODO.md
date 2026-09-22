@@ -519,12 +519,37 @@ isolation.
   events that every stacked filter has to see and immediately discard.
 
   So the two suspects are NOT the same thing: the recent keyboard-nav work added MORE stacked
-  filters (raising multiplier (1)), while the blur/frost grab (pre-existing) is what's actually
-  driving the raw event volume (multiplier (2)) each filter has to chew through. Worth a dedicated
-  session to separate the two effects — does disabling blur (Settings > blur toggle) meaningfully
-  drop the wall-clock cost on its own, independent of anything the keyboard-nav filters do?
+  filters (raising multiplier (1)), while the blur/frost grab (pre-existing) is a candidate for
+  what's driving the raw event volume (multiplier (2)) each filter has to chew through — UNCONFIRMED,
+  not settled either way. Pryme did an informal check the same session (blur toggled off in
+  Settings, several Book Detail opens tried that way) and did not notice a clear difference — but
+  flagged this himself as "not extensive, not conclusive... I wouldn't lean too much into it without
+  a real test with real numbers." Also noted: Sprint/Speed/Settings (simple panels, none of which
+  frost/grab the way Book Detail does) have ALSO felt less smooth recently, which cuts against blur/
+  frost being the dominant or sole driver — but this is also an informal observation, not measured.
+  Pryme's own current best guess, also unconfirmed: the two things that changed most recently are
+  more tags/tagged-books and the full keyboard-navigation rollout — see the two concrete follow-ups
+  below, both more directly actionable than the blur question. A real A/B (blur on vs. off, same
+  panel, same conditions, `FABULOR_PANEL_TIMING=1` wall-clock numbers on both sides) is still the
+  way to actually settle the blur/frost question, whenever someone picks this up.
+
+  **Two concrete follow-ups Pryme named, not yet started, sequenced for a future session:**
+  1. **Fix the tracker leak (small, low-risk, ready to implement).** Give `ScrollHoverTracker`/
+     `GridHoverTracker` the same `showEvent`/`hideEvent` install/remove pattern every other
+     panel-specific filter already uses correctly (Sprint/Sleep/Stats/BookDetail all do this) —
+     mechanical, well-precedented, should shrink the filter-stack depth for every panel's open/close,
+     not just Book Detail's.
+  2. **Migrate Tags from widget-per-thumb to a delegate model, matching Stats' own August migration**
+     (`StatsRowModel`/`StatsRowDelegate`, see CLAUDE.md's Stats Panel section). `TagManagerWidget`
+     (`tag_manager.py`, 2094 lines) is still entirely widget-per-row/widget-per-thumb — every
+     `_TagBookThumb` shown in a tag's detail grid is a real `QWidget` instance, each independently
+     receiving its own share of Qt's paint/enter/leave/focus event traffic, unlike a delegate-painted
+     `QAbstractItemView` which has no per-item widgets at all. This is a genuinely large undertaking
+     (Stats' own migration spanned Day/Week/Month across two separate August sessions) — not
+     scoped or started this session, deliberately left as its own future investigation rather than
+     begun at the tail end of this one.
   `FABULOR_BOOKDETAIL_PROFILE=1`/`FABULOR_PANEL_TIMING=1` (`panels.py`) are both still in the tree,
-  off by default, ready to reuse for this.
+  off by default, ready to reuse for measuring either follow-up's actual impact once implemented.
 - [2026-07-31] ScrollHoverTracker.suspend() is the hook for mouse/keyboard highlight coexistence
   — worth confirming the shipped Stats/Tags hover-pickup mechanism (`_pickup_cursor_anchor`/
   `GridHoverTracker`, 2026-09-15) actually routes through `suspend()` as this entry predicted,
