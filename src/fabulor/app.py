@@ -6603,6 +6603,14 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
     def eventFilter(self, obj, event):
         """Global event filter to handle dismissing popups on clicks outside."""
+        # Cached once: this filter runs on EVERY Qt event app-wide, and the branches below
+        # used to call event.type() independently up to 11 times each — confirmed via live
+        # cProfile capture (FABULOR_BOOKDETAIL_PROFILE) to average ~74ms cumulative per single
+        # Book Detail open, one of the two largest contributors to that panel's ~100ms premium
+        # over every other panel's open cost (TODO.md, "Book Detail open cost", 2026-09-22).
+        # event.type() is a plain read with no side effects, so caching it once here and
+        # comparing against the local everywhere below is behavior-identical — pure refactor.
+        etype = event.type()
         # [PLAYBTN-PAINT] probe (2026-08-15) — env-gated, off by default.
         # Answers "what repaints play_pause_button every ~200ms with nothing
         # moving", the same shape of bug as [CHAPTER-LABEL-PAINT]
@@ -6613,7 +6621,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # class already branches eventFilter on obj identity for other
         # widgets (eof_revert_btn, below), so no new filter object or
         # install call is needed.
-        if (_GRAB_TRACE_ENABLED and event.type() == QEvent.Type.Paint
+        if (_GRAB_TRACE_ENABLED and etype == QEvent.Type.Paint
                 and hasattr(self, 'play_pause_button') and obj is self.play_pause_button):
             import traceback
             logger.debug(
@@ -6627,7 +6635,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # region while muted (main does not show it). muted_icon_label is a
         # bare QLabel with no paintEvent override, same shape as
         # play_pause_button, so the same event-filter approach applies.
-        if (_GRAB_TRACE_ENABLED and event.type() == QEvent.Type.Paint
+        if (_GRAB_TRACE_ENABLED and etype == QEvent.Type.Paint
                 and hasattr(self, 'muted_icon_label') and obj is self.muted_icon_label):
             import traceback
             logger.debug(
@@ -6646,7 +6654,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         #
         # Read it against how many times you actually clicked:
         #   grep '\[RCLICK\]' fabulor.log | wc -l
-        if event.type() == QEvent.Type.MouseButtonPress:
+        if etype == QEvent.Type.MouseButtonPress:
             # PRIMARY input-modality clear for the traveling focus marker (see
             # _update_focus_marker). ANY physical button press means the user is driving with
             # the mouse, so the keyboard-navigation affordance must stop showing. This lives at
@@ -6691,7 +6699,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             except (AttributeError, RuntimeError):
                 pass
 
-        if event.type() == QEvent.Type.KeyPress:
+        if etype == QEvent.Type.KeyPress:
             # Assert keyboard mode from the KEY PRESS itself, before any handler runs — the
             # mirror of the MouseButtonPress clear below, and for the same reason: a press
             # states intent unambiguously, whereas the focus event that may follow it does not.
@@ -6760,7 +6768,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # than just declining to show the marker: the box's own mouse/keyboard "most recent
         # move wins" coordination (see excluded_books.py) already handles a mouse hover
         # happening at the same moment, so this doesn't need its own separate arbitration.
-        if event.type() == QEvent.Type.FocusIn and hasattr(self, 'excluded_books_popup'):
+        if etype == QEvent.Type.FocusIn and hasattr(self, 'excluded_books_popup'):
             focus = QApplication.focusWidget()
             psf_buttons = (set(getattr(self, 'persist_filter_buttons', {}).values())
                            | set(getattr(self, 'persist_filter_sub_buttons', {}).values()))
@@ -6773,13 +6781,13 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # scope (Settings > Look tab, this pass). Catches focus arriving by Tab, mouse click, or
         # panel open uniformly. Runs AFTER _handle_tab_escape so a Tab's setFocus has already
         # landed and QApplication.focusWidget() reflects the NEW target.
-        if event.type() in (QEvent.Type.FocusIn, QEvent.Type.FocusOut):
+        if etype in (QEvent.Type.FocusIn, QEvent.Type.FocusOut):
             self._update_focus_marker(reason=event.reason())
 
         if hasattr(self, 'eof_revert_btn') and obj is self.eof_revert_btn:
-            if event.type() == QEvent.Enter:
+            if etype == QEvent.Enter:
                 self.eof_revert_btn.set_icons(*self._eof_revert_pixmaps_hover)
-            elif event.type() == QEvent.Leave:
+            elif etype == QEvent.Leave:
                 self.eof_revert_btn.set_icons(*self._eof_revert_pixmaps)
 
         # One-shot: library_tab is built at startup but stays hidden inside
@@ -6791,13 +6799,13 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # long enough defer (it doesn't wait for this specific event); this
         # does, and only runs once.
         if (not self._library_tab_shown_once and hasattr(self, 'library_tab')
-                and obj is self.library_tab and event.type() == QEvent.Type.Show):
+                and obj is self.library_tab and etype == QEvent.Type.Show):
             self._library_tab_shown_once = True
             if hasattr(self, 'excluded_books_section') and hasattr(self, 'excluded_books_popup'):
                 self.excluded_books_popup.reposition(self.excluded_books_section, self.library_tab)
 
         try:
-            if event.type() == QEvent.MouseButtonPress:
+            if etype == QEvent.MouseButtonPress:
                 if hasattr(self, 'chapter_list_widget') and self.chapter_list_widget.isVisible():
                     local_pos = self.mapFromGlobal(event.globalPosition().toPoint())
                     btn = self.chapter_list_widget._expand_btn
@@ -6829,7 +6837,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         except Exception:
             pass
 
-        if event.type() in (QEvent.Type.MouseButtonPress, QEvent.Type.KeyPress):
+        if etype in (QEvent.Type.MouseButtonPress, QEvent.Type.KeyPress):
             if hasattr(self, 'library_panel'):
                 # Abort any in-flight preload so the interaction isn't contended, then
                 # (re)arm the 5s idle timer. Re-arming on EVERY interaction — not only when

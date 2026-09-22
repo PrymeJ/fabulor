@@ -1937,6 +1937,16 @@ class BookDetailPanel(QWidget):
             self.setFocus(Qt.FocusReason.OtherFocusReason)
 
     def eventFilter(self, obj, event):
+        # Cached once: this filter is installed on the whole QApplication (showEvent/
+        # hideEvent), so it runs on every Qt event app-wide while Book Detail is open. The
+        # branches below used to call event.type() independently up to 11 times each —
+        # confirmed via live cProfile capture (FABULOR_BOOKDETAIL_PROFILE) to average ~51ms
+        # cumulative per single open, one of the two largest contributors to this panel's
+        # ~100ms premium over every other panel's open cost (TODO.md, "Book Detail open
+        # cost", 2026-09-22). event.type() is a plain read with no side effects, so caching
+        # it once here and comparing against the local everywhere below is behavior-
+        # identical — pure refactor.
+        etype = event.type()
         # Get out of the way entirely while a modal dialog (e.g. the Cover tab's "+" ->
         # QFileDialog.getOpenFileName) is on top. This filter is installed on the whole
         # QApplication (showEvent/hideEvent), so without this guard it intercepts EVERY key
@@ -1951,36 +1961,36 @@ class BookDetailPanel(QWidget):
         # window). QApplication.activeModalWidget() is the correct check — it's set to the
         # dialog itself while ANY modal dialog anywhere in the app is up, not just ones this
         # panel opened, so this also protects against any other modal a future feature adds.
-        if (event.type() == QEvent.Type.KeyPress
+        if (etype == QEvent.Type.KeyPress
                 and QApplication.activeModalWidget() is not None):
             return False
 
-        if event.type() == QEvent.Type.KeyPress:
+        if etype == QEvent.Type.KeyPress:
             self._ensure_panel_owns_focus()
 
         if obj is self._remove_btn:
             if not self._confirming_remove:
-                if event.type() == QEvent.Type.Enter:
+                if etype == QEvent.Type.Enter:
                     self._update_remove_btn_icon(hover=True)
-                elif event.type() == QEvent.Type.Leave:
+                elif etype == QEvent.Type.Leave:
                     self._update_remove_btn_icon(hover=False)
             return False
 
         if obj is self._meta_action_btn:
-            if event.type() == QEvent.Type.Enter:
+            if etype == QEvent.Type.Enter:
                 self._on_meta_action_hover(hover=True)
-            elif event.type() == QEvent.Type.Leave:
+            elif etype == QEvent.Type.Leave:
                 self._on_meta_action_hover(hover=False)
             return False
 
         if obj is self._finished_label:
-            if event.type() == QEvent.Type.Enter:
+            if etype == QEvent.Type.Enter:
                 self._on_finished_hover(hover=True)
-            elif event.type() == QEvent.Type.Leave:
+            elif etype == QEvent.Type.Leave:
                 self._on_finished_hover(hover=False)
             return False
 
-        if (event.type() == QEvent.Type.KeyPress
+        if (etype == QEvent.Type.KeyPress
                 and event.key() in (Qt.Key.Key_Tab, Qt.Key.Key_Backtab)):
             # ALWAYS consume Tab while this panel is open, on EVERY tab, in EVERY case below.
             # This panel overlays the library, but active_full_panel() reports "library"
@@ -2045,7 +2055,7 @@ class BookDetailPanel(QWidget):
             # else: consumed no-op — nothing to cycle, but still must not leak to the library.
             return True
 
-        if event.type() == QEvent.Type.KeyPress and event.key() == Qt.Key.Key_Escape:
+        if etype == QEvent.Type.KeyPress and event.key() == Qt.Key.Key_Escape:
             # Priority order — one Escape does exactly one thing, panel-close last:
             #   0. Any of the four confirmations armed (remove / mark finished-unfinished /
             #      bulk delete-history / per-row delete-session) → disarm it, panel stays open.
@@ -2082,7 +2092,7 @@ class BookDetailPanel(QWidget):
                 self._on_close_clicked()
             return True
 
-        if event.type() == QEvent.Type.MouseButtonPress:
+        if etype == QEvent.Type.MouseButtonPress:
             from PySide6.QtCore import QRect
             gpos = event.globalPosition().toPoint()
 
