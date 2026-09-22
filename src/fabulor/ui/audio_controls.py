@@ -109,6 +109,11 @@ class AudioSettingsTab(QWidget):
             # lives inside a panel where that rule doesn't apply.
             slider.setFocusPolicy(Qt.FocusPolicy.TabFocus)
             slider.valueChanged.connect(lambda v, k=freq: self._on_eq_changed(k, v))
+            # Right-click resets just this one band — ClickSlider's own mousePressEvent
+            # already emits rightClicked(ratio) unconditionally (used elsewhere for
+            # seek-to-position on the transport sliders); these 5 EQ sliders simply
+            # weren't connecting it to anything before, so the click was silently inert.
+            slider.rightClicked.connect(lambda _ratio, k=freq: self._reset_eq_band(k))
             eq_row.setSpacing(4)
             eq_row.addWidget(slider, stretch=1, alignment=Qt.AlignmentFlag.AlignVCenter)
             freq_label = QLabel(label)
@@ -195,6 +200,14 @@ class AudioSettingsTab(QWidget):
         getattr(self.config, f"set_eq_gain_{freq_key}")(value / 10.0)
         self.sync_player()
         self.update_visuals()
+
+    def _reset_eq_band(self, freq_key):
+        """Right-click on a single EQ slider resets just that band to 0dB — setValue's own
+        valueChanged emit routes through _on_eq_changed exactly as a manual drag would, so
+        this doesn't need to touch config/sync_player/update_visuals itself. A no-op if the
+        band is already at 0 (setValue doesn't re-emit for an unchanged value), matching
+        ClickSlider's own general behavior elsewhere."""
+        self.eq_sliders[freq_key].setValue(0)
 
     def _reset_settings(self):
         self.config.set_voice_boost_enabled(False)
