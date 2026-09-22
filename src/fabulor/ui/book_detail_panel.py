@@ -671,7 +671,7 @@ class BookDetailPanel(QWidget):
         self._tag_input.customContextMenuRequested.connect(
             lambda pos: self._ctx_menu.show_for(self._tag_input, self._tag_input.mapToGlobal(pos))
         )
-        self._tag_input.returnPressed.connect(self._on_add_tag)
+        self._tag_input.returnPressed.connect(self._on_tag_return_pressed)
 
         self._tag_completer_model = QStringListModel()
         self._tag_completer = QCompleter(self._tag_completer_model, self._tag_input)
@@ -983,6 +983,27 @@ class BookDetailPanel(QWidget):
 
     def _on_tag_completer_activated(self, text: str):
         self._tag_input.setText(text)
+        self._on_add_tag()
+
+    def _on_tag_return_pressed(self) -> None:
+        """`QLineEdit.returnPressed` and `QCompleter.activated` BOTH fire for the
+        same Enter keypress when a popup row is highlighted (confirmed directly:
+        `returnPressed` fires first, `activated` second, each independently
+        calling `_on_add_tag`) — live-reported and screenshot-confirmed
+        2026-09-22: arrowing onto "ai: roy dotrice" from a typed "ai: r" and
+        pressing Enter added BOTH tags as separate chips, and left the field
+        non-empty (whichever handler ran second saw the other's leftover text).
+        `activated` already fully owns the popup-selection case (it does its own
+        `setText` + `_on_add_tag`), so when a valid row is highlighted this
+        declines entirely and lets `activated` be the sole caller. Checking the
+        popup's OWN highlighted index (`currentIndex`), not `popup().isVisible()`,
+        is what makes this reliable — the popup has typically already closed by
+        the time `returnPressed` runs, so visibility can't distinguish the two
+        cases, but the highlighted index still reflects the selection that was
+        live at the moment Enter was pressed."""
+        popup = self._tag_completer.popup()
+        if popup is not None and popup.currentIndex().isValid():
+            return
         self._on_add_tag()
 
     def _select_tab_by_name(self, tab: str) -> None:
