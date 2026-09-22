@@ -2187,7 +2187,15 @@ class ThemeManager(QObject):
         pending = getattr(self, '_pending_panel_sheet', None)
         if not pending or panel is None:
             return
-        sheet = pending.get(panel.objectName())
+        # Consuming pop, not a plain get: without this, the same entry was
+        # reapplied on EVERY subsequent open of that panel type for the rest
+        # of the session, not just the one open that genuinely needed to
+        # catch up — confirmed live 2026-09-22, one real stash write followed
+        # by 6+ redundant re-applications over the next ~40s of normal panel
+        # use, each a real setStyleSheet() call (~60-90ms measured via
+        # cProfile) on a panel nobody could see. The stash is a one-shot
+        # catch-up per panel per theme change, not a cache to keep serving.
+        sheet = pending.pop(panel.objectName(), None)
         if sheet:
             logger.warning(
                 f"[PANEL-SHEET-CATCHUP] applying stash to panel={panel.objectName()!r} "
