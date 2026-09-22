@@ -25,10 +25,98 @@ logger = logging.getLogger(__name__)
 # stutter's root cause is found. See NOTES.md / TODO.md 2026-07-16/17 entry.
 _STUTTER_PROFILE_ENABLED = os.environ.get("FABULOR_STUTTER_PROFILE") == "1"
 
+# TEMPORARY (Book-Detail-from-Stats slowness investigation, 2026-09-22 — TODO.md
+# "Book Detail slide-in feels less smooth from Library than from Stats", now
+# redirected by real timing data: Stats is the slower/spikier caller, not
+# Library). Same shape as _STUTTER_PROFILE_ENABLED above, scoped to the
+# open_book_detail -> _start_book_detail_entry -> slide-finished window instead
+# of the library-open window. Remove once the investigation is resolved.
+_BOOKDETAIL_PROFILE_ENABLED = os.environ.get("FABULOR_BOOKDETAIL_PROFILE") == "1"
+
 # Same gate as transport_bar_blur.py's [DIRTY-TRACE]/[GRAB-ENTRY]/[GRAB-DPR] —
 # reused here for [SEAM-TRACE] so one env var covers the whole grab/blur/clip
 # investigation without a second switch to remember.
 _GRAB_TRACE_ENABLED = os.environ.get("FABULOR_GRAB_TRACE") == "1"
+
+# TEMPORARY (Book-Detail-slide-smoothness investigation, 2026-09-22 — TODO.md
+# "Book Detail slide-in feels less smooth from Library than from Stats").
+# Logs wall-clock duration + real max frame gap for every panel-open/close
+# QPropertyAnimation, so this can be answered with real timing data instead of
+# a plausible-sounding guess about the underlay's own concurrent animation.
+# Wired generically over every panel's animation object (install_panel_timing_probe,
+# called once from app.py after PanelManager + book_detail_panel are both built) so
+# no per-panel edits were needed. Remove once the investigation is resolved.
+_PANEL_TIMING_ENABLED = os.environ.get("FABULOR_PANEL_TIMING") == "1"
+
+
+def install_panel_timing_probe(panel_manager: "PanelManager") -> None:
+    """See _PANEL_TIMING_ENABLED's comment above. No-op unless that env var is set.
+
+    Hooks QPropertyAnimation.start()/finished on every panel-open/close animation
+    generically (name -> animation object), logging wall-clock duration only.
+
+    An earlier version of this probe also sampled a per-frame-gap QTimer at ~4ms
+    per running animation to catch event-loop stalls the wall-clock number alone
+    wouldn't show. Dropped (2026-09-22) after a live run reported heavier stutter
+    than usual with the probe active — 7 concurrent 4ms QTimers, torn down and
+    recreated on every single panel open/close, is real per-frame Python-level
+    work injected into the exact event loop being measured, and was almost
+    certainly distorting the thing it was trying to observe rather than revealing
+    something true about the app. Wall-clock alone is what's directly comparable
+    across panels anyway (the investigation's actual question), so it stayed."""
+    if not _PANEL_TIMING_ENABLED:
+        return
+
+    animations = {
+        "library": panel_manager.library_panel_animation,
+        "settings": panel_manager.settings_panel_animation,
+        "speed": panel_manager.speed_panel_animation,
+        "sleep": panel_manager.sleep_panel_animation,
+        "sprint": panel_manager.sprint_panel_animation,
+        "stats": panel_manager.stats_panel_animation,
+        "tags": panel_manager.tags_panel_animation,
+        "book_detail": panel_manager.book_detail_panel_animation,
+    }
+
+    for name, anim in animations.items():
+        if anim is None:
+            continue
+        # book_detail is the one panel openable from two different underlays
+        # (Library or Stats/Tags) — this is exactly what the investigation this
+        # probe was built for needs to distinguish, so it alone gets a context
+        # callback read at start time rather than a static name.
+        context_fn = (
+            (lambda pm=panel_manager: pm._book_detail_underlay)
+            if name == "book_detail" else None
+        )
+        _wire_timing_probe(name, anim, context_fn)
+
+
+def _wire_timing_probe(name: str, anim: QPropertyAnimation, context_fn=None) -> None:
+    state = {"t0": None}
+
+    def _on_start():
+        state["t0"] = time.perf_counter()
+        target = anim.endValue()
+        ctx = f" from={context_fn()!r}" if context_fn is not None else ""
+        logger.warning(
+            f"[PANEL-TIMING] {name} START target={target} nominal_duration={anim.duration()}ms{ctx}")
+
+    def _on_finished():
+        if state["t0"] is None:
+            return
+        wall_ms = (time.perf_counter() - state["t0"]) * 1000
+        logger.warning(f"[PANEL-TIMING] {name} FINISHED wall={wall_ms:.1f}ms")
+        state["t0"] = None
+
+    orig_start = anim.start
+
+    def _traced_start(*args, **kwargs):
+        _on_start()
+        return orig_start(*args, **kwargs)
+
+    anim.start = _traced_start
+    anim.finished.connect(_on_finished)
 
 # visual_area blur-in / blur-out durations. Deliberately ASYMMETRIC:
 # blurring IN is a slow build matched to TransportBarBlurOverlay._FADE_IN_MS
@@ -1150,6 +1238,20 @@ class PanelManager:
         stats.print_stats(40)
         logger.debug(f"[STUTTER-PROFILE] library-open window profile:\n{stream.getvalue()}")
 
+    def _stop_bookdetail_profile(self):
+        """TEMPORARY — see _BOOKDETAIL_PROFILE_ENABLED's comment above. Brackets
+        _start_book_detail_entry through the slide-finished callback (same window
+        _apply_transport_bar_blur_full runs in), same shape as _stop_stutter_profile."""
+        prof = getattr(self, '_bookdetail_profiler', None)
+        if prof is None:
+            return
+        prof.disable()
+        self._bookdetail_profiler = None
+        stream = io.StringIO()
+        stats = pstats.Stats(prof, stream=stream).sort_stats('cumulative')
+        stats.print_stats(40)
+        logger.warning(f"[BOOKDETAIL-PROFILE] open window profile:\n{stream.getvalue()}")
+
     def _reveal_list_rows(self):
         view = self.library_panel._list_view
         # Find visible row range
@@ -1930,6 +2032,9 @@ class PanelManager:
         self._start_book_detail_entry()
 
     def _start_book_detail_entry(self):
+        if _BOOKDETAIL_PROFILE_ENABLED:
+            self._bookdetail_profiler = cProfile.Profile()
+            self._bookdetail_profiler.enable()
         self._flush_pending_restyle()  # before show() — see _flush_pending_restyle
         # Immediately, at open-START: the underlay is about to be fully covered, so
         # its GRABBING must stop now rather than at slide-finish — but its last
@@ -1979,6 +2084,8 @@ class PanelManager:
             # _start_visual_area_blur call here — that asymmetry vs. the other five
             # panels is deliberate, not an omission.
             self._apply_transport_bar_blur_full(self.book_detail_panel)
+            if _BOOKDETAIL_PROFILE_ENABLED:
+                self._stop_bookdetail_profile()
 
         # Blur starts at slide-FINISHED, matching every other panel — see
         # _start_visual_area_blur's TIMING IS LOAD-BEARING note.

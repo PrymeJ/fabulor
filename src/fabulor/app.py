@@ -29,7 +29,7 @@ from .ui.theme_manager import ThemeManager
 import time # For sleep timer
 from .library_controller import LibraryController
 from .ui.controls import ClickSlider # arrow-key adjustment of a focused settings slider
-from .ui.panels import PanelManager # New import for PanelManager
+from .ui.panels import PanelManager, install_panel_timing_probe # New import for PanelManager
 from .ui.visual_area_blur import ClippedBlurEffect
 from .ui import scrollbar_jump
 from .ui.carousel import CoverCarousel, CAROUSEL_STRIPE_W
@@ -1025,6 +1025,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.panel_manager = PanelManager(self)
         builders.build_book_detail_panel(self)
         self.stats_panel.set_panel_manager(self.panel_manager)
+        install_panel_timing_probe(self.panel_manager)  # TEMPORARY — see panels.py
 
         # Connect Sleep Timer signals after panel_manager is initialized
         self.sleep_panel.timer_started.connect(self._on_sleep_timer_started)
