@@ -927,6 +927,19 @@ class TagManagerWidget(QWidget):
         super().showEvent(event)
         if self._panel_widget.isVisible() or self._list_widget.isVisible():
             QApplication.instance().installEventFilter(self)
+        # _row_hover/_thumb_hover (ScrollHoverTracker/GridHoverTracker) each own a
+        # SEPARATE QApplication-wide filter of their own — installed once in their
+        # own __init__ and, before this pairing, never removed, so both stayed
+        # permanently live for the app's entire session regardless of whether Tags
+        # was ever opened (found live 2026-09-22, profiling a Book Detail open: two
+        # extra filters walking every Qt event anywhere in the app for no reason).
+        # Gated the same way the two sub-views are gated everywhere else in this
+        # class — only the tracker for whichever sub-view is actually showing
+        # needs to be live.
+        if self._list_widget.isVisible():
+            self._row_hover.install_filter()
+        if self._panel_widget.isVisible():
+            self._thumb_hover.install_filter()
 
     def hideEvent(self, event):
         # See showEvent above for why this alone is insufficient against the
@@ -936,6 +949,8 @@ class TagManagerWidget(QWidget):
         # to be open, so this is what stops the filter from leaking past a
         # genuine panel close.
         QApplication.instance().removeEventFilter(self)
+        self._row_hover.remove_filter()
+        self._thumb_hover.remove_filter()
         super().hideEvent(event)
 
     def refresh_books(self) -> None:
@@ -1686,6 +1701,13 @@ class TagManagerWidget(QWidget):
         self._list_widget.hide()
         self._panel_widget.show()
         QApplication.instance().installEventFilter(self)
+        # Same reasoning as showEvent's own tracker pairing — this transition
+        # doesn't re-fire showEvent (see _show_list's own comment on this),
+        # so the trackers need to switch here too, or _row_hover stays
+        # installed uselessly (list is now hidden) while _thumb_hover never
+        # gets installed at all for the view that's actually showing.
+        self._row_hover.remove_filter()
+        self._thumb_hover.install_filter()
         # Keyboard-nav entry point (2026-09-08): the thumbnail grid, not the top
         # row — explicit live design call ("I am considering that we start with
         # the thumbnails... more practical", since thumbnails receive the most
@@ -1726,6 +1748,9 @@ class TagManagerWidget(QWidget):
         # hide/show) silently stop working after returning from any tag detail
         # via the "<" button or Backspace.
         QApplication.instance().installEventFilter(self)
+        # Mirror of _open_tag's own tracker pairing, other direction.
+        self._thumb_hover.remove_filter()
+        self._row_hover.install_filter()
         # Without this, real Qt focus stays wherever it last was in the detail
         # panel (e.g. _book_grid) — invisible since that widget is now hidden,
         # but it means _tag_scroll never gets a KeyPress, so arrows silently do

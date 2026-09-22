@@ -89,8 +89,15 @@ class ScrollHoverTracker(QObject):
         #
         # Every branch is scoped to this scroll area's own descendants, so other
         # panels are unaffected.
-        from PySide6.QtWidgets import QApplication
-        QApplication.instance().installEventFilter(self)
+        #
+        # NOT installed here at construction time (2026-09-22 fix) — the caller
+        # is built hidden and only shown much later (TagManagerWidget is
+        # constructed once at app startup, then immediately .hide()'d), so an
+        # eager install here left the filter walking every Qt event in the app
+        # from launch until the panel's first real open/close, with no
+        # showEvent/hideEvent pair having fired yet to catch it. The owner now
+        # calls install_filter() itself at every point it actually becomes
+        # visible — see TagManagerWidget's showEvent/_open_tag/_show_list.
         # Mouse tracking on the scrolled widget and the viewport, so pixels that
         # belong to the CONTAINER rather than to a row still produce a move.
         #
@@ -109,6 +116,34 @@ class ScrollHoverTracker(QObject):
         scroll.viewport().setMouseTracking(True)
 
     _TRACKED_EVENTS = None  # built lazily; QEvent import is deferred
+
+    def install_filter(self) -> None:
+        """Install the app-wide event filter this tracker needs to resync hover
+        from ANY mouse movement, not just movement over its own scroll area (see
+        the module docstring). Safe to call when already installed — Qt just
+        moves it to the front of the filter chain, it does not duplicate.
+
+        Callers whose own panel is hidden/shown repeatedly (the transport-bar
+        blur grab's hide/show cycle, ~5-15x/sec while a book plays — see
+        transport_bar_blur.py) should pair this with remove_filter() the same
+        way the panel already pairs its OWN installEventFilter/removeEventFilter
+        in showEvent/hideEvent — see TagManagerWidget's showEvent/hideEvent,
+        which now call this and remove_filter() on _row_hover/_thumb_hover
+        alongside its own filter. Before this pairing existed (found live
+        2026-09-22, profiling a live Book Detail open), both this class and
+        GridHoverTracker installed once in __init__ and NEVER removed — so they
+        stayed permanently live for the app's entire session, walking every Qt
+        event anywhere in the app, regardless of whether the Tags panel was
+        ever opened."""
+        from PySide6.QtWidgets import QApplication
+        QApplication.instance().installEventFilter(self)
+
+    def remove_filter(self) -> None:
+        """See install_filter(). Safe to call when not installed (or already
+        removed) — QObject.removeEventFilter on a filter that isn't there is a
+        documented no-op, not an error."""
+        from PySide6.QtWidgets import QApplication
+        QApplication.instance().removeEventFilter(self)
 
     def eventFilter(self, obj, event):
         from PySide6.QtCore import QEvent
@@ -314,10 +349,21 @@ class GridHoverTracker(QObject):
         self._on_hover_changed = on_hover_changed
         container.setMouseTracking(True)
         scroll.viewport().setMouseTracking(True)
+        # NOT installed here — see ScrollHoverTracker.__init__'s comment on why;
+        # the owner calls install_filter() itself at every real show.
+
+    _TRACKED_EVENTS = None
+
+    def install_filter(self) -> None:
+        """See ScrollHoverTracker.install_filter() — same shape, same reason,
+        same pairing contract with the caller's showEvent/hideEvent."""
         from PySide6.QtWidgets import QApplication
         QApplication.instance().installEventFilter(self)
 
-    _TRACKED_EVENTS = None
+    def remove_filter(self) -> None:
+        """See ScrollHoverTracker.remove_filter()."""
+        from PySide6.QtWidgets import QApplication
+        QApplication.instance().removeEventFilter(self)
 
     def eventFilter(self, obj, event):
         from PySide6.QtCore import QEvent
