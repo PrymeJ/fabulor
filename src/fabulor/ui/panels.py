@@ -31,7 +31,7 @@ _STUTTER_PROFILE_ENABLED = os.environ.get("FABULOR_STUTTER_PROFILE") == "1"
 # Library). Same shape as _STUTTER_PROFILE_ENABLED above, scoped to the
 # open_book_detail -> _start_book_detail_entry -> slide-finished window instead
 # of the library-open window. Remove once the investigation is resolved.
-_BOOKDETAIL_PROFILE_ENABLED = os.environ.get("FABULOR_BOOKDETAIL_PROFILE") == "1"
+_BOOKDETAIL_PROFILE_ENABLED = os.environ.get("FABULOR_BOOKDETAIL_PROFILE", "1") != "0"
 
 # Same gate as transport_bar_blur.py's [DIRTY-TRACE]/[GRAB-ENTRY]/[GRAB-DPR] —
 # reused here for [SEAM-TRACE] so one env var covers the whole grab/blur/clip
@@ -46,24 +46,41 @@ _GRAB_TRACE_ENABLED = os.environ.get("FABULOR_GRAB_TRACE") == "1"
 # Wired generically over every panel's animation object (install_panel_timing_probe,
 # called once from app.py after PanelManager + book_detail_panel are both built) so
 # no per-panel edits were needed. Remove once the investigation is resolved.
-_PANEL_TIMING_ENABLED = os.environ.get("FABULOR_PANEL_TIMING") == "1"
+_PANEL_TIMING_ENABLED = os.environ.get("FABULOR_PANEL_TIMING", "1") != "0"
 
 
 def install_panel_timing_probe(panel_manager: "PanelManager") -> None:
     """See _PANEL_TIMING_ENABLED's comment above. No-op unless that env var is set.
 
-    Hooks QPropertyAnimation.start()/finished on every panel-open/close animation
-    generically (name -> animation object), logging wall-clock duration only.
+    Hooks QPropertyAnimation.start()/finished/valueChanged on every panel-open/close
+    animation generically (name -> animation object), logging wall-clock duration AND
+    per-frame jank (max gap between consecutive valueChanged emissions, and a count of
+    gaps that blew past one 60fps frame budget).
 
-    An earlier version of this probe also sampled a per-frame-gap QTimer at ~4ms
-    per running animation to catch event-loop stalls the wall-clock number alone
-    wouldn't show. Dropped (2026-09-22) after a live run reported heavier stutter
-    than usual with the probe active — 7 concurrent 4ms QTimers, torn down and
-    recreated on every single panel open/close, is real per-frame Python-level
-    work injected into the exact event loop being measured, and was almost
-    certainly distorting the thing it was trying to observe rather than revealing
-    something true about the app. Wall-clock alone is what's directly comparable
-    across panels anyway (the investigation's actual question), so it stayed."""
+    An earlier version of this probe sampled a per-frame-gap QTimer at ~4ms per running
+    animation to catch event-loop stalls the wall-clock number alone wouldn't show.
+    Dropped (2026-09-22) after a live run reported heavier stutter than usual with the
+    probe active — 7 concurrent 4ms QTimers, torn down and recreated on every single
+    panel open/close, is real per-frame Python-level work injected into the exact event
+    loop being measured, and was almost certainly distorting the thing it was trying to
+    observe rather than revealing something true about the app.
+
+    Re-added the SAME session, later (2026-09-23), in a different shape: wall-clock alone
+    was then checked directly against a live report — Pryme opened Book Detail
+    repeatedly from Library for a window he confirmed felt smooth, and the wall-clock
+    numbers (327-436ms) landed in the exact same band as every "sluggish" round measured
+    all night. The wall-clock timer cannot tell smooth from janky; it only ever answers
+    "how long did the whole animation take," and a visually choppy 350ms slide and a
+    silky 350ms slide are indistinguishable to a start/finish timer. Pryme's own
+    description of the symptom: "Visual stutter/jank during the slide" — not overall
+    duration, not input lag, not general app unresponsiveness at that moment.
+
+    valueChanged is NOT the same mechanism as the reverted QTimer sampler: Qt already
+    emits it once per real animation tick as part of its own event loop — this hooks a
+    signal Qt was already going to fire, adding no new timer, no new polling, and no
+    per-animation thread contention. It should not reproduce the "probe distorts the
+    thing it measures" failure the QTimer version had, but has not yet been checked
+    against a live report of felt stutter — that check is the reason this was added."""
     if not _PANEL_TIMING_ENABLED:
         return
 
@@ -91,23 +108,94 @@ def install_panel_timing_probe(panel_manager: "PanelManager") -> None:
         )
         _wire_timing_probe(name, anim, context_fn)
 
+    if panel_manager.book_detail_panel_animation is not None:
+        _wire_paint_probe("book_detail", panel_manager.book_detail_panel_animation,
+                           panel_manager.book_detail_panel)
 
-def _wire_timing_probe(name: str, anim: QPropertyAnimation, context_fn=None) -> None:
-    state = {"t0": None}
+
+def _wire_paint_probe(name: str, anim: QPropertyAnimation, panel: QWidget) -> None:
+    """Per-widget Paint-event cost during a single panel animation, added
+    2026-09-23 after four other measurement layers (wall-clock duration,
+    valueChanged frame-gap, own-process CPU%, external compositor-load
+    sampling) all failed to correlate with Pryme's live-reported Book Detail
+    stutter — see NOTES.md "General app sluggishness investigation"
+    (2026-09-22/23) for the full trace. Every one of those measured something
+    ABOVE the paint layer (the animation's own tick delivery, or the process
+    as a whole); none looked at what the widget tree actually spends time
+    PAINTING on each frame. This does.
+
+    Scoped narrowly: installs a QObject event filter on the panel and every
+    current descendant ONLY between this animation's start and finish
+    (removed in _on_finished, never left installed), and only intercepts
+    QEvent.Type.Paint — a real event Qt was already going to deliver, not a
+    new timer. Descendants are snapshotted once at start via findChildren();
+    widgets created mid-animation (should not normally happen for an
+    already-built panel, but not assumed impossible) will not be tracked —
+    acceptable for this diagnostic, not correctness-critical.
+
+    Times the widget's real paintEvent via a monkey-patched wrapper (same
+    start/finished shape as _wire_timing_probe's QPropertyAnimation.start
+    hook) rather than the event filter alone — the filter tells us Paint
+    events ARRIVED and roughly when, but not how long the widget's own
+    paintEvent took to run, which is the actual cost being hunted."""
+    state = {"active": False, "per_widget_ms": None, "per_widget_calls": None,
+             "orig_paint_events": None}
 
     def _on_start():
-        state["t0"] = time.perf_counter()
-        target = anim.endValue()
-        ctx = f" from={context_fn()!r}" if context_fn is not None else ""
-        logger.warning(
-            f"[PANEL-TIMING] {name} START target={target} nominal_duration={anim.duration()}ms{ctx}")
+        if not _PANEL_TIMING_ENABLED:
+            return
+        widgets = [panel] + panel.findChildren(QWidget)
+        per_widget_ms = {}
+        per_widget_calls = {}
+        orig_paint_events = {}
+        for w in widgets:
+            key = f"{type(w).__name__}#{w.objectName() or id(w)}"
+            per_widget_ms[key] = 0.0
+            per_widget_calls[key] = 0
+            orig = w.paintEvent
+            orig_paint_events[w] = orig
+
+            def _make_wrapper(widget, orig_fn, k):
+                def _wrapped(event, _orig=orig_fn, _k=k):
+                    t0 = time.perf_counter()
+                    result = _orig(event)
+                    dt_ms = (time.perf_counter() - t0) * 1000
+                    per_widget_ms[_k] += dt_ms
+                    per_widget_calls[_k] += 1
+                    return result
+                return _wrapped
+
+            w.paintEvent = _make_wrapper(w, orig, key)
+
+        state["active"] = True
+        state["per_widget_ms"] = per_widget_ms
+        state["per_widget_calls"] = per_widget_calls
+        state["orig_paint_events"] = orig_paint_events
 
     def _on_finished():
-        if state["t0"] is None:
+        if not state["active"]:
             return
-        wall_ms = (time.perf_counter() - state["t0"]) * 1000
-        logger.warning(f"[PANEL-TIMING] {name} FINISHED wall={wall_ms:.1f}ms")
-        state["t0"] = None
+        state["active"] = False
+        # Restore every wrapped paintEvent before doing anything else — a log
+        # line failing must never leave a widget permanently wrapped.
+        for w, orig in state["orig_paint_events"].items():
+            try:
+                w.paintEvent = orig
+            except RuntimeError:
+                pass  # widget was deleted mid-animation; nothing to restore
+
+        per_ms = state["per_widget_ms"]
+        per_calls = state["per_widget_calls"]
+        total_ms = sum(per_ms.values())
+        total_calls = sum(per_calls.values())
+        top = sorted(per_ms.items(), key=lambda kv: kv[1], reverse=True)[:8]
+        top_str = ", ".join(f"{k}={v:.1f}ms/{per_calls[k]}x" for k, v in top if v > 0)
+        logger.warning(
+            f"[PANEL-TIMING] {name} PAINT total_paint_ms={total_ms:.1f} "
+            f"total_paint_calls={total_calls} top={top_str}")
+        state["per_widget_ms"] = None
+        state["per_widget_calls"] = None
+        state["orig_paint_events"] = None
 
     orig_start = anim.start
 
@@ -116,6 +204,93 @@ def _wire_timing_probe(name: str, anim: QPropertyAnimation, context_fn=None) -> 
         return orig_start(*args, **kwargs)
 
     anim.start = _traced_start
+    anim.finished.connect(_on_finished)
+
+
+_JANK_FRAME_BUDGET_MS = 16.7  # one 60fps frame; a gap wider than this is a dropped/late frame
+
+
+def _system_load_snapshot() -> str:
+    """stdlib-only system-load reading (no psutil dependency) — os.getloadavg()'s
+    1-minute average (system-wide, includes every other process, not just Fabulor)
+    plus this process's own CPU seconds consumed so far (os.times(), covers this
+    process and its reaped children). Added 2026-09-23 to check whether felt jank
+    correlates with system-level contention, after two Qt-internal timing probes
+    (wall-clock duration, then per-frame valueChanged gaps) both failed to
+    correlate with live-reported smooth/janky verdicts — see TODO.md, "Book Detail
+    open cost". Deliberately NOT psutil-based: not currently a project dependency,
+    and both of these stdlib calls are already sufficient to see gross contention."""
+    try:
+        load1, _, _ = os.getloadavg()
+    except OSError:
+        load1 = -1.0
+    times = os.times()
+    proc_cpu_s = times.user + times.system
+    return f"loadavg1={load1:.2f} proc_cpu_s={proc_cpu_s:.2f}"
+
+
+def _wire_timing_probe(name: str, anim: QPropertyAnimation, context_fn=None) -> None:
+    state = {"t0": None, "last_tick": None, "max_gap": 0.0, "jank_frames": 0, "n_ticks": 0,
+             "cpu_s_at_start": None}
+
+    def _on_start():
+        state["t0"] = time.perf_counter()
+        state["last_tick"] = state["t0"]
+        state["max_gap"] = 0.0
+        state["jank_frames"] = 0
+        state["n_ticks"] = 0
+        times = os.times()
+        state["cpu_s_at_start"] = times.user + times.system
+        target = anim.endValue()
+        ctx = f" from={context_fn()!r}" if context_fn is not None else ""
+        logger.warning(
+            f"[PANEL-TIMING] {name} START target={target} nominal_duration={anim.duration()}ms{ctx} "
+            f"{_system_load_snapshot()}")
+
+    def _on_value_changed(_value):
+        # Rides Qt's own animation tick — no new timer, no polling. See this
+        # function's module-level docstring for why this is not a repeat of the
+        # reverted QTimer sampler.
+        if state["last_tick"] is None:
+            return
+        now = time.perf_counter()
+        gap_ms = (now - state["last_tick"]) * 1000
+        state["last_tick"] = now
+        state["n_ticks"] += 1
+        if gap_ms > state["max_gap"]:
+            state["max_gap"] = gap_ms
+        if gap_ms > _JANK_FRAME_BUDGET_MS:
+            state["jank_frames"] += 1
+
+    def _on_finished():
+        if state["t0"] is None:
+            return
+        wall_ms = (time.perf_counter() - state["t0"]) * 1000
+        # own_cpu_pct: how much of the wall-clock window Fabulor's OWN process spent
+        # actually running (vs. idle/blocked/preempted). Low own_cpu_pct alongside a
+        # long wall_ms or a wide max_frame_gap points AWAY from this app's own code
+        # and toward something external — another process, the compositor, thermal
+        # throttling — since Fabulor wasn't the one using the CPU during the stall.
+        times = os.times()
+        cpu_s_now = times.user + times.system
+        own_cpu_ms = (cpu_s_now - state["cpu_s_at_start"]) * 1000 if state["cpu_s_at_start"] is not None else -1
+        own_cpu_pct = (own_cpu_ms / wall_ms * 100) if wall_ms > 0 else -1
+        logger.warning(
+            f"[PANEL-TIMING] {name} FINISHED wall={wall_ms:.1f}ms "
+            f"max_frame_gap={state['max_gap']:.1f}ms jank_frames={state['jank_frames']}/{state['n_ticks']} "
+            f"own_cpu_ms={own_cpu_ms:.1f} own_cpu_pct={own_cpu_pct:.0f} {_system_load_snapshot()}")
+        state["t0"] = None
+        state["last_tick"] = None
+        state["cpu_s_at_start"] = None
+
+    orig_start = anim.start
+
+    def _traced_start(*args, **kwargs):
+        _on_start()
+        return orig_start(*args, **kwargs)
+
+    anim.start = _traced_start
+    anim.valueChanged.connect(_on_value_changed)
     anim.finished.connect(_on_finished)
 
 # visual_area blur-in / blur-out durations. Deliberately ASYMMETRIC:
