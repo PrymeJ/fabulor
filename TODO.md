@@ -490,6 +490,19 @@ isolation.
   deferred; see TESTING.md's "Undo / right-click notch (paused embedded)" checklist
 
 ### Panel focus / keyboard navigation
+- [2026-09-22] General app slowness suspected tied to the keyboard-navigation event-filter stack
+  added over the prior two weeks (traveling focus marker, hover-pickup polling, GridHoverTracker,
+  the per-panel eventFilters this all layered on). A `cProfile` capture of a live Book Detail open
+  (see TODO_ARCHIVE.md's now-closed "Book Detail slide-in..." entry) showed 43-64% of the open
+  window's wall time spent walking the app-wide `eventFilter` chain (MainWindow + 2x HoverTracker +
+  StatsPanel + ScrollbarJumpFilter + BookDetailPanel, plus PySide's own per-call `QEvent.type()`/
+  enum/shiboken feature-import overhead) — not application logic, and not specific to Book Detail;
+  this cost is paid on every Qt event anywhere in the app. Pryme's own framing, not yet
+  investigated further: "It's the filters. The keys are implemented in the last 2 weeks." Worth a
+  dedicated session: is this simply the unavoidable cost of N stacked filters × event volume, or is
+  something (a poll timer, a hover-tracker re-check) firing far more often than it needs to?
+  `FABULOR_BOOKDETAIL_PROFILE=1`/`FABULOR_PANEL_TIMING=1` (`panels.py`) are both still in the tree,
+  off by default, ready to reuse for this.
 - [2026-07-31] ScrollHoverTracker.suspend() is the hook for mouse/keyboard highlight coexistence
   — worth confirming the shipped Stats/Tags hover-pickup mechanism (`_pickup_cursor_anchor`/
   `GridHoverTracker`, 2026-09-15) actually routes through `suspend()` as this entry predicted,
@@ -507,7 +520,6 @@ isolation.
 ### Misc UI polish
 - [2026-07-30] In-app help section — the home for all reference material, incl. search operators
 - [2026-07-03] Excluding the currently-playing book behaves differently for M4B vs VT — design decision
-- [2026-07-01] Book Detail slide-in feels less smooth from Library than from Stats — unconfirmed
 
 ### Cleanup / process
 - [2026-06-27] Excluded Books popup corner-radius mismatch

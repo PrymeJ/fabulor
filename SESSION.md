@@ -1,3 +1,89 @@
+## Session Summary — 2026-09-22 Session 2 — Two small confirmed fixes (a stale Undo anchor surviving a book switch/removal, a tag-completer double-add on Enter+arrow-selection), two small EQ-slider features (right-click reset, Shift+arrow jump-to-extreme), and a performance investigation that started from a single stale TODO item and ended somewhere much larger: a real bug in the theme stylesheet catch-up mechanism, a 10,000-row synthetic-data cleanup, and a systemic event-filter-overhead lead handed off for a future session.
+
+**Undo anchor surviving a book switch (`d07a559`) and book removal (`cdedb0e`).** Live report:
+"Scrub to make Undo appear, switch to another book, Undo is still there. Click on it, it takes the
+new book to the previous book's anchored percentage." `player._undo_pos` was never cleared at
+`_on_book_selected_from_library`, unlike the other per-book transients already cleared there
+(`_last_pause_timestamp` for smart rewind, sprint state) — fixed by dismissing the overlay and
+clearing the anchor at the same point, same pattern. The book-REMOVAL path had the identical gap
+(`_on_book_removed`, narrower — requires removal within the 8s-max undo duration window) — fixed
+the same way once flagged, "for the sake of correctness and thoroughness" per Pryme's own framing,
+not from a live report.
+
+**Tag-completer double-add (`779c6d5`).** Live report, screenshot-confirmed: type "ai: r", arrow
+onto "ai: roy dotrice" from the popup, press Enter — both the completed tag AND the raw typed
+prefix got added as two separate chips, and the input field was left non-empty. Root cause: `Qt`
+genuinely fires BOTH `QLineEdit.returnPressed` and `QCompleter.activated` for the same Enter
+keypress once a popup row is highlighted (confirmed directly via an ad hoc standalone script, not
+assumed — `returnPressed` fires first, and `popup().isVisible()` is already `False` by the time it
+runs, so visibility can't distinguish the two cases). `returnPressed` was wired straight to
+`_on_add_tag`; `activated` separately set the field's text and ALSO called `_on_add_tag` — two
+independent adds for one keypress. Fixed by routing `returnPressed` through a new
+`_on_tag_return_pressed`, which declines entirely whenever the completer's popup has a valid
+highlighted index (`currentIndex().isValid()`, not `isVisible()`) and lets `activated` own the add.
+
+**Two small EQ-slider requests, both live-verified.** Right-click resets a single EQ band (or L/R
+balance) to 0/centered — `ClickSlider.rightClicked` already fired unconditionally for every right
+click (used elsewhere for seek-to-position), these 5+1 sliders simply never connected it to
+anything (`19d2959`). Shift+Left/Right jumps a slider to an extreme, landing on the midpoint first
+if the current value is on the "wrong" side of it — `ClickSlider.jump_shift_left`/`_right`, wired
+into `_handle_settings_arrows` (`b7640ee`). Pryme's own spec, restated: "from anywhere falling to
+the right side of the middle, Shift+left first takes it to the mid-point, then all the way to the
+left" — confirmed via a live script against several starting positions before writing tests,
+including the exact two-press walk (positive → mid → min) Pryme described.
+
+**The performance investigation.** Started narrow — TODO.md's "Book Detail slide-in feels less
+smooth from Library than from Stats" (dated 2026-07-01, "unconfirmed") — and was resolved with real
+measurement rather than more reading or guessing, per this file's own standing practice.
+
+A new env-gated `[PANEL-TIMING]` probe (`FABULOR_PANEL_TIMING=1`, `panels.py`'s
+`install_panel_timing_probe`, wall-clock only after an early per-frame-gap `QTimer` sampler version
+was found to be adding its own real overhead and distorting the very thing it measured — caught
+because Pryme reported unusually heavy stutter during the FIRST timed round, which turned out to be
+the probe itself, not the app) logged real start/finish timestamps for every panel-open/close
+animation across four separate live rounds (~70+ Book Detail opens total, spanning a system reboot
+partway through). The ORIGINAL claim did not survive contact with the data: Library was never the
+slower caller in any round. The largest, cleanest round (post-fix) showed Library/Stats/Tags within
+5ms of each other — no real asymmetry between callers at all.
+
+A `cProfile` capture (`FABULOR_BOOKDETAIL_PROFILE=1`, same shape as the existing library-open
+profiler) of a live Book-Detail-open window found a genuine, unrelated bug instead:
+`ThemeManager.apply_pending_panel_sheet` — the catch-up that styles a hidden settings/speed/sleep/
+sprint panel on a theme change it missed while hidden — read its stash with a plain `dict.get(...)`
+and never removed the entry afterward, so the SAME stash entry got reapplied on every subsequent
+open of ANY panel for the rest of the session. ~0.30-0.37s of a ~0.76-0.93s Book Detail open was
+four redundant `setStyleSheet()` calls on panels nobody could see; the session log showed one real
+theme-apply followed by 6+ redundant re-applications over ~40s of ordinary use. Fixed with
+`dict.pop(objectName, None)` (`4f4beb6`) — confirmed live: the worst-case open dropped from a
+707.7ms outlier to 483.2ms, typical case tightening from a wide 325-530ms spread to a consistent
+340-395ms band.
+
+Separately — Pryme noticed the whole app felt generally less smooth than a month prior, correlating
+it with growth in tags/tagged-books/sessions rather than book count (book count "should be more or
+less the same"). `library.db`'s `books` table held 10,549 rows against only 338 actually visible.
+10,000 of the extra 10,212 matched a clear synthetic pattern (`/mnt/DriveD/Audiobooks fake/3000/
+Synthetic Author NNNN - Synthetic Book NNNNN`) — confirmed by Pryme as leftover data from a past
+library-scaling stress test (per CLAUDE.md's own "design and test against library sizes an order of
+magnitude beyond what's on hand" guidance), soft-deleted after that test location was removed but
+never purged. Purged directly after closing the app first (10,000 `books` rows + 10,000 matching
+`book_covers` rows, both confirmed zero tags/sessions/events first; `library.db` 10.1MB → 1.6MB
+after `VACUUM`) — a real, confirmed anomaly (this is what made `get_all_books()`/
+`get_all_book_paths()` full-table-scan ~10.5K rows instead of ~550 on every scan), though NOT
+confirmed as the cause of the general slowdown — Pryme's own read, near the end of the session:
+"It's the filters [keyboard-navigation event filters added in the last 2 weeks]. Not the cause, but
+purge first anyway."
+
+The profiler also surfaced something bigger than either fix: 43-64% of a Book Detail open's wall
+time is spent walking the app-wide `eventFilter` chain (MainWindow + 2x HoverTracker + StatsPanel +
+ScrollbarJumpFilter + BookDetailPanel, plus PySide's own per-call `QEvent.type()`/enum/shiboken
+feature-import overhead) — systemic, not Book-Detail-specific, paid on every Qt event anywhere in
+the app. Explicitly NOT investigated further this session — flagged in TODO.md, attributed by Pryme
+to the keyboard-navigation work shipped over the prior two weeks (traveling focus marker,
+hover-pickup polling), deferred to a dedicated future session rather than chased tonight.
+
+Both timing/profiling probes are kept in the tree (`ff74d50`), off by default, following this
+file's existing `_STUTTER_PROFILE_ENABLED` convention rather than being stripped after use.
+
 ## Session Summary — 2026-09-22 Session 1 — Eleventh fix in the EOF/book-switch investigation, plus a dedicated stress-testing pass across the whole family. Pryme asked, before closing the investigation out, whether there were tests that could probe race conditions and scenarios live testing couldn't reliably cover — the answer was yes, and it surfaced a genuine new bug the same evening: a rapid second book switch, landing before the first switch's library-close animation finished, could silently discard the outgoing book's deferred position-restore and let the very next save persist mpv's raw fresh-load transient (~0.0) as that book's new saved progress, permanently zeroing it. `0cd6ed9` (fix 10, carried over from the prior session's close), `97abfb4` (fix 11).
 
 **The request that started this session: "are there tests you could do to test the logic in different scenarios, different race conditions?"** Two layers were built. First, `tests/test_eof_race_fuzz.py` — 21 randomized-ordering tests driving the REAL `Player` class (not a fake) through adversarial interleavings of the operations available at that layer (load a book at/near its own EOF, load a book mid-book, feed a raw mpv time_pos sample, issue a real seek, complete naturally), asserting a set of invariants after EVERY single step rather than only at scenario boundaries — is_seeking/`_seek_target` never diverging, `_logical_pos` never silently regressing while `_eof` is True and no seek is in flight, `chapter_changed` never emitting while `_eof` is True. Deliberately used Python's stdlib `random` with a fixed seed rather than reaching for `hypothesis` (not installed in this venv, and adding a new dependency without asking wasn't the move mid-investigation). **The harness was validated by trying it against its own blind spots, not trusted on the strength of passing once**: it initially FAILED to catch a deliberately-reintroduced regression of fix 7 (the chapter-walk `_eof` guard) — traced to the fake mpv's `chapter_list` always being empty, which made the walk-and-emit block's own condition false regardless of the guard under test, silently hiding the entire failure mode. Fixed by giving the fake mpv real, non-trivial chapter data; re-confirmed the harness then correctly caught both fix 5 and fix 7 when each was disabled in turn, and passed clean against the real fixed code both before and after.

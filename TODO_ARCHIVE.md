@@ -5,6 +5,49 @@ list scannable. Kept, not deleted, per the project's normal practice of not thro
 that isn't fully duplicated in NOTES.md/SESSION.md/a commit message. Order is the same relative
 order these entries had in TODO.md before the split (2026-07-30).
 
+- **[2026-07-01, investigated 2026-09-22, CLOSED as not confirmed — original claim superseded by
+  real timing data] "Book Detail slide-in feels less smooth from Library than from Stats."**
+  Measured directly with a temporary env-gated `[PANEL-TIMING]` probe (`FABULOR_PANEL_TIMING=1`,
+  `panels.py`'s `install_panel_timing_probe`, kept in the tree off-by-default) logging real
+  wall-clock start/finish for every panel-open/close animation, across four separate live rounds
+  totaling 70+ Book Detail opens. The ORIGINAL claim did not hold up: Library was never the slower
+  caller in any round — if anything the opposite showed up in one round (Stats spiking to
+  400-700ms while Library/Tags stayed ~350-390ms), but the LARGEST, cleanest round (post-fix,
+  below) showed Library/Stats/Tags landing within 5ms of each other (387.5/387.0/392.0ms avg,
+  n=6-8 each) — no real, repeatable asymmetry between callers at all.
+  What the same investigation DID find and fix, a genuine bug unrelated to which panel opens Book
+  Detail: `ThemeManager.apply_pending_panel_sheet` (the catch-up that styles a hidden settings/
+  speed/sleep/sprint panel on a theme change it missed while hidden) read its stash with a plain
+  `dict.get(...)` and never removed the entry after applying it — so the SAME stash entry was
+  reapplied on every subsequent open of ANY panel for the rest of the session, not just the one
+  open that genuinely needed to catch up. A `cProfile` capture (`FABULOR_BOOKDETAIL_PROFILE=1`,
+  also kept in the tree) of a live Book Detail open showed ~0.30-0.37s of a ~0.76-0.93s open window
+  spent in four redundant `setStyleSheet()` calls on panels nobody could see; the session log
+  showed one real theme-apply followed by 6+ redundant re-applications over ~40s of ordinary panel
+  use. Fixed with `dict.pop(objectName, None)` instead of `dict.get(...)` (`4f4beb6`) — confirmed
+  live: the post-fix round's worst-case Book Detail open dropped from a 707.7ms outlier to a
+  483.2ms outlier, with the typical case tightening from a wide 325-530ms spread down to a
+  consistent 340-395ms band.
+  Separately, this same investigation (prompted by Pryme noticing the app felt generally less
+  smooth than a month prior, correlated with more tags/tagged-books/sessions rather than book
+  count) found `library.db`'s `books` table held 10,549 rows against only 338 actually visible —
+  10,000 of the extra 10,212 were confirmed, by path pattern (`/mnt/DriveD/Audiobooks fake/3000/
+  Synthetic Author NNNN - Synthetic Book NNNNN`), to be leftover synthetic stress-test data from a
+  past library-scaling test (per CLAUDE.md's own "test at 3000-5000+ books" guidance), soft-deleted
+  after that test location was removed but never purged. Purged directly (10,000 `books` rows +
+  10,000 matching `book_covers` rows, both confirmed to carry zero tags/sessions/events first;
+  `library.db` shrank from 10.1MB to 1.6MB after `VACUUM`) — real cause of `get_all_books()`/
+  `get_all_book_paths()` full-table-scanning ~10.5K rows instead of ~550 on every scan, though not
+  confirmed as the cause of the general slowdown Pryme described; flagged as a real, separate,
+  measurable anomaly worth having cleared regardless. Pryme's own framing, near the end of the
+  session: "It's the filters [keyboard-navigation event filters added in the last 2 weeks]. Not the
+  cause, but purge first anyway." The profiler also surfaced that 43-64% of a Book Detail open's
+  wall time is spent walking the app-wide `eventFilter` chain (MainWindow + 2x HoverTracker +
+  StatsPanel + ScrollbarJumpFilter + BookDetailPanel, plus PySide's own per-call overhead) — a
+  systemic, not-Book-Detail-specific cost Pryme attributed to the keyboard-navigation work shipped
+  over the prior two weeks (traveling focus marker, hover-pickup polling) rather than anything this
+  session touched; explicitly deferred to a future dedicated session, not investigated further here.
+
 - **[2026-07-14, re-tested 2026-09-17, CLOSED 2026-09-22] "VT progress restore silently resets on
   book-switch" — stale entry; the fix that closes it landed 2026-07-17 (`f601da0`), a full two
   months before this closure, and the entry was simply never cleaned up afterward.** Found while
