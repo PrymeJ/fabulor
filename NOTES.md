@@ -1,3 +1,161 @@
+## 2026-09-23 — Book Detail slide paint-suppression: real paint-cost win shipped as WIP, two live-found regressions fixed, one structural gap still open
+
+**Scope.** Direct follow-up to the sluggishness investigation below, which ended inconclusive on
+the app-wide symptom but found one concrete, measured, unconditional cost via a new paint-level
+probe (`_wire_paint_probe`, added that same investigation): during Book Detail's slide-in/out
+(~300ms, `QPropertyAnimation` on the panel's `pos`), Qt repaints every descendant widget on every
+position tick — individual `QLabel`s in the stats grid painted 25-195 times in one slide, far more
+than Library/Stats (a single delegate-painted `QListView`, not many individually-repainted
+children). This session implemented, then fixed twice more live, a mechanism to suppress that cost.
+**Status at end of session: WIP, committed as `c640885`, real progress, one structural gap still
+open** — not a finished fix.
+
+### The mechanism, final shape
+
+`PanelManager._wire_slide_paint_suppression` (`panels.py`): at `anim.start()`, grabs a `QPixmap` of
+the fully-populated real panel, shows it in a lightweight `QLabel` proxy raised above the (still
+visible, still moving) real panel, `setUpdatesEnabled(False)`s the real panel for the animation's
+duration, and follows the proxy's position to the real panel's via the animation's own
+`valueChanged` signal (no new timer, no polling — rides a signal Qt already fires). At `finished`,
+re-enables the real panel's updates and hides the proxy. The real panel's `isVisible()`/`.pos()` are
+never touched by this mechanism at any point — load-bearing, since `PanelManager.active_full_panel()`
+and `is_any_full_panel_visible()` both read `book_detail_panel.isVisible()` directly and are relied
+on app-wide for shortcut/overlay gating (see "First design attempt, and why it was rejected" below).
+
+### First design attempt, rejected before any code shipped
+
+The very first draft of this design hid the real panel during the slide and swapped to the proxy,
+matching a naive "double-buffer" intuition. An independent review (a second Claude instance,
+explicitly asked to critique the plan before implementation) caught the `active_full_panel()`/
+`is_any_full_panel_visible()` dependency described above — hiding the real panel for ~300ms would
+have made those report "Book Detail is not open" for the whole slide, a real, app-wide behavioral
+regression, not a hypothetical. The shipped design (keep the real panel visible/positioned
+throughout, suppress only its paint) was chosen specifically to avoid this — see the plan file
+(`~/.claude/plans/ticklish-greeting-harbor.md` at time of writing, since relocated/reused across
+sessions per this repo's own plan-file convention) for the full first-draft-vs-final comparison.
+
+### Regression 1 (live-reported, screenshots not needed): opaque-then-alpha-pop
+
+Shipped, then Pryme reported: the panel slides in opaque, then its translucent/blurred background
+"pops in" once settled — jarring, confirmed NOT present before this session's change, in BOTH
+Transparent and Frosty backdrop modes. Root cause, confirmed via code reading: Book Detail's
+`rgba(bg_main, panel_opacity_hover)` background (`WA_StyledBackground`, `get_stats_stylesheet`) is
+genuinely translucent — it blends against whatever's ALREADY in the window's backing store behind
+it at paint time. The OLD live-repainting slide blended naturally against the live underlay
+showing through; `QWidget.grab()` renders the panel in ISOLATION, so the grabbed pixmap's wash
+blends against nothing (flatly opaque) until the panel's own live paint (or the existing
+`frost_panel_backdrop`, Frosty-mode-only, settle-only) resumed.
+
+**First attempted fix — WRONG, reverted same session.** Grabbed the underlay directly (no
+hide/show needed — confirmed the real panel sits off-screen at this exact moment) and composited
+the wash onto it, for the OPEN direction only. Screenshots (Pryme sent several) showed this shipped
+a WORSE bug: the composited pixmap never had Book Detail's own real CONTENT (cover, title, stats,
+tags) painted into it — the proxy showed a tinted, EMPTY backdrop for the whole slide, real content
+only appearing once settled.
+
+**Pryme's correction, which is the actual fix:** the background was never supposed to slide at
+all — it should be STATIC, exactly matching `frost_panel_backdrop`'s own already-documented
+behavior ("STATIC while the panel is open, an accepted tradeoff"). The real fix has nothing to do
+with the proxy's pixmap: `self._apply_transport_bar_blur_full(self.book_detail_panel)` (the
+existing frost/wash mechanism) now ALSO fires at slide-START (`_start_book_detail_entry`, before
+`anim.start()`), not only from `_on_book_detail_slide_finished`. With that static backdrop layer
+established immediately, the proxy needs nothing but the panel's own real content — reverted back
+to a plain, unmodified `panel.grab()` for BOTH directions, identical to the very first
+(pre-any-correction) version. No open/close asymmetry survives in the shipped design.
+
+Considered explicitly and NOT done: reusing `_grab_and_blur`'s hide/show-coupled wrapper for an
+underlay grab at this new call site. That primitive (`transport_bar_blur.py:2153`) carries
+substantial, dated fixes for cursor-override/mouse-transparency/focus-strand side effects of hiding
+an ALREADY-OPEN, interactive panel — none of which were built or verified against this new,
+never-before-exercised moment (open-start, panel still off-screen). Reusing it without
+re-verifying every one of those assumptions would have been exactly the kind of unchecked reuse
+this codebase's own fragile-area history (see CLAUDE.md's whole "Critical Architecture Rules"
+section) warns against.
+
+### Regression 2 (live-reported, same session, immediately after fixing #1): still abrupt, "could be present from the start, overlaid by a second one at settle"
+
+Moving the frost call to open-start did NOT visibly fix the pop — Pryme still saw an abrupt
+change at settle. Pryme's own diagnostic instinct, offered directly rather than waiting for more
+instrumentation: "It could be that it is present in the beginning, overlays another one after the
+slide is done" — i.e. not "backdrop absent then appears" but "backdrop present-but-wrong, then a
+SECOND, different backdrop replaces it." This reframing was correct and led directly to the real
+bug, found via targeted `[FROST-DEBUG]` logging (geometry + pixmap-null state at both call sites,
+added specifically to get real data rather than a fourth guess):
+
+```
+OPEN-START call DONE: frost_geometry=QRect(-300, 24, 300, 508)   <- WRONG, off to the side
+SETTLE call DONE:     frost_geometry=QRect(0, 24, 300, 508)      <- correct
+```
+
+Root cause: `frost_panel_backdrop` (`transport_bar_blur.py`) computed the frost child's
+PANEL-LOCAL geometry via `panel.mapFrom(self.main_window, rect_in_main_window.topLeft())` — this
+derives the local offset from the panel's CURRENT on-screen position. Correct for every
+PRE-EXISTING call site (always fired at slide-finish, panel already at its rest position `x=0`).
+Wrong for the NEW open-start call: at that moment the panel sits at `x=panel_w` (off-screen,
+per `_start_book_detail_entry`'s own `.move(panel_w, ...)` before `.show()`), so `mapFrom` computed
+the local offset against that off-screen position — `main_window`-space `x=0` minus panel's own
+`x=300` landed the frost at panel-local `x=-300`, invisible (off to the side, clipped by the
+panel's own bounds) until the settle-time call recomputed it correctly against the panel's now-real
+`x=0` position. Two genuinely different frosts, the second replacing the first — exactly Pryme's
+own diagnosis, confirmed by the logged numbers, not just accepted on faith.
+
+**Fixed** by computing the local offset against Book Detail's KNOWN, FIXED rest position
+`(0, 32)` — a hardcoded duplicate of `_start_book_detail_entry`'s own `book_detail_panel_y`
+constant (panels.py doesn't currently expose it as a shared named constant either; noted as a
+minor follow-up, not urgent) — instead of the panel's live, possibly-off-screen geometry. Verified
+against the ALREADY-CORRECT settle-time numbers before shipping, not just plausible-looking math:
+`56 (frost rect's y) - 32 (rest y) = 24`, exactly matching the settle-time log's own
+`frost_geometry=QRect(0, 24, ...)` — confirms the formula reproduces the known-good result, not a
+coincidence.
+
+Re-tested live after this fix: `[FROST-DEBUG]` now shows OPEN-START and SETTLE producing IDENTICAL
+geometry (`QRect(0, 24, 270, 498)` for both), and Pryme confirmed: "Promising." — the abrupt
+backdrop pop is fixed.
+
+### Structural gap found immediately after, still OPEN (why this ships as WIP)
+
+Testing further, Pryme found a third, related but distinct symptom: the frost rect deliberately
+EXCLUDES a right-hand gutter (preserved live/sharp over the 90%-width Stats/Tags-underlay case,
+per `_book_detail_frost_rect`'s own extensive pre-existing comment — NOT something this session
+touched) and the area above the progress bar (`top=56`, `_BOOK_DETAIL_FROST_TOP_UNDER_PROGRESS`).
+Those regions were always meant to show LIVE underlay content through Book Detail's translucency,
+never frosted. But the proxy's single static `panel.grab()`, taken once at open-start, freezes
+those live regions too — same "pops in later" shape as regressions 1 and 2, just in territory the
+frost mechanism never claimed to cover in the first place. Pryme's own framing, confirming this is
+not a new bug from tonight's timing changes: "The issue is the same shape as before. Those sections
+show up later all of a sudden" — i.e. this always happened (a live-repainting panel kept those
+areas live throughout; a frozen-pixmap proxy structurally cannot), just newly visible/noticed once
+the OTHER two pops were fixed and stopped masking it.
+
+**Not yet investigated as of this commit.** The likely direction (not yet attempted): the proxy
+may need to be more than a single flat grab — e.g. excluding the gutter/progress-bar regions from
+what gets frozen, similar in spirit to how `_book_detail_frost_rect` already excludes them from
+what gets frosted, so those regions keep showing the live underlay through the proxy the same way
+they do once the real panel resumes painting. Exact mechanism not designed yet — do not assume the
+frost rect's own exclusion logic can be trivially reused, since the frost and the proxy are
+different widgets solving different problems (frost = the STATIC translucent backdrop; proxy =
+the panel's own MOVING content). Pryme's explicit instruction, verbatim: "Investigate a targeted
+fix... This is showing promise and could work" — continue from here, not revert.
+
+### New, unrelated observation, not yet investigated
+
+Pryme, same session: "Details open jankier over the dummy tag (84 books). A tag with a few books,
+clean." — Book Detail's open feels worse specifically when opened from/for a heavily-tagged
+context (~84 books) vs. a lightly-tagged one. Not yet connected to anything in this thread or the
+inconclusive sluggishness investigation below; flagged in TODO.md as a fresh lead for next session,
+not yet traced to a mechanism.
+
+### What's left in the tree
+
+`[FROST-DEBUG]` diagnostic logging (`panels.py`, both call sites of
+`_apply_transport_bar_blur_full`) is TEMPORARY, left in place deliberately for continued live
+verification next session — remove once the gutter/progress-bar gap is fixed and no longer needed.
+11 new tests (`tests/test_book_detail_slide_paint_suppression.py`), full suite green throughout
+every iteration of this fix. Commit: `c640885` ("wip: suppress Book Detail's per-frame repaint
+cost during its slide").
+
+---
+
 ## 2026-09-22/23 — General app sluggishness investigation: every code-level hypothesis tested and ruled out; intermittent, present as far back as bisected, cause NOT found
 
 **Scope.** Continuation of the same-session "general app slowness" thread from earlier (see the

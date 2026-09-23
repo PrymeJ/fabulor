@@ -72,6 +72,42 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
     the four failed measurement approaches expecting a different result without new information —
     see NOTES.md for exactly what each one showed.
 
+### Book Detail slide paint-suppression — WIP, real progress, one structural gap left before this is done
+- [2026-09-23, WIP, commit `c640885`] Direct follow-up to the sluggishness investigation above —
+  its own paint-level probe found Book Detail's slide repaints individual child widgets
+  25-195 times in one ~300ms slide (vs. Library/Stats, which paint through a single
+  delegate-painted `QListView`). `PanelManager._wire_slide_paint_suppression` (`panels.py`)
+  suppresses this via a static-pixmap proxy shown during the slide instead of the live,
+  repeatedly-repainted panel — full mechanism and design-attempt history in **NOTES.md,
+  "Book Detail slide paint-suppression"**.
+  - Two real regressions found and fixed LIVE during this work (opaque-then-alpha-pop; a
+    mis-computed frost geometry that put the backdrop off-screen until a second, later call
+    corrected it) — both root-caused via targeted diagnostic logging rather than guessing, per
+    Pryme's own live reports each time something looked wrong. See NOTES.md for both traces.
+  - **STILL OPEN, why this is WIP not done**: the frost rect deliberately excludes a right-hand
+    gutter and the area above the progress bar (existing, documented, pre-session design —
+    those regions are meant to keep showing LIVE underlay content through Book Detail's
+    translucency). The proxy's single static grab freezes those regions too, for the whole
+    slide — same "pops in later" shape as the two fixed regressions, just in territory the
+    frost mechanism never claimed to cover. Pryme's own framing: "The issue is the same shape
+    as before. Those sections show up later all of a sudden" — pre-existing behavior, newly
+    visible now that the other two pops are fixed and no longer mask it.
+  - **Next step, Pryme's own explicit instruction**: investigate a targeted fix — do not
+    consider reverting the whole mechanism; it's shown real, measured progress. Likely
+    direction (not yet designed): the proxy may need to exclude the gutter/progress-bar
+    regions from what it freezes, in a similar spirit to how `_book_detail_frost_rect` already
+    excludes them from what it frosts — but the frost and the proxy are different widgets
+    solving different problems (frost = static translucent backdrop; proxy = the panel's own
+    moving content), so this needs real design, not a copy-paste of the frost's exclusion
+    logic.
+  - `[FROST-DEBUG]` diagnostic logging (`panels.py`, both `_apply_transport_bar_blur_full` call
+    sites) is TEMPORARY, deliberately left in the tree for continued live verification next
+    session — remove once the gutter/progress-bar gap is fixed.
+  - Separate, unconnected observation from the same session, not yet investigated: "Details
+    open jankier over the dummy tag (84 books). A tag with a few books, clean." — Book Detail's
+    open feels worse specifically opened from/for a heavily-tagged (~84 books) context vs. a
+    lightly-tagged one. No mechanism traced yet.
+
 ### Book Detail panel's tab bar — not wired into the shared `_kbdnav_active_panel_key` mechanism
 - [2026-09-15, scope corrected 2026-09-17] Still true and unrelated to the (now implemented, see
   TODO_ARCHIVE.md) tag chip grid navigation: Book Detail's own tab bar was never wired into the
