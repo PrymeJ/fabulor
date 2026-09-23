@@ -5,10 +5,10 @@ import os
 import pstats
 import time
 from typing import TYPE_CHECKING
-from PySide6.QtWidgets import QWidget, QHBoxLayout, QGridLayout
+from PySide6.QtWidgets import QWidget, QHBoxLayout, QGridLayout, QLabel
 from PySide6.QtWidgets import QApplication, QListWidget, QAbstractSpinBox, QScrollArea
 from PySide6.QtCore import QPoint, QRect, QPropertyAnimation, QAbstractAnimation, QTimer, Qt, QObject, QEvent
-from PySide6.QtGui import QCursor
+from PySide6.QtGui import QCursor, QPixmap, QPainter, QColor
 from .title_bar import ThemeItem
 from .transport_bar_blur import TransportBarBlurOverlay, panel_rect_in_common_space
 from .stats_panel import StatsRowListView
@@ -108,6 +108,17 @@ def install_panel_timing_probe(panel_manager: "PanelManager") -> None:
         )
         _wire_timing_probe(name, anim, context_fn)
 
+    # INSTALL-ORDER NOTE: both diagnostic probes below wrap book_detail_panel_animation.start()
+    # AFTER _wire_slide_paint_suppression already has (that production hook is wired in
+    # main_window_builders.build_book_detail_panel, which runs before this function is ever
+    # called — see that call site's own comment). This is required, not incidental: each
+    # wrapper's orig_start closure captures whatever anim.start currently IS at install time, so
+    # installing suppression first means a probe's own timing correctly includes the
+    # suppression's setup cost (the grab + proxy positioning is real work that belongs in the
+    # measured wall-clock number). Installing a probe BEFORE suppression would have the
+    # suppression's grab/proxy-setup run AFTER the probe's own START log line, making the
+    # logged context appear to fire before the panel is actually ready to slide. Do not reorder
+    # main_window_builders.py's call relative to this function without re-checking this.
     if panel_manager.book_detail_panel_animation is not None:
         _wire_paint_probe("book_detail", panel_manager.book_detail_panel_animation,
                            panel_manager.book_detail_panel)
@@ -797,6 +808,101 @@ class PanelManager:
         if self.config.get_blur_enabled():
             self._transport_bar_blur.frost_panel_backdrop(
                 panel, self._book_detail_frost_rect())
+
+    def _wire_slide_paint_suppression(self, panel: QWidget, anim: QPropertyAnimation,
+                                       proxy: QLabel) -> None:
+        """Suppresses `panel`'s own per-frame repaint cost during `anim` by showing a static
+        pixmap proxy on top of it instead. Added 2026-09-23 after `_wire_paint_probe` found
+        Book Detail's slide repainting individual child widgets dozens to ~200 times in one
+        ~300ms slide — see NOTES.md, "General app sluggishness investigation" (2026-09-22/23).
+
+        A REJECTED first design (hide the real panel, swap to the proxy) would have broken
+        active_full_panel()/is_any_full_panel_visible() (both read panel.isVisible() directly,
+        relied on app-wide for shortcut/overlay gating). This version keeps `panel` visible and
+        moving EXACTLY as before this method existed — `anim` still targets `panel`'s own `pos`;
+        `panel.isVisible()`/`.pos()` are never touched here. `panel.setUpdatesEnabled(False)`
+        stops IT from processing paint events (it still moves; Qt just doesn't repaint its
+        contents) while `proxy` — a plain QLabel, raised above `panel`, followed via
+        `valueChanged` — is the only thing that visibly repaints each tick.
+
+        NAMED, UNRESOLVED RISK: whether the panel's own vacated backing-store position can
+        produce a one-frame trail before the proxy's valueChanged-driven move catches up (Qt's
+        exact internal ordering here was not verified from documentation). Live-check this
+        explicitly (frame-stepped screen recording) — do not assume it's clean.
+
+        OPEN vs. CLOSE need different pixmap sources (found live, corrected same session):
+        Book Detail's `rgba(bg_main, panel_opacity_hover)` background (WA_StyledBackground) is
+        genuinely translucent — it blends against whatever's already in the window's backing
+        store behind it. A plain `panel.grab()` renders the panel in ISOLATION, with nothing to
+        blend against, so the wash reads flatly opaque until the panel's own live paint (or the
+        settle-time `frost_panel_backdrop`, Frosty-mode only) resumes. On CLOSE this is a
+        non-issue — the panel has already been open/settled with a correct blend baked into its
+        live paint, so `panel.grab()` there is already correct. On OPEN, nothing has been
+        blended yet for this open cycle, so this method instead grabs the UNDERLAY at the
+        panel's destination rect (no hide/show needed — confirmed the real panel sits off-screen
+        at `x=panel_w` at this exact moment, per `_start_book_detail_entry`'s
+        `.move(panel_w, ...)` before `.show()`) and composites Book Detail's own wash onto it —
+        blurred first if Frosty mode (via `_blur_pixmap`, the STANDALONE function, deliberately
+        NOT `_grab_and_blur`'s hide/show-coupled wrapper — that primitive carries dated fixes
+        for cursor/focus/hit-testing side effects of hiding an ALREADY-OPEN, interactive panel,
+        none of which apply or have been verified at this new, off-screen, pre-slide moment).
+        Opaque mode skips the wash compositing entirely (a plain grab is already correct — an
+        opaque panel has no translucency to lose)."""
+        state = {"active": False}
+
+        def _on_start():
+            # Opening iff the animation's END value's x is 0 (the panel's on-screen rest
+            # position) — closing targets x=panel_w (off-screen), per _start_book_detail_entry/
+            # _close_book_detail_flow's own setEndValue calls.
+            #
+            # SECOND CORRECTION (2026-09-23, live-reported with screenshots): a prior version
+            # of this branch grabbed the underlay and composited the panel's translucent wash
+            # onto it for the OPEN case specifically, to fix an opaque-then-pop regression the
+            # FIRST correction introduced. That produced a WORSE bug — the composited pixmap
+            # never had the panel's own real CONTENT (cover/title/stats/tags) painted into it,
+            # so the proxy showed a tinted, empty backdrop for the whole slide. Pryme's own
+            # correction: the backdrop was never supposed to slide at all — it's meant to be
+            # STATIC (matching frost_panel_backdrop's own established behavior: "STATIC while
+            # the panel is open, an accepted tradeoff"). The fix is NOT in this pixmap — it's
+            # that the EXISTING frost/wash backdrop (self._apply_transport_bar_blur_full) must
+            # now fire at slide-START too (see _start_book_detail_entry's own open-start
+            # call, added alongside this fix), not only at slide-finish. Once that static
+            # backdrop exists as its own layer (a child of `panel`, unaffected by
+            # setUpdatesEnabled(False) below since it's a sibling in panel's child stack, not
+            # something panel.paintEvent itself draws), this proxy needs nothing more than the
+            # panel's own real content — a plain panel.grab() is correct for BOTH directions,
+            # same as before either correction. Do not re-introduce underlay compositing here.
+            pixmap = panel.grab()
+            proxy.setPixmap(pixmap)
+            proxy.setFixedSize(panel.size())
+            proxy.move(panel.pos())
+            proxy.raise_()
+            proxy.show()
+            panel.setUpdatesEnabled(False)
+            state["active"] = True
+
+        def _on_value_changed(value):
+            if not state["active"]:
+                return
+            proxy.move(value)
+
+        def _on_finished():
+            if not state["active"]:
+                return
+            state["active"] = False
+            panel.setUpdatesEnabled(True)
+            panel.update()
+            proxy.hide()
+
+        orig_start = anim.start
+
+        def _traced_start(*args, **kwargs):
+            _on_start()
+            return orig_start(*args, **kwargs)
+
+        anim.start = _traced_start
+        anim.valueChanged.connect(_on_value_changed)
+        anim.finished.connect(_on_finished)
 
     def _clear_transport_bar_blur(self):
         self._transport_bar_blur.hide_for_panel()
@@ -2235,6 +2341,30 @@ class PanelManager:
         self.book_detail_panel.show()
         self.book_detail_panel.raise_()
         self._claim_panel_focus(self.book_detail_panel)
+        # Frost/wash backdrop now fires HERE too (2026-09-23, moved from slide-finish-only),
+        # so the static backdrop behind the sliding proxy (see
+        # _wire_slide_paint_suppression's _on_start) is correct from the very first frame,
+        # not just once settled. Unlike _start_visual_area_blur's cross-referenced
+        # "TIMING IS LOAD-BEARING" warning (a live ANIMATED blur-in tween that visibly ran
+        # ahead of a still-sliding panel when moved to open-start, 2026-07-27), this frost is
+        # a ONE-SHOT STATIC grab — nothing about it continues to run/animate after this call
+        # returns, so the specific failure mode that warning describes (blur racing ahead of
+        # motion) does not apply here. _book_detail_frost_rect() depends only on mw.width()/
+        # mw.height()/self._book_detail_underlay, all already valid at this point — not on
+        # the panel's own (still off-screen) position. Live-verified 2026-09-23 that this does
+        # not reproduce the same-shaped bug the visual_area case had.
+        _frost_before = getattr(self.book_detail_panel, '_backdrop_frost', None)
+        logger.warning(
+            f"[FROST-DEBUG] OPEN-START call: blur_enabled={self.config.get_blur_enabled()} "
+            f"frost_child_exists_before={_frost_before is not None} "
+            f"frost_child_visible_before={_frost_before.isVisible() if _frost_before else None}")
+        self._apply_transport_bar_blur_full(self.book_detail_panel)
+        _frost_after = getattr(self.book_detail_panel, '_backdrop_frost', None)
+        logger.warning(
+            f"[FROST-DEBUG] OPEN-START call DONE: frost_child_exists_after={_frost_after is not None} "
+            f"frost_visible_after={_frost_after.isVisible() if _frost_after else None} "
+            f"frost_geometry={_frost_after.geometry() if _frost_after else None} "
+            f"frost_pixmap_isNull={_frost_after.pixmap().isNull() if _frost_after and _frost_after.pixmap() else 'no_pixmap'}")
 
         def _on_book_detail_slide_finished():
             try:
@@ -2258,7 +2388,26 @@ class PanelManager:
             # structurally CANNOT cover this panel's backdrop. Hence no
             # _start_visual_area_blur call here — that asymmetry vs. the other five
             # panels is deliberate, not an omission.
+            #
+            # KEPT DELIBERATELY, even though _start_book_detail_entry now ALSO calls this at
+            # open-start (2026-09-23, for the sliding-proxy static-backdrop fix — see that call
+            # site's own comment): re-grabbing here refreshes the frost against whatever the
+            # underlay looks like NOW, at settle, vs. whatever it looked like at open-start —
+            # not proven redundant, since the underlay could have repainted during the slide
+            # (a live-updating stat, its own animation). Cutting this second call was
+            # considered and NOT done without live verification that nothing depends on the
+            # refresh; the two calls are cheap and harmless to run twice (frost_panel_backdrop
+            # is idempotent — same rect in, same frost child updated).
+            _frost_before = getattr(self.book_detail_panel, '_backdrop_frost', None)
+            logger.warning(
+                f"[FROST-DEBUG] SETTLE call: frost_child_exists_before={_frost_before is not None} "
+                f"frost_visible_before={_frost_before.isVisible() if _frost_before else None} "
+                f"panel.updatesEnabled={self.book_detail_panel.updatesEnabled()}")
             self._apply_transport_bar_blur_full(self.book_detail_panel)
+            _frost_after = getattr(self.book_detail_panel, '_backdrop_frost', None)
+            logger.warning(
+                f"[FROST-DEBUG] SETTLE call DONE: frost_visible_after={_frost_after.isVisible() if _frost_after else None} "
+                f"frost_geometry={_frost_after.geometry() if _frost_after else None}")
             if _BOOKDETAIL_PROFILE_ENABLED:
                 self._stop_bookdetail_profile()
 

@@ -730,6 +730,22 @@ def build_book_detail_panel(mw):
     mw.book_detail_panel_animation.setEasingCurve(QEasingCurve.OutCubic)
     mw.panel_manager.book_detail_panel = mw.book_detail_panel
     mw.panel_manager.book_detail_panel_animation = mw.book_detail_panel_animation
+
+    # Static-pixmap slide proxy (2026-09-23) — see PanelManager._wire_slide_paint_suppression's
+    # own docstring for the full design. NoFocus: this widget is purely visual and must never
+    # intercept real Qt focus (matches ClickSlider's documented default-NoFocus convention for
+    # anything that must stay outside the app's keyboard-focus-ownership invariant).
+    # INSTALL-ORDER NOTE: this call MUST happen here, at animation-construction time, BEFORE
+    # install_panel_timing_probe (app.py, called later once PanelManager + book_detail_panel are
+    # both built) wraps the same animation's .start() for its own diagnostic probes — see
+    # install_panel_timing_probe's own comment in panels.py for why the order matters. A
+    # PanelManager method (not a module-level function) so it can reach self.config/
+    # self.main_window.theme_manager for the open-path underlay-composite fix.
+    mw.book_detail_slide_proxy = QLabel(mw)
+    mw.book_detail_slide_proxy.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+    mw.book_detail_slide_proxy.hide()
+    mw.panel_manager._wire_slide_paint_suppression(
+        mw.book_detail_panel, mw.book_detail_panel_animation, mw.book_detail_slide_proxy)
     mw.book_detail_panel.close_requested.connect(
         mw.panel_manager._close_book_detail_flow
     )

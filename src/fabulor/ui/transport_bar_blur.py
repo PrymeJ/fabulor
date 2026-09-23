@@ -1081,7 +1081,34 @@ class TransportBarBlurOverlay:
         frost.setPixmap(blurred)
         # Panel-LOCAL geometry: the frost is a child of the panel, so it is
         # positioned relative to the panel's own top-left, not the window's.
-        panel_top_left = panel.mapFrom(self.main_window, rect_in_main_window.topLeft())
+        #
+        # DO NOT use panel.mapFrom(main_window, ...) here (found live 2026-09-23, via
+        # [FROST-DEBUG] geometry logging — the frost rendered at panel-local x=-300 instead
+        # of 0, invisible until a later call corrected it, reading as an abrupt pop). mapFrom
+        # derives the offset from the panel's CURRENT on-screen position — correct for every
+        # pre-existing call site (always fired at slide-FINISH, once the panel has already
+        # reached its rest position), but wrong for the NEW open-start call
+        # (_start_book_detail_entry, added the same session for the sliding-proxy static-
+        # backdrop fix): at that moment the panel is still off-screen (x=panel_w, not its
+        # rest x=0), so mapFrom computed the offset against the WRONG position and the frost
+        # landed off to the side. Book Detail's rest position is always
+        # main-window-space (0, book_detail_panel_y=32) — hardcoded here, matching
+        # _start_book_detail_entry's own hardcoded book_detail_panel_y — so the LOCAL offset
+        # is computed directly against that fixed rest position instead of the panel's
+        # current (possibly off-screen) one. This makes the frost correct regardless of
+        # whether the panel has actually arrived yet.
+        # Book Detail's rest position is always main-window-space (0, 32) — 32 is
+        # _start_book_detail_entry's own hardcoded book_detail_panel_y (position under the
+        # title bar), duplicated here since panels.py doesn't currently expose it as a named
+        # constant either. Verified against real logged geometry before shipping: settle-time
+        # frost_geom read (0, 24, 300, 508) for a frost rect of (0, 56, 300, 508) — 56 - 32 =
+        # 24, confirming this formula reproduces the pre-existing, already-correct settle-time
+        # result exactly, not just a plausible-looking guess.
+        _BOOK_DETAIL_REST_X = 0
+        _BOOK_DETAIL_REST_Y = 32
+        panel_top_left = QPoint(
+            rect_in_main_window.x() - _BOOK_DETAIL_REST_X,
+            rect_in_main_window.y() - _BOOK_DETAIL_REST_Y)
         frost.setGeometry(QRect(panel_top_left, rect_in_main_window.size()))
         # Bottom of the child stack: under all real content, over the (now
         # redundant, still-painted) wash it already includes.
