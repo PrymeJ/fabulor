@@ -947,7 +947,7 @@ THEMES = {
         "carousel_bg":                   "#56275A",
         "carousel_stripe":               "#D06A8A",
     },
-    "Dorian Grey": {
+    "Dorian Gray": {
         "bg_deep":                       "#222222",
         "bg_main":                       "#333333",
         "bg_sidebar":                    "#222222",
