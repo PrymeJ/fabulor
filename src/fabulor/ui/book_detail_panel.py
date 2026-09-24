@@ -2764,9 +2764,25 @@ class _RecentHistoryWidget(QWidget):
                     bar.set_colors(accent, bg)
 
     def set_data(self, sessions: list, duration: float):
+        # hide() called SYNCHRONOUSLY, deleteLater() kept for actual destruction — found live
+        # 2026-09-24, via PanelManager._wire_slide_paint_suppression's panel.grab() call in
+        # _start_book_detail_entry: deleteLater() only SCHEDULES destruction for the next
+        # event-loop tick, so a widget removed from the layout here (takeAt) is un-parented
+        # from LAYOUT but still alive and still PAINTABLE at the exact moment load_book()
+        # returns and the slide's synchronous grab fires — right after _refresh_stats() calls
+        # this method. Reported by Pryme as the previous book's recent-history rows visibly
+        # overlapping the new book's on open, and a bold double-paint flash when reopening
+        # the SAME book (both symptoms of two generations of row widgets briefly coexisting
+        # in the grabbed pixmap). hide() is immediate and synchronous — it stops the widget
+        # from painting right now, without touching WHEN it actually gets destroyed, so this
+        # doesn't need the "is it safe to delete this synchronously" analysis a full
+        # deleteLater()-removal would (this app has no call site that reaches set_data() from
+        # a signal originating from one of these row widgets, but hide() sidesteps that
+        # question entirely rather than relying on it).
         while self._layout.count() > 1:
             item = self._layout.takeAt(0)
             if item.widget():
+                item.widget().hide()
                 item.widget().deleteLater()
 
         for s in sessions:
