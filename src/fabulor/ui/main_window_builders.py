@@ -743,6 +743,18 @@ def build_book_detail_panel(mw):
     # self.main_window.theme_manager for the open-path underlay-composite fix.
     mw.book_detail_slide_proxy = QLabel(mw)
     mw.book_detail_slide_proxy.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+    # Mouse-transparent (added 2026-09-24, hover-leak fix): the proxy previously sat opaque
+    # and hit-testable on top of the real panel for the whole slide. Any per-tick gap between
+    # its valueChanged-driven position and the real panel's actual position (the same
+    # unverified-from-documentation risk already flagged in _wire_slide_paint_suppression's
+    # docstring) let the cursor briefly hit-test THROUGH to whatever real widget sat underneath
+    # — e.g. a Stats tab button — producing a genuine Enter/hover there mid-slide, live-reported
+    # as a tab "lighting up briefly" on Book Detail close. WA_TransparentForMouseEvents makes
+    # the proxy invisible to hit-testing entirely, so any such gap now falls through to
+    # whatever is ACTUALLY behind it (main_window's own background, since the real panel
+    # itself still fully covers the window during the slide) rather than to a stale-but-real
+    # widget mid-transition.
+    mw.book_detail_slide_proxy.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
     mw.book_detail_slide_proxy.hide()
     mw.panel_manager._wire_slide_paint_suppression(
         mw.book_detail_panel, mw.book_detail_panel_animation, mw.book_detail_slide_proxy)

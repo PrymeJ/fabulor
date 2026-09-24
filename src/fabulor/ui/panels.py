@@ -801,20 +801,23 @@ class PanelManager:
         shared overlay (Z-order: that overlay is a child of content_container and
         can never rise above a panel parented to main_window).
 
-        Gate CHANGED 2026-09-24 (was `get_blur_enabled()` alone, matching
-        `_apply_transport_bar_blur`'s single-flag convention — that convention was correct for
-        the LIVE transport-bar overlay, which has no reason to run when there's nothing to
-        blur, but wrong here once this method also handles Transparent mode's unblurred
-        wash-compositing). Now runs for BOTH Frosty (`get_blur_enabled()`) and Transparent
-        modes — only Opaque skips it entirely, since an opaque panel has no translucent wash
-        to composite a backdrop for in the first place. `frost_panel_backdrop`'s own `blur`
-        parameter (True for Frosty, False for Transparent) controls whether the grabbed
-        pixmap gets the Gaussian blur pass — see that method's docstring for why Transparent
-        needs this call at all: it previously had NO backdrop compositing, relying entirely
-        on the real panel's own live paint, which the paint-suppression proxy cannot
-        replicate with a single static grab."""
+        Gate CHANGED 2026-09-24, SECOND TIME (was `get_blur_enabled()` alone; briefly widened
+        same-session to run for Frosty+Transparent, excluding only Opaque — see git history on
+        this branch for that version's own reasoning). REVERTED to Frosty-only per the A/B plan
+        settled with Pryme: Transparent mode's brief excursion onto this grab mechanism
+        introduced two confirmed regressions — a moving backdrop (this compositing bakes a
+        STATIC frost, which reads as visibly wrong once Transparent's whole design premise is a
+        backdrop that tracks the live window, not a frozen snapshot) and it did not reduce, by
+        any measurement Pryme trusted, the felt jank the paint-suppression proxy was meant to
+        fix. Transparent goes back to relying entirely on the panel's own live paint — i.e. no
+        static backdrop compositing at all — which is honest to what "Transparent" has always
+        meant in this app. Opaque now ALSO runs this (newly added, cleaner A/B benchmark per
+        Pryme: "Opaque definitely could use grab rather than native paint. Nothing to lose there"
+        — an opaque panel has no translucent wash, so this call degrades to a plain unblurred
+        grab of the underlay, harmless and skippable in effect but kept symmetric with Frosty's
+        code path rather than special-cased out)."""
         backdrop = self.config.get_panel_backdrop()
-        if backdrop == "opaque":
+        if backdrop == "transparent":
             return
         self._transport_bar_blur.frost_panel_backdrop(
             panel, self._book_detail_frost_rect(), blur=(backdrop == "frosty"))
@@ -838,18 +841,20 @@ class PanelManager:
         (Pryme's own call: "it doesn't even need to be fast... 10 second refresh is more than
         plenty").
 
-        GATE WIDENED 2026-09-24 (was `get_blur_enabled()` alone — Frosty only). Transparent
-        mode has the IDENTICAL problem: no per-frame live compositing while the paint-
-        suppression proxy is active, so its progress-bar strip and gutter would go just as
-        stale without periodic re-compositing, even with no blur step involved. Only Opaque
-        mode has nothing to refresh (an opaque panel has no translucent backdrop at all) — same
-        three-way split `_apply_transport_bar_blur_full` now uses.
+        GATE CHANGED 2026-09-24, SECOND TIME (was `get_blur_enabled()` alone, briefly widened
+        same-session to exclude only Opaque — see git history on this branch). REVERTED to
+        excluding TRANSPARENT instead, matching `_apply_transport_bar_blur_full`'s own reverted
+        gate — see that method's docstring for the full A/B-plan reasoning. Transparent mode
+        relies entirely on the panel's own live paint again, so there is no static frost for
+        this timer to keep fresh. Opaque now runs it (harmless — see
+        `_apply_transport_bar_blur_full`'s reasoning for why an opaque panel tolerates a frost
+        child it never shows).
 
         Called from `_start_book_detail_entry`, once, at open-start — paired with
         `_disarm_book_detail_frost_refresh` in both close paths
         (`_close_book_detail_flow`/`_on_book_detail_hidden`), so the timer is NEVER left
         running once Book Detail is closed."""
-        if self.config.get_panel_backdrop() == "opaque":
+        if self.config.get_panel_backdrop() == "transparent":
             return
         self._book_detail_frost_refresh_timer.start(self._BOOK_DETAIL_FROST_REFRESH_MS)
 
