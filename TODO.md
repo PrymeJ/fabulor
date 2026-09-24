@@ -72,37 +72,38 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
     the four failed measurement approaches expecting a different result without new information —
     see NOTES.md for exactly what each one showed.
 
-### Book Detail slide paint-suppression — mostly landed, two small follow-ups left
-- [2026-09-23/24, commits `c640885`, `991d71c`] Direct follow-up to the sluggishness
-  investigation above — its own paint-level probe found Book Detail's slide repaints
-  individual child widgets 25-195 times in one ~300ms slide (vs. Library/Stats, which paint
-  through a single delegate-painted `QListView`). `PanelManager._wire_slide_paint_suppression`
-  (`panels.py`) suppresses this via a static-pixmap proxy shown during the slide instead of the
-  live, repeatedly-repainted panel — full mechanism and design-attempt history in **NOTES.md,
-  "Book Detail slide paint-suppression"**.
-  - Four real regressions found and fixed LIVE across this work, each root-caused via targeted
-    diagnostic logging or direct screenshot comparison rather than guessing: an opaque-then-
-    alpha-pop (fixed by firing the static frost backdrop at slide-start, not just slide-finish);
-    a mis-computed frost geometry that put the backdrop off-screen until a later call corrected
-    it; the previous book's recent-history rows visibly overlapping the new book's on open (a
-    `deleteLater()`-vs-synchronous-repaint race, fixed by `hide()`ing stale rows immediately);
-    and the frost's right-hand-gutter exclusion reading as a late pop once the frost started
-    firing at open-start (fixed by removing that exclusion — Pryme's own call, since the
-    exclusion's original point was moot once the frost fires early regardless). See NOTES.md
-    for all four traces in full.
-  - **RESOLVED, not a gap**: the progress-bar-area exclusion from the static frost is
-    UNCHANGED and deliberately so — Pryme confirmed a brief (~300ms, slide-duration-only)
-    freeze there via the proxy is acceptable ("It wouldn't even visibly progress for minutes in
-    most cases"), and the alternative (blurring it in the STATIC frost too) was explicitly
-    rejected — that would freeze it for the panel's whole OPEN duration, making the fill
-    visibly jump on close if playback continued. No further work needed here.
-  - **Genuinely still open**: `[FROST-DEBUG]` diagnostic logging (`panels.py`, both
-    `_apply_transport_bar_blur_full` call sites) is TEMPORARY — remove now that the geometry
-    bug it was added to diagnose is confirmed fixed and no longer needs live re-verification.
-  - Separate, unconnected observation from earlier in this work, still not investigated:
-    "Details open jankier over the dummy tag (84 books). A tag with a few books, clean." —
-    Book Detail's open feels worse specifically opened from/for a heavily-tagged (~84 books)
-    context vs. a lightly-tagged one. No mechanism traced yet.
+### Book Detail slide paint-suppression — mechanism landed on its own branch; the real A/B answer is "source, not mode"
+- [2026-09-23/24, commits `c640885`, `991d71c`] `PanelManager._wire_slide_paint_suppression`
+  (`panels.py`) suppresses Book Detail's per-frame slide repaint cost via a static-pixmap proxy —
+  full mechanism, four live-found regressions and their fixes in **NOTES.md, "Book Detail slide
+  paint-suppression"**. `[FROST-DEBUG]` diagnostic logging was TEMPORARY and has since been
+  removed (see the same session's later commits). The progress-bar-area exclusion decision
+  (RESOLVED, not a gap) is unchanged.
+- [2026-09-24/25] **The follow-up A/B test is done — see NOTES.md, "Book Detail backdrop-mode A/B
+  test."** A real harness (`tools/book_detail_backdrop_ab_test.py`) drove the real app via real
+  simulated input across 3 backdrop modes × 3 open-sources, 540 total clean cycles across a
+  heavy-load and a cold-idle pass. **Conclusion: backdrop mode barely moves wall-clock time.**
+  What DOES move it, consistently, in every mode and under every load condition tested, is which
+  panel Book Detail opens FROM: **Stats-sourced opens run ~50-150ms slower than Library- or
+  Tags-sourced opens** — this is the exact original report that started the whole investigation
+  ("Book details panel opens slower in Stats"), now independently confirmed with real numbers by
+  a test built to answer a different question. The earlier "jankier over the 84-book dummy tag"
+  observation (below) is superseded by this — it was never really about tag SIZE, it tracks
+  which PANEL Book Detail opened from.
+  - A small cProfile-enabled diagnostic pass (27 opens, `FABULOR_BOOKDETAIL_PROFILE=1`) found
+    Frosty/Opaque and Transparent are slow over Stats for two DIFFERENT reasons, not a
+    contradiction (a real correction happened mid-investigation — see NOTES.md for the full
+    trace): Frosty/Opaque pay extra `_grab_and_blur` cost compositing through Stats' own
+    already-active `visual_area` blur (a documented, existing architectural cost — see
+    `_book_detail_frost_rect`'s own docstring); Transparent pays real, unsuppressed live-paint
+    cost from Stats' own heavier widget tree. Both point at the same root: **Stats' own panel
+    architecture costs more to render than Library's or Tags' does**, independent of backdrop
+    mode.
+  - **Next step, not yet started**: identify exactly WHAT inside Stats' own widget tree accounts
+    for this (StatsRowDelegate's own `paint()`? the tab widget itself? the specific tab Book
+    Detail opens onto?) — Pryme's own explicit call was to write the A/B finding up first, before
+    digging further into this. Old "84-book dummy tag" wording below is kept for history but its
+    framing (tag size) is superseded by the above (panel source).
 
 ### Book Detail panel's tab bar — not wired into the shared `_kbdnav_active_panel_key` mechanism
 - [2026-09-15, scope corrected 2026-09-17] Still true and unrelated to the (now implemented, see

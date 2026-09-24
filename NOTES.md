@@ -1,3 +1,138 @@
+## 2026-09-24/25 — Book Detail backdrop-mode A/B test: real harness built, three harness bugs found and fixed, real conclusion is "source, not mode"
+
+**Scope.** Direct follow-up to the paint-suppression work below. Pryme's own framing going in:
+"Transparent mode has no jank suppression at all, so if paint suppression genuinely helps felt
+smoothness, Transparent should read worse than Frosty/Opaque in a real A/B." Built a real harness
+(`tools/book_detail_backdrop_ab_test.py`) that drives the REAL running app via real simulated Qt
+input (not direct method calls — Pryme's explicit design call, so the click-to-open path is also
+exercised, not just the panel-open cost) across a 3 backdrop-mode × 3 open-source (Library/Stats/
+Tags) matrix, jumbling cell order each pass, reading the existing `[PANEL-TIMING]`/
+`[PANEL-PAINT]`/`[BOOKDETAIL-PROFILE]` instrumentation already shipped for exactly this purpose
+(see the entry below). Two full statistical passes (heavy-load and cold-idle, 270 cycles/~90
+minutes real wall-clock each) plus one small cProfile-enabled diagnostic pass (27 opens) were
+run and are the load-bearing data this entry summarizes.
+
+### Three real bugs found IN THE HARNESS, each initially misread as an app bug — full trail matters for reuse
+
+This is the harness's own debugging history, kept in detail because each failure mode is a real,
+reusable lesson for any future "drive the real app + read its real log" harness on this codebase,
+not just noise to skip past:
+
+1. **Missing `setup_logging()` call.** The harness imported `MainWindow` directly, skipping
+   `main.py`'s own startup sequence — the `fabulor` root logger therefore had no handler at all,
+   so every `[PANEL-TIMING]` line was silently discarded even though every open genuinely
+   succeeded (confirmed via `book_detail_panel.isVisible()`). Read as "every single click
+   mysteriously fails" before being traced to this. Fixed by calling `setup_logging()` explicitly,
+   matching `main.py`'s exact sequence (before `QApplication`, before `MainWindow`).
+2. **`QApplication.sendEvent` unreliability for two of the three sources' click paths.** Library's
+   real interaction is `Qt.CustomContextMenu`'s own press→`customContextMenuRequested` internal
+   translation; Stats' `StatsRowListView.mousePressEvent` is a plain Python override but sits
+   behind `QAbstractScrollArea`'s viewport-forwarding layer; both confirmed empirically (a live
+   isolation probe) to NOT reliably reach their real handler via a raw synthetic
+   `QMouseEvent(Press)`/`(Release)` posted through `sendEvent` — `sendEvent` returns `True`
+   ("accepted") while nothing downstream actually fires. Tags' `_TagBookThumb.mousePressEvent` (a
+   plain `QWidget`, no scroll-area layer) worked reliably via `sendEvent` for ~87 real opens before
+   ALSO failing intermittently under sustained load (see bug 3). Fixed for all three sources the
+   same pragmatic way: call the real Python-level handler directly
+   (`customContextMenuRequested.emit(pos)` for Library, `view.mousePressEvent(press)` for Stats,
+   `thumb.mousePressEvent(press)` for Tags) — still exercises the real handler and everything
+   genuinely under test downstream of it (`open_book_detail`, the real animation, the real paint);
+   only Qt's own internal event-to-signal/viewport-forwarding step is skipped, which was never
+   part of what this harness measures.
+3. **A stale `LogTailer` file handle across log rotation — the deepest and most consequential of
+   the three, and the one that read most convincingly as a REAL APP bug before being traced.**
+   `fabulor`'s `RotatingFileHandler` (`logger_setup.py`) rotates at 2MB; a full 270-cycle run's own
+   `[PANEL-TIMING]`/debug volume genuinely crosses that threshold mid-run. The harness's
+   `LogTailer` opened `fabulor.log` ONCE at script start and read via `readlines()` on that same
+   handle forever — after a rotation renames the file to `fabulor.log.1` and opens a fresh
+   `fabulor.log`, the stale handle keeps reading from the OLD (now-orphaned) inode, which never
+   receives another write, so `readlines()` silently returns nothing FOREVER from that point.
+   Confirmed directly: `fabulor.log.1` was exactly 2097089 bytes (≈2MB) at almost precisely the
+   timestamp every subsequent open in that run started reading as a timeout — and the real log,
+   read independently, showed the real app continuing to open/close Book Detail correctly the
+   whole time, across every source and mode, with no interruption at all. **This is worth keeping
+   as a general lesson**: a data source that goes silent under sustained load reads exactly like
+   the thing under test breaking down, and the failure pattern (works fine at first, then every
+   single subsequent measurement fails, uniformly, regardless of which variable is being varied)
+   is the tell that the OBSERVER broke, not the observed system — a real instance of this file's
+   own "never substitute a plausible explanation for a checked one" rule, caught by checking file
+   sizes and cross-referencing the real log rather than accepting "the app degraded under load" as
+   the answer. Fixed by making `LogTailer` rotation-aware: `os.stat(path).st_ino` checked on every
+   `read_new_lines()` call, transparently reopening from byte 0 of the new file on a detected
+   inode change.
+
+A fourth, smaller robustness gap in the harness's OWN retry logic (not a data-correctness bug, but
+a real amplifier of bug 2/3's symptoms before they were root-caused) is worth recording too: the
+per-open `try/except` originally `continue`d on a failed open WITHOUT ever attempting a recovery
+close, so one genuinely stuck open left Book Detail's real state unreconciled going into the next
+attempt — once this happened, every subsequent cell for the REST OF THE ENTIRE RUN also failed
+(167 consecutive timeouts observed in one affected run), a cascade that made an isolated,
+already-fixed bug look unfixed. Fixed with an unconditional best-effort recovery close in a
+`finally`-shaped block regardless of how the open resolved, plus a 3-consecutive-failure
+per-cell abort (skip the rest of that one cell, keep going) rather than letting one stuck state
+silently consume the whole remaining run.
+
+### The final, trustworthy dataset (540 real cycles: 270 heavy-load + 270 cold-idle, zero errors either pass)
+
+Backdrop mode moves wall-clock only modestly, and mostly for Stats specifically (Frosty/Opaque
+somewhat faster than Transparent there: ~370-464ms vs ~417-464ms depending on load condition —
+Library and Tags show almost no mode-driven difference at all, 317-367ms across every mode in
+both passes). System load itself (heavy Chatterbox/Vivaldi/VS Code activity vs. genuinely idle,
+post-cooldown) moved wall-clock LESS than run-to-run noise — several cells were actually a few ms
+SLOWER idle than under heavy load, ruling out "it's slow because of contention with other
+processes" as an explanation for anything measured tonight.
+
+**The one variable that moved the number consistently, in every mode, under every load
+condition**: which panel Book Detail opened FROM. Stats-sourced opens ran ~368-464ms; Library- and
+Tags-sourced opens ran ~317-367ms — a real, repeatable ~50-150ms gap, present regardless of
+backdrop mode or system load. Pryme's own framing, once this was reported: **this is the original
+report that started the whole investigation** — "Book details panel opens slower in Stats" — now
+independently rediscovered and confirmed with hard numbers by a test built to answer a completely
+different question.
+
+### The cProfile pass — Frosty and Transparent are slow over Stats for TWO DIFFERENT reasons, not a contradiction
+
+A small (27-open) `FABULOR_BOOKDETAIL_PROFILE=1` pass was run specifically to find WHAT costs more
+for Stats-sourced opens, not just confirm THAT it does. A real correction happened mid-investigation
+worth keeping on record: a first Stats-sourced cProfile dump was pulled and showed
+`_apply_transport_bar_blur_full`/`frost_panel_backdrop`/`_grab_and_blur` costing ~0.16s (vs. ~0.065s
+for a Library-sourced sample) — but this sample was WRONGLY assumed to be representative of Stats
+generally. Pryme caught the real problem directly: "this goes against the test run numbers, no? It
+found that backdrop mode didn't affect the sluggishness" — if the grab/blur cost were the dominant
+Stats cost and it's skipped entirely for Transparent mode (per the A/B-plan fix earlier this
+session), Transparent/Stats should have been the FASTEST of the three modes, not the slowest, per
+the statistical dataset above. Checking which CELL that dump actually belonged to (by cross-
+referencing the Stats-panel-open timestamp against the run's own printed cell order) showed it was
+genuinely from the **Frosty**/Stats cell, not Transparent — the two modes were never in conflict; two
+different real dumps, from two different cells, both slow, for two different mechanistic reasons:
+
+- **Frosty (and, by the same mechanism, Opaque) over Stats**: `_grab_and_blur`'s `main_window.grab()`
+  has to composite through Stats' own ALREADY-ACTIVE `visual_area` blur effect (`ClippedBlurEffect`,
+  left running underneath per `_book_detail_frost_rect`'s own documented design — Stats/Tags are
+  90%-width panels whose live blur stays up while Book Detail is open, unlike Library which is
+  opaque and has no such effect at all). This is a real, structural, ALREADY-DOCUMENTED architectural
+  cost (`_book_detail_frost_rect`'s own docstring), not a bug — it's just genuinely more expensive to
+  grab-and-recomposite a live-blurred region than an opaque one.
+- **Transparent over Stats**: no grab/blur step runs at all (correctly skipped, confirmed absent
+  from this cell's own dump) — the cost here is real, unsuppressed LIVE PAINT of Stats' own widget
+  tree during the slide (matches the statistical pass's 27-36ms/460-790-call paint numbers exactly):
+  `QLabel.paintEvent` (314 calls), `StatsPanel`'s own row-delegate `paint()` (24 calls, 0.031s in
+  this sample), `layout().activate()` (0.037s) all appear as real, load-bearing costs that simply
+  don't exist in a Library-sourced open's dump.
+
+**Both point at the same root, by two different paths**: Stats' own widget tree and panel
+architecture cost more to render/composite than Library's or Tags' does, REGARDLESS of which
+backdrop-mode mechanism is asked to deal with it — a static grab pays for it once as extra
+compositing-through-blur cost; a live, unsuppressed paint pays for it every frame as real widget
+paint cost. Neither mode "solves" Stats' underlying cost; they just move where it's paid.
+
+**Not yet investigated**: exactly WHAT inside Stats' own widget tree specifically (StatsRowDelegate?
+the tab widget itself? the History/Stats tab switch?) accounts for the render-cost gap versus
+Library/Tags — Pryme's own explicit call was to write this finding up FIRST, before digging
+further. See TODO.md for the next-session pointer.
+
+---
+
 ## 2026-09-23/24 — Book Detail slide paint-suppression: real paint-cost win, four live-found regressions fixed, mechanism now complete
 
 **Scope.** Direct follow-up to the sluggishness investigation below, which ended inconclusive on
