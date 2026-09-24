@@ -2350,18 +2350,7 @@ class PanelManager:
         # mw.height()/self._book_detail_underlay, all already valid at this point — not on
         # the panel's own (still off-screen) position. Live-verified 2026-09-23 that this does
         # not reproduce the same-shaped bug the visual_area case had.
-        _frost_before = getattr(self.book_detail_panel, '_backdrop_frost', None)
-        logger.warning(
-            f"[FROST-DEBUG] OPEN-START call: blur_enabled={self.config.get_blur_enabled()} "
-            f"frost_child_exists_before={_frost_before is not None} "
-            f"frost_child_visible_before={_frost_before.isVisible() if _frost_before else None}")
         self._apply_transport_bar_blur_full(self.book_detail_panel)
-        _frost_after = getattr(self.book_detail_panel, '_backdrop_frost', None)
-        logger.warning(
-            f"[FROST-DEBUG] OPEN-START call DONE: frost_child_exists_after={_frost_after is not None} "
-            f"frost_visible_after={_frost_after.isVisible() if _frost_after else None} "
-            f"frost_geometry={_frost_after.geometry() if _frost_after else None} "
-            f"frost_pixmap_isNull={_frost_after.pixmap().isNull() if _frost_after and _frost_after.pixmap() else 'no_pixmap'}")
 
         def _on_book_detail_slide_finished():
             try:
@@ -2395,16 +2384,7 @@ class PanelManager:
             # considered and NOT done without live verification that nothing depends on the
             # refresh; the two calls are cheap and harmless to run twice (frost_panel_backdrop
             # is idempotent — same rect in, same frost child updated).
-            _frost_before = getattr(self.book_detail_panel, '_backdrop_frost', None)
-            logger.warning(
-                f"[FROST-DEBUG] SETTLE call: frost_child_exists_before={_frost_before is not None} "
-                f"frost_visible_before={_frost_before.isVisible() if _frost_before else None} "
-                f"panel.updatesEnabled={self.book_detail_panel.updatesEnabled()}")
             self._apply_transport_bar_blur_full(self.book_detail_panel)
-            _frost_after = getattr(self.book_detail_panel, '_backdrop_frost', None)
-            logger.warning(
-                f"[FROST-DEBUG] SETTLE call DONE: frost_visible_after={_frost_after.isVisible() if _frost_after else None} "
-                f"frost_geometry={_frost_after.geometry() if _frost_after else None}")
             if _BOOKDETAIL_PROFILE_ENABLED:
                 self._stop_bookdetail_profile()
 
