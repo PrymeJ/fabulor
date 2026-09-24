@@ -914,10 +914,27 @@ class PanelManager:
         for cursor/focus/hit-testing side effects of hiding an ALREADY-OPEN, interactive panel,
         none of which apply or have been verified at this new, off-screen, pre-slide moment).
         Opaque mode skips the wash compositing entirely (a plain grab is already correct — an
-        opaque panel has no translucency to lose)."""
+        opaque panel has no translucency to lose).
+
+        THIRD CORRECTION (2026-09-24, live-reported): Transparent mode is the deliberate control
+        group for the A/B this whole mechanism exists to run (see _apply_transport_bar_blur_full's
+        own docstring) — it must NOT get a static backdrop at all, blurred or not, or it stops
+        being a clean "does paint suppression help" control and starts testing something else.
+        But `panel.grab()`'s isolation problem (documented above: a translucent wash has nothing
+        to blend against in an isolated grab) doesn't go away just because Transparent has no
+        static backdrop layer to fix it with — the proxy would read flatly opaque for the whole
+        slide, then visibly pop transparent once live paint resumed at finish. Rather than solve
+        that with more compositing (which is exactly the static-backdrop machinery Transparent is
+        supposed to be free of), this method now skips the whole proxy/suppression mechanism for
+        Transparent mode: `panel` keeps live-painting through the slide, unmodified, exactly as it
+        did before this feature existed. This is what makes Transparent a genuine control — its
+        child-repaint cost is real and unsuppressed, which is the whole point of comparing it
+        against Frosty/Opaque."""
         state = {"active": False}
 
         def _on_start():
+            if self.config.get_panel_backdrop() == "transparent":
+                return
             # Opening iff the animation's END value's x is 0 (the panel's on-screen rest
             # position) — closing targets x=panel_w (off-screen), per _start_book_detail_entry/
             # _close_book_detail_flow's own setEndValue calls.
@@ -939,6 +956,7 @@ class PanelManager:
             # something panel.paintEvent itself draws), this proxy needs nothing more than the
             # panel's own real content — a plain panel.grab() is correct for BOTH directions,
             # same as before either correction. Do not re-introduce underlay compositing here.
+            # (Transparent mode never reaches this point — see THIRD CORRECTION above.)
             pixmap = panel.grab()
             proxy.setPixmap(pixmap)
             proxy.setFixedSize(panel.size())
@@ -2502,6 +2520,31 @@ class PanelManager:
         except (TypeError, RuntimeError):
             pass
         self.book_detail_panel.hide()
+        # Tab-bar hover-bleed fix (2026-09-24, live-reported: "a Stats tab lights up in blue on
+        # Book Detail close"). Book Detail, while open, fully covers Stats' tab bar (raised
+        # above it, same parent as everything else on main_window) WITHOUT the tab bar ever
+        # receiving a genuine Leave — it was never actually left, just occluded by something on
+        # top. Qt's native QTabBar hover tracking (WA_Hover, State_MouseOver) is driven purely by
+        # real HoverEnter/HoverMove/HoverLeave events reaching the bar (see
+        # MainWindow._resync_tab_bar_hover's own docstring, the exact same mechanism, first
+        # found for the keyboard-suppression case 2026-09-10/15) — so whichever tab the mouse
+        # happened to rest over BEFORE Book Detail opened stays stuck State_MouseOver=True the
+        # entire time it's covered, and native :hover just resumes painting that stale answer
+        # the instant the tab bar is hit-testable again here, with no NEW genuine Enter required
+        # at all. This is why the mouse-transparency fix on the sliding proxy (same session,
+        # separate bug) could not touch this — it's not about hit-testing during the slide, it's
+        # a Leave that was never sent when Book Detail first covered the bar. One corrective
+        # QHoverEvent(HoverMove) at the cursor's real current position (the same call
+        # `_resync_tab_bar_hover` already makes for its own, differently-caused case) tells Qt's
+        # tracking the truth: hovering nothing, if the mouse isn't over a tab, or the tab it's
+        # genuinely over, if it is — either way, never a stale leftover. Library has no tab bar
+        # (see _resume_blur_after_book_detail's own note: "Library is deliberately absent... it
+        # is full-width... never had either blur"), so this only ever needs to run for Stats;
+        # calling it when Stats isn't the underlay would resync a bar that was never wrong, which
+        # is harmless but pointless, hence the isVisible() guard below.
+        stats_panel = getattr(self.main_window, 'stats_panel', None)
+        if stats_panel is not None and stats_panel.isVisible():
+            self.main_window._resync_tab_bar_hover(stats_panel.tabs.tabBar())
         self._release_panel_focus(self.book_detail_panel)
         # Hand focus back to whatever specifically held it when Book Detail opened —
         # 2026-09-09, closing the gap this comment used to flag as known/deferred (see

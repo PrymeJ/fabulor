@@ -44,16 +44,26 @@ def qapp():
     return QApplication.instance() or QApplication([])
 
 
+class _FakeConfig:
+    def __init__(self, backdrop="frosty"):
+        self._backdrop = backdrop
+
+    def get_panel_backdrop(self):
+        return self._backdrop
+
+
 class _FakePanelManagerHost:
-    """Stands in for `self` inside PanelManager._wire_slide_paint_suppression — the shipped
-    method reads nothing off self (no config/theme_manager needed after the final correction
-    reverted to plain panel.grab() for both directions), so this fake is intentionally empty;
-    kept as a named class (rather than passing `None`) so a future re-addition of state to the
-    method surfaces here as a clear AttributeError rather than a silent None-related failure."""
-    pass
+    """Stands in for `self` inside PanelManager._wire_slide_paint_suppression. As of the THIRD
+    correction (2026-09-24), the method reads `self.config.get_panel_backdrop()` once, at
+    anim.start(), to decide whether to engage the proxy/suppression mechanism at all — Transparent
+    mode must skip it entirely (see that method's own docstring). Defaults to "frosty" so every
+    pre-existing test in this file (written against the mechanism being active) keeps its
+    original meaning unless a test explicitly asks for "transparent"."""
+    def __init__(self, backdrop="frosty"):
+        self.config = _FakeConfig(backdrop)
 
 
-def _make_panel_and_proxy(qapp):
+def _make_panel_and_proxy(qapp, backdrop="frosty"):
     host = QWidget()
     host.setFixedSize(400, 400)
     host.show()
@@ -73,7 +83,7 @@ def _make_panel_and_proxy(qapp):
     anim.setDuration(300)
     anim.setEasingCurve(QEasingCurve.OutCubic)
 
-    fake_pm = _FakePanelManagerHost()
+    fake_pm = _FakePanelManagerHost(backdrop=backdrop)
     PanelManager._wire_slide_paint_suppression(fake_pm, panel, anim, proxy)
     return host, panel, proxy, anim
 
@@ -164,6 +174,36 @@ def test_on_finished_restores_updates_and_hides_proxy(qapp):
         assert panel.updatesEnabled() is True, (
             "panel's own updates must be re-enabled once the slide settles")
         assert proxy.isVisible() is False
+    finally:
+        host.deleteLater()
+
+
+@pytest.mark.parametrize("direction", ["open", "close"])
+def test_transparent_mode_skips_the_mechanism_entirely(qapp, direction):
+    """THIRD CORRECTION (2026-09-24): Transparent mode is the deliberate control group for the
+    A/B this whole mechanism exists to run — it must get NEITHER the proxy/suppression NOR any
+    static backdrop, so its child-repaint cost stays real and comparable to pre-feature
+    behavior. Live-reported regression this pins: Transparent's translucent wash flatly popped
+    opaque during the slide (panel.grab()'s isolation problem) then visibly turned transparent
+    at settle, once the proxy mechanism was engaged for it."""
+    host, panel, proxy, anim = _make_panel_and_proxy(qapp, backdrop="transparent")
+    try:
+        if direction == "open":
+            _open(anim)
+        else:
+            panel.move(QPoint(0, 32))
+            _close(anim)
+        anim.start()
+        try:
+            assert panel.updatesEnabled() is True, (
+                "panel must keep live-painting through the slide in Transparent mode")
+            assert proxy.isVisible() is False, (
+                "the proxy must never show at all in Transparent mode")
+            anim.setCurrentTime(150)
+            assert panel.updatesEnabled() is True, "still live-painting mid-slide"
+            assert proxy.isVisible() is False
+        finally:
+            anim.stop()
     finally:
         host.deleteLater()
 
