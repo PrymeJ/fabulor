@@ -1775,6 +1775,30 @@ class TagManagerWidget(QWidget):
             self._action_btn.setIconSize(QSize(16, 16))
 
     def eventFilter(self, obj, event):
+        # OCCLUSION GUARD (2026-09-24, live-reported regression trace). This is a
+        # QApplication-wide filter, installed in showEvent and never removed on the
+        # synthetic hide/show blips TransportBarBlurOverlay's grab cycle fires on
+        # TagManagerWidget (see showEvent's own docstring) — so it stays fully live for as
+        # long as self.isVisible() reports True, which it still does even while Book Detail
+        # is open ON TOP of Tags (Book Detail raises above Tags; it never hides it). Every
+        # branch below that dispatches a KeyPress therefore kept intercepting keys meant for
+        # the now-topmost Book Detail panel, including _handle_tag_detail_keys' own Tab
+        # branch, which calls self._book_grid.setFocus(...) unconditionally — silently
+        # yanking real Qt focus off Book Detail and back onto this grid mid-session.
+        # Live-reported 2026-09-24: "arrow the thumbnail grid, Alt+Enter to open Book
+        # Detail — focus is not in Book Detail, still in the grid" (confirmed pre-existing
+        # on main, not a paint-suppression-branch regression — traced via a focusChanged
+        # tracer to `_TagBookGrid -> BookDetailPanel -> ... -> _TagBookGrid`, this exact
+        # Tab branch as the culprit). Fixed the same shape BookDetailPanel.eventFilter
+        # already uses for QApplication.activeModalWidget() (see that method's own
+        # OCCLUSION/modal comment): check whether something is genuinely on top FIRST, and
+        # decline to handle (return False) if so, rather than trusting isVisible() alone to
+        # mean "I am the thing the user is looking at." book_detail_panel is reached via
+        # self.window() (main_window) rather than a stored reference, since TagManagerWidget
+        # takes no such reference in its constructor.
+        book_detail_panel = getattr(self.window(), 'book_detail_panel', None)
+        if book_detail_panel is not None and book_detail_panel.isVisible():
+            return False
         if obj is self._action_btn:
             if event.type() == QEvent.Type.Enter:
                 self._on_action_btn_hover(True)
