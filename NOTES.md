@@ -1,4 +1,4 @@
-## 2026-09-23 — Book Detail slide paint-suppression: real paint-cost win shipped as WIP, two live-found regressions fixed, one structural gap still open
+## 2026-09-23/24 — Book Detail slide paint-suppression: real paint-cost win, four live-found regressions fixed, mechanism now complete
 
 **Scope.** Direct follow-up to the sluggishness investigation below, which ended inconclusive on
 the app-wide symptom but found one concrete, measured, unconditional cost via a new paint-level
@@ -6,9 +6,11 @@ probe (`_wire_paint_probe`, added that same investigation): during Book Detail's
 (~300ms, `QPropertyAnimation` on the panel's `pos`), Qt repaints every descendant widget on every
 position tick — individual `QLabel`s in the stats grid painted 25-195 times in one slide, far more
 than Library/Stats (a single delegate-painted `QListView`, not many individually-repainted
-children). This session implemented, then fixed twice more live, a mechanism to suppress that cost.
-**Status at end of session: WIP, committed as `c640885`, real progress, one structural gap still
-open** — not a finished fix.
+children). Across two sessions, four real regressions were found and fixed live (each one
+root-caused via targeted diagnostic logging or direct live comparison, never guessed) before the
+mechanism was confirmed working end-to-end. **Status: mechanism complete, commits `c640885`,
+`991d71c`, `8a6b064`** — see the "Resolution" section below for the final two fixes and current
+state.
 
 ### The mechanism, final shape
 
@@ -145,14 +147,51 @@ context (~84 books) vs. a lightly-tagged one. Not yet connected to anything in t
 inconclusive sluggishness investigation below; flagged in TODO.md as a fresh lead for next session,
 not yet traced to a mechanism.
 
+### Resolution (2026-09-24, same thread continued)
+
+Two more real regressions were found and fixed live, closing out the structural gap this entry
+originally left open:
+
+- **Recent-history row overlap.** Pryme reported the previous book's recent-history rows visibly
+  overlapping the new book's on open, and a bold double-paint flash when reopening the SAME book.
+  Root cause: `_RecentHistoryWidget.set_data` (`book_detail_panel.py`) removed stale rows via
+  `deleteLater()` only — which SCHEDULES destruction for the next event-loop tick, so a widget
+  taken out of the layout was still alive and paintable at the exact moment the slide's
+  synchronous `panel.grab()` fired, right after `load_book()` populated the new book's rows. Fixed
+  by `hide()`ing stale rows immediately/synchronously, alongside (not instead of) the existing
+  `deleteLater()` — `hide()` stops painting right now without changing when actual destruction
+  happens. Commit `991d71c`.
+- **Gutter exclusion reading as a late pop.** The remaining "same shape of bug" symptom Pryme
+  flagged (progress-bar/gutter areas "show up later all of a sudden") traced to
+  `_book_detail_frost_rect`'s pre-existing, deliberate gutter exclusion (2026-08-14, kept a
+  90%-width underlay's own right-hand gutter live/unblurred) — previously masked by the frost only
+  ever appearing at slide-finish; moving it to open-start (this thread's own earlier fix) made the
+  gutter's un-frosted state visible for the WHOLE slide instead of a brief flash. Pryme's own
+  resolution, after weighing the tradeoff directly: blur the gutter immediately like everywhere
+  else (it doesn't animate, so nothing is lost by including it in the static frost) — but
+  EXPLICITLY do NOT extend the same treatment to the progress-bar area, since that region
+  genuinely animates during playback and freezing it in the STATIC (whole-open-duration) frost
+  would make its fill visibly jump on close. The progress-bar exclusion was already narrower than
+  the gutter's (only the proxy freezes it, for the ~300ms slide — the static frost never covered
+  it), and Pryme confirmed that narrower, brief freeze is acceptable as-is ("It wouldn't even
+  visibly progress for minutes in most cases"). `_book_detail_frost_rect` now returns full window
+  width in both underlay branches; the `top`/progress-bar exclusion is untouched. Commit `991d71c`.
+
+Both confirmed fixed live by Pryme before committing. `[FROST-DEBUG]` diagnostic logging removed
+(`8a6b064`) — the geometry bug it was added to diagnose is confirmed fixed and no longer needs
+live re-verification.
+
+**Status: this thread's paint-suppression work is now functionally complete.** The one remaining
+open item is unrelated to the mechanism itself — Pryme's observation that "Details open jankier
+over the dummy tag (84 books). A tag with a few books, clean" (see the section above) has not been
+investigated at all yet; that's a fresh lead for a future session, not a continuation of this fix.
+
 ### What's left in the tree
 
-`[FROST-DEBUG]` diagnostic logging (`panels.py`, both call sites of
-`_apply_transport_bar_blur_full`) is TEMPORARY, left in place deliberately for continued live
-verification next session — remove once the gutter/progress-bar gap is fixed and no longer needed.
 11 new tests (`tests/test_book_detail_slide_paint_suppression.py`), full suite green throughout
-every iteration of this fix. Commit: `c640885` ("wip: suppress Book Detail's per-frame repaint
-cost during its slide").
+every iteration of this fix across two days. Commits: `c640885` (the mechanism + first two live
+fixes), `991d71c` (recent-history overlap + gutter exclusion), `8a6b064` (diagnostic-logging
+cleanup).
 
 ---
 
