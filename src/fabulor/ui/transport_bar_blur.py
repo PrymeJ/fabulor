@@ -979,9 +979,17 @@ class TransportBarBlurOverlay:
             f"total_ms={(t_blit_done - t_entry) * 1000:.2f}"
         )
 
-    def frost_panel_backdrop(self, panel, rect_in_main_window: QRect, blur: bool = True):
+    def frost_panel_backdrop(self, panel, rect_in_main_window: QRect, blur: bool = True,
+                              extra_mouse_blocked_widgets=None):
         """Frost the backdrop of a panel that covers the whole content area, by
         giving THAT PANEL its own blurred-pixmap child. For Book Detail.
+
+        `extra_mouse_blocked_widgets` (added 2026-09-24, hover-bleed fix): widgets from the
+        UNDERLYING panel (e.g. Stats' own tab bar) that must get the same
+        WA_TransparentForMouseEvents protection `_grab_and_blur` already gives its own
+        `_all_tracked_widgets()` during `panel.hide()`. See `_grab_and_blur`'s own docstring for
+        why this is needed — this parameter just widens WHICH widgets get it, threaded through
+        untouched.
 
         `blur=False` (added 2026-09-24, for Book Detail's Transparent backdrop mode): grabs
         the same underlay region and composites the same translucent wash, but skips the
@@ -1060,7 +1068,9 @@ class TransportBarBlurOverlay:
         # below. Passed explicitly (not the default self._active_panel) — the
         # panel THIS call must hide is not the panel driving the transport-bar
         # overlay.
-        blurred = self._grab_and_blur(rect_common, panel, blur=blur)
+        blurred = self._grab_and_blur(
+            rect_common, panel, blur=blur,
+            extra_mouse_blocked_widgets=extra_mouse_blocked_widgets)
 
         # Paint the panel's OWN translucent wash on top of the blurred snapshot,
         # into the pixmap itself.
@@ -2189,11 +2199,32 @@ class TransportBarBlurOverlay:
         painter.end()
         self._overlay.setPixmap(pixmap)
 
-    def _grab_and_blur(self, rect: QRect, panel=None, blur: bool = True) -> QPixmap:
+    def _grab_and_blur(self, rect: QRect, panel=None, blur: bool = True,
+                        extra_mouse_blocked_widgets=None) -> QPixmap:
         """Grabs main_window with `panel` hidden. `panel` defaults to
         self._active_panel (the transport-bar path's every call site); the
         frost path (frost_panel_backdrop) passes Book Detail explicitly, since
         the panel it must hide is not the one driving this overlay.
+
+        `extra_mouse_blocked_widgets` (added 2026-09-24, hover-bleed fix): additional widgets to
+        give the SAME WA_TransparentForMouseEvents treatment as `_all_tracked_widgets()` gets
+        below, for the duration of `panel.hide()`. Needed because `_all_tracked_widgets()` is
+        scoped to the transport-bar's own widgets (play/prev/next, vol stack) — it has no reason
+        to know about a caller-specific underlay like Stats' tab bar. Without this, hiding Book
+        Detail to photograph its backdrop (frost_panel_backdrop's whole reason for calling this)
+        briefly un-covers whatever real widget sits underneath at the grab instant, and Qt
+        hit-tests against what's ACTUALLY visible — a QTabBar with WA_Hover set (see
+        MainWindow._resync_tab_bar_hover's docstring for the same underlying Qt fact) gets a
+        genuine HoverEnter if the cursor happens to rest over a tab during one of these
+        hide/show ticks (they run repeatedly: open-start, slide-finish, and every 10s via
+        `_arm_book_detail_frost_refresh`'s refresh timer) — and since the NEXT thing to cover it
+        is Book Detail again (occlusion, not a real Leave), State_MouseOver stays stuck True
+        until Book Detail's actual close, at which point native `:hover` just resumes painting
+        that now-genuinely-stale answer, however far the cursor has since moved. Live-reported
+        2026-09-24: "hover where the tabs are, move mouse away, close the panel — that tab still
+        lights up." Confirmed scoped to Frosty/blur mode specifically (Transparent, having no
+        grab at all as of the same session's A/B-plan revert, cannot share this mechanism and
+        needs its own, separate investigation — see TODO.md).
 
         `blur=False` (added 2026-09-24, for Book Detail's Transparent backdrop mode — see
         frost_panel_backdrop's own docstring) skips the padding/blur/crop tail entirely and
@@ -2324,8 +2355,11 @@ class TransportBarBlurOverlay:
                 # only stops them being hit-test targets while the panel that
                 # should be covering them is temporarily away.
                 _mouse_blocked = []
-                for _w in self._all_tracked_widgets():
-                    if not _w.testAttribute(Qt.WA_TransparentForMouseEvents):
+                _widgets_to_block = list(self._all_tracked_widgets())
+                if extra_mouse_blocked_widgets:
+                    _widgets_to_block.extend(extra_mouse_blocked_widgets)
+                for _w in _widgets_to_block:
+                    if _w is not None and not _w.testAttribute(Qt.WA_TransparentForMouseEvents):
                         _w.setAttribute(Qt.WA_TransparentForMouseEvents, True)
                         _mouse_blocked.append(_w)
                 # FOCUS-STRAND FIX (2026-09-09). Same shape as the cursor/mouse-transparency

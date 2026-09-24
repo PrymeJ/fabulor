@@ -320,6 +320,32 @@ def test_grab_happens_after_layout_and_content_population_in_start_book_detail_e
     )
 
 
+def test_library_hover_cleared_before_panel_opens_when_library_is_underlay():
+    """Regression net for the Library hover-bleed fix (2026-09-24, live-reported): opening Book
+    Detail from Library left a library row's highlight (solid fill in 1-per-row, overlay in
+    2/3-per-row/Square) frozen on screen until the user's first post-open mouse move. Fix:
+    open_book_detail calls library_panel._on_view_left() proactively, BEFORE the panel is shown,
+    scoped to when Library is the underlay. Verified via source-order inspection (same shape as
+    the layout/refresh-order and frost-backdrop-timing tests above) rather than a full behavioral
+    harness — open_book_detail has enough real dependencies (panel.load_book,
+    _start_book_detail_entry, active_full_panel, QApplication.focusWidget) that faking all of
+    them for one two-line addition is disproportionate; the call order itself is the whole
+    contract here."""
+    import fabulor.ui.panels as panels_module
+
+    source = inspect.getsource(panels_module.PanelManager.open_book_detail)
+    underlay_pos = source.index("self._book_detail_underlay = self.active_full_panel()")
+    hover_clear_pos = source.index("self.library_panel._on_view_left()")
+    entry_pos = source.index("self._start_book_detail_entry()")
+    assert underlay_pos < hover_clear_pos < entry_pos, (
+        "the underlay must be determined, then the library's hover state cleared, both BEFORE "
+        "the panel's entry animation starts"
+    )
+    # Guarded, not unconditional — must not clear library hover state when Book Detail is
+    # opening over a DIFFERENT underlay (e.g. Stats), which never had anything to clear.
+    assert "if self._book_detail_underlay == 'library':" in source
+
+
 def test_frost_backdrop_fires_at_open_start_not_only_at_slide_finish():
     """Regression net for the final fix's actual mechanism: _start_book_detail_entry must call
     self._apply_transport_bar_blur_full(self.book_detail_panel) BEFORE

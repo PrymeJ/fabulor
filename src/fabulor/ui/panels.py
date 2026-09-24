@@ -815,12 +815,27 @@ class PanelManager:
         Pryme: "Opaque definitely could use grab rather than native paint. Nothing to lose there"
         — an opaque panel has no translucent wash, so this call degrades to a plain unblurred
         grab of the underlay, harmless and skippable in effect but kept symmetric with Frosty's
-        code path rather than special-cased out)."""
+        code path rather than special-cased out).
+
+        `extra_mouse_blocked_widgets`: protects the underlay's own hoverable widgets (currently
+        just Stats' tab bar — Library has no tab bar, see `_resume_blur_after_book_detail`'s own
+        note) from a real hit-testing leak during this call's hide/show grab. See
+        `TransportBarBlurOverlay._grab_and_blur`'s docstring for the full mechanism this closes:
+        a brief `panel.hide()` (this runs at open-start, slide-finish, and every 10s via the
+        refresh timer) un-covers the underlay for the grab instant, and a cursor resting over a
+        tab during one of those ticks gets a genuine, un-Leave'd hover that then reads as a
+        highlight "appearing from nothing" once Book Detail actually closes (live-reported
+        2026-09-24)."""
         backdrop = self.config.get_panel_backdrop()
         if backdrop == "transparent":
             return
+        stats_panel = getattr(self.main_window, 'stats_panel', None)
+        extra_widgets = None
+        if stats_panel is not None and stats_panel.isVisible():
+            extra_widgets = [stats_panel.tabs.tabBar()]
         self._transport_bar_blur.frost_panel_backdrop(
-            panel, self._book_detail_frost_rect(), blur=(backdrop == "frosty"))
+            panel, self._book_detail_frost_rect(), blur=(backdrop == "frosty"),
+            extra_mouse_blocked_widgets=extra_widgets)
 
     def _arm_book_detail_frost_refresh(self) -> None:
         """Start periodic re-frosting while Book Detail is open, added 2026-09-24 alongside
@@ -2385,6 +2400,25 @@ class PanelManager:
         # clobber a live value. active_full_panel() already excludes mid-close panels
         # via _is_closing, which is exactly the state we must not "restore" blur to.
         self._book_detail_underlay = self.active_full_panel()
+        # Library hover-bleed fix (2026-09-24, live-reported). Book Detail is a real, opaque,
+        # natively-painted widget in Transparent mode (no grab/proxy in that mode — see
+        # _wire_slide_paint_suppression's THIRD CORRECTION), so once it's shown and raised, Qt
+        # correctly stops delivering mouse events to whatever's underneath. The bug is a TIMING
+        # gap, not a hit-testing leak: opening a book highlighted a library row (mouse-hover or
+        # the solid keyboard-selection fill, depending on view mode); the highlight then stayed
+        # frozen/visible until the user's FIRST mouse movement after Book Detail was already up
+        # — at which point Qt finally resolves the library viewport's real Leave (it was
+        # occluded, never actually left, until that first post-open move forces Qt to
+        # re-evaluate hit-testing) and `_on_view_left` fires, clearing it. Pryme's own diagnosis:
+        # the highlight should never survive into the open Book Detail panel at all — clear it
+        # proactively, before the panel ever appears, rather than waiting for Qt's occlusion
+        # bookkeeping to catch up on its own schedule. `_on_view_left` is the library's own
+        # existing full-teardown method (clears the model's _hovered_path AND the delegate's
+        # list-mode/keyboard-fill state), so this reuses it rather than duplicating its effect.
+        # Scoped to when Library is actually the underlay — calling it harmlessly no-ops
+        # otherwise (nothing to clear), but the guard makes the intent explicit.
+        if self._book_detail_underlay == 'library':
+            self.library_panel._on_view_left()
         self._book_detail_return_focus_widget = QApplication.focusWidget()
         self._complete_main_fade()
         # Snapshot of the library's current search text, so tag chips (library context only)
@@ -2520,31 +2554,20 @@ class PanelManager:
         except (TypeError, RuntimeError):
             pass
         self.book_detail_panel.hide()
-        # Tab-bar hover-bleed fix (2026-09-24, live-reported: "a Stats tab lights up in blue on
-        # Book Detail close"). Book Detail, while open, fully covers Stats' tab bar (raised
-        # above it, same parent as everything else on main_window) WITHOUT the tab bar ever
-        # receiving a genuine Leave — it was never actually left, just occluded by something on
-        # top. Qt's native QTabBar hover tracking (WA_Hover, State_MouseOver) is driven purely by
-        # real HoverEnter/HoverMove/HoverLeave events reaching the bar (see
-        # MainWindow._resync_tab_bar_hover's own docstring, the exact same mechanism, first
-        # found for the keyboard-suppression case 2026-09-10/15) — so whichever tab the mouse
-        # happened to rest over BEFORE Book Detail opened stays stuck State_MouseOver=True the
-        # entire time it's covered, and native :hover just resumes painting that stale answer
-        # the instant the tab bar is hit-testable again here, with no NEW genuine Enter required
-        # at all. This is why the mouse-transparency fix on the sliding proxy (same session,
-        # separate bug) could not touch this — it's not about hit-testing during the slide, it's
-        # a Leave that was never sent when Book Detail first covered the bar. One corrective
-        # QHoverEvent(HoverMove) at the cursor's real current position (the same call
-        # `_resync_tab_bar_hover` already makes for its own, differently-caused case) tells Qt's
-        # tracking the truth: hovering nothing, if the mouse isn't over a tab, or the tab it's
-        # genuinely over, if it is — either way, never a stale leftover. Library has no tab bar
-        # (see _resume_blur_after_book_detail's own note: "Library is deliberately absent... it
-        # is full-width... never had either blur"), so this only ever needs to run for Stats;
-        # calling it when Stats isn't the underlay would resync a bar that was never wrong, which
-        # is harmless but pointless, hence the isVisible() guard below.
-        stats_panel = getattr(self.main_window, 'stats_panel', None)
-        if stats_panel is not None and stats_panel.isVisible():
-            self.main_window._resync_tab_bar_hover(stats_panel.tabs.tabBar())
+        # RETRACTED 2026-09-24: a forced `_resync_tab_bar_hover` call used to live here,
+        # reasoning that Qt's QTabBar hover tracking would be left STALE (stuck on whatever tab
+        # was hovered BEFORE Book Detail opened) once the bar became hit-testable again. That
+        # theory does not match what Pryme actually reported: there is no hover on the tabs
+        # before Book Detail opens; he deliberately hovers a tab WHILE it is covered, and only
+        # THEN closes the panel — and that tab lights up for ~0.5s on close. That is the cursor's
+        # CURRENT resting position being resolved, not a stale pre-open one — and forcing a
+        # QHoverEvent(HoverMove) at that exact instant is precisely what manufactures the paint,
+        # since Qt's real hover requires actual mouse MOVEMENT over the widget, not merely resting
+        # over where it will appear once revealed. The fix was the bug. Removed outright rather
+        # than reworked — the real cause of the highlight-appears-from-nothing symptom is still
+        # unidentified (see TODO.md); do not re-add a resync call here without first confirming,
+        # live, that native Qt event delivery alone (no manual resync) still leaves something
+        # stale — it may not.
         self._release_panel_focus(self.book_detail_panel)
         # Hand focus back to whatever specifically held it when Book Detail opened —
         # 2026-09-09, closing the gap this comment used to flag as known/deferred (see

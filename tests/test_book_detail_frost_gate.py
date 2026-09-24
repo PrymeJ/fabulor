@@ -35,8 +35,24 @@ class _FakeTransportBarBlur:
     def __init__(self):
         self.calls = []
 
-    def frost_panel_backdrop(self, panel, rect, blur):
-        self.calls.append((panel, rect, blur))
+    def frost_panel_backdrop(self, panel, rect, blur, extra_mouse_blocked_widgets=None):
+        self.calls.append((panel, rect, blur, extra_mouse_blocked_widgets))
+
+
+class _FakeStatsPanel:
+    """Stands in for main_window.stats_panel — only isVisible()/tabs.tabBar() are read by
+    _apply_transport_bar_blur_full's extra_mouse_blocked_widgets wiring."""
+    def __init__(self, visible=False):
+        self._visible = visible
+        self.tabs = type("_FakeTabs", (), {"tabBar": staticmethod(lambda: "TABBAR-SENTINEL")})()
+
+    def isVisible(self):
+        return self._visible
+
+
+class _FakeMainWindow:
+    def __init__(self, stats_visible=False):
+        self.stats_panel = _FakeStatsPanel(visible=stats_visible)
 
 
 class _FakeTimer:
@@ -57,10 +73,11 @@ class _FakeHost:
     timer + its interval constant."""
     _BOOK_DETAIL_FROST_REFRESH_MS = 10_000
 
-    def __init__(self, backdrop):
+    def __init__(self, backdrop, stats_visible=False):
         self.config = _FakeConfig(backdrop)
         self._transport_bar_blur = _FakeTransportBarBlur()
         self._book_detail_frost_refresh_timer = _FakeTimer()
+        self.main_window = _FakeMainWindow(stats_visible=stats_visible)
 
     def _book_detail_frost_rect(self):
         return "RECT-SENTINEL"
@@ -71,10 +88,23 @@ def test_transport_bar_blur_full_runs_for_frosty_and_opaque(backdrop):
     host = _FakeHost(backdrop)
     PanelManager._apply_transport_bar_blur_full(host, "PANEL-SENTINEL")
     assert len(host._transport_bar_blur.calls) == 1
-    panel, rect, blur = host._transport_bar_blur.calls[0]
+    panel, rect, blur, extra = host._transport_bar_blur.calls[0]
     assert panel == "PANEL-SENTINEL"
     assert rect == "RECT-SENTINEL"
     assert blur == (backdrop == "frosty")
+    assert extra is None, "no extra widgets to protect when Stats isn't the underlay"
+
+
+@pytest.mark.parametrize("backdrop", ["frosty", "opaque"])
+def test_transport_bar_blur_full_protects_stats_tab_bar_when_stats_is_underlay(backdrop):
+    """Hover-bleed fix regression net (2026-09-24): when Stats is visible underneath Book
+    Detail, its tab bar must be passed through as an extra mouse-blocked widget so
+    _grab_and_blur's hide/show grab cannot deliver it a genuine hover during the brief window
+    Book Detail is hidden to photograph the backdrop."""
+    host = _FakeHost(backdrop, stats_visible=True)
+    PanelManager._apply_transport_bar_blur_full(host, "PANEL-SENTINEL")
+    _, _, _, extra = host._transport_bar_blur.calls[0]
+    assert extra == ["TABBAR-SENTINEL"]
 
 
 def test_transport_bar_blur_full_skips_transparent():
