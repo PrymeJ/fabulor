@@ -10,6 +10,79 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
 ## Summary index
 
 
+### Book Detail paint-suppression — moved to its own branch, needs a proper A/B before any decision
+- [2026-09-24] The whole paint-suppression thread (event-repaint-cost fix for Book Detail's
+  slide, four live-found-and-fixed regressions, an incomplete Transparent-mode attempt) was
+  moved off `main` to the **`book-detail-paint-suppression` branch** (commits `c640885` through
+  `5dce8f9`) — `main` reset to `1307b02` (pre-thread), with the one unrelated fix in that range
+  (theme name "Dorian Grey" → "Dorian Gray", `da54c0d`) cherry-picked back onto `main` as
+  `19bfdbc`. Nothing lost; full history intact on the branch.
+  - **Why**: after four rounds of live-found regressions (opaque-pop, frost geometry,
+    recent-history overlap, gutter exclusion — see NOTES.md) plus a fifth, still-open one
+    (Transparent-mode backdrop compositing shipped a NEW hover/click-leak-through-panel bug in
+    BOTH modes, and a moving-background regression specific to Transparent), Pryme could not
+    reach a confident keep/revert decision from where things stood — every measurement approach
+    built this session had already failed to correlate with felt jank, so there was no reliable
+    data to weigh the confirmed visual costs against. Verbatim: "I can't decide if I should keep
+    this mechanism or go back to less fragile native paint mode... I don't have reliable data...
+    Moving these changes to a branch and revert the main to pre-fix would enable us to do A/B
+    tests easier."
+  - **One clear, already-settled finding from this session, independent of the A/B question**:
+    Frosty mode's grab-based backdrop is a REAL, CONFIRMED visual improvement on its own merit,
+    separate from whatever paint-suppression itself does. Pryme's own explanation: the OLD
+    Frosty behavior faded the gutter/progress-bar area in gradually (a fade the eye adjusts to,
+    reads as normal), while a plain paint-suppression proxy without backdrop compositing made
+    that same area pop in abruptly (no fade) — jarring specifically BECAUSE it broke the
+    expected fade pattern. The whole-area-grab-every-10s fix (this session's final iteration)
+    restores a clean, non-abrupt appearance and is "worth keeping on its own merit," Pryme's own
+    words — independent of whether paint suppression helps overall jank at all.
+  - **The A/B plan for next session, Pryme's own design, not yet built**: keep Frosty mode on
+    the grab/paint-suppression mechanism (confirmed visual win, see above); keep Transparent
+    mode on NATIVE painting (no proxy, no suppression — it never had a backdrop-compositing
+    problem to begin with, and the grab attempt made it strictly worse: a moving background
+    where the underlay used to stay fixed, which no other panel in the app does). **Also switch
+    Opaque mode to the grab mechanism** (Pryme's own addition to the plan) — Opaque never had a
+    translucency/backdrop problem either way, so switching it costs nothing conceptually and
+    gives the CLEANEST isolated test of paint-suppression alone (Opaque-native vs. Opaque-grab,
+    zero backdrop-compositing complexity in either arm). Comparing felt jank Frosty-vs-Transparent
+    (or Opaque-grab-vs-Opaque-native) on the SAME build, switched live, sidesteps the
+    cross-build/cross-session trust problem every one of this session's own instrumented
+    measurements ran into ("your tests never coincided with what I saw to win my trust on them
+    either").
+  - **Two known, separate bugs surfaced by this thread, not yet investigated, tracked here so
+    they aren't lost**:
+    1. A hover-state leak: a Stats tab under the mouse lights up briefly when Book Detail
+       closes, in BOTH Frosty and Transparent modes with the grab mechanism active. Pryme's own
+       note: this is the SAME SHAPE as an already-known, already-partially-fixed class of bug in
+       `transport_bar_blur.py`'s hide/show grab machinery (real clicks/hover landing on
+       invisibly-uncovered widgets — see that file's own "INPUT-LEAK FIX" 2026-08-01 comments) —
+       "I was able to highlight (and if I remember correctly, even click the transport buttons
+       when there was a panel above it)" from an earlier, related investigation. Worth checking
+       whether the EXISTING mouse-transparency compensation in `_grab_and_blur` (which already
+       exists for the transport-bar's OWN hide/show cycle) is being bypassed or insufficiently
+       applied for Book Detail's frost-refresh call specifically, rather than assuming a wholly
+       new bug.
+    2. Book Detail's slide feels jankier specifically opened from/for a heavily-tagged (~84
+       books) context vs. a lightly-tagged one (first reported 2026-09-23, still unconnected to
+       any mechanism traced so far). Pryme's own new hypothesis: this may point at Tags'
+       widget-per-thumb architecture (`_TagBookThumb`, one real `QWidget` per book in a tag's
+       detail grid) rather than anything about Book Detail's OWN slide — i.e. opening Book
+       Detail FROM a heavily-populated Tags grid may be paying a cost related to what's
+       UNDERNEATH it, not the panel itself. This would connect directly to the already-scoped,
+       deliberately-deferred "Tags widget-per-thumb → delegate-model migration" effort (see
+       CLAUDE.md's Stats delegate-migration precedent, and this session's much-earlier note that
+       this refactor is "a whole work by itself on a new branch... worth doing on its own
+       merit"). Not yet tested even informally — a real next step would be checking whether the
+       jankiness scales with Tags' own grid population cost specifically, independent of the
+       paint-suppression question entirely.
+  - **Standing caveat on ALL of tonight's performance work, Pryme's own, worth keeping in view**:
+    every measurement, the whole bisect, and this entire paint-suppression thread were built and
+    tested on ONE machine (one laptop, one desktop environment — Wayland/KWin). There is no data
+    on whether any of this generalizes to other systems, compositors, or hardware — it's
+    possible this class of jank is specific to this one environment and not worth chasing
+    further as a general Fabulor problem. Not resolved either way; flagged so it isn't
+    forgotten as a real possibility before sinking more time into single-machine investigation.
+
 ### Transport-bar blur got visibly stuck in the background — one-off, not reproducible, cause unknown
 - [2026-09-23] Pryme's own report, verbatim: "I was trying to open Settings or the Library, my
   finger slipped and I pressed right click too fast by mistake. Blur got stuck in the background. I
