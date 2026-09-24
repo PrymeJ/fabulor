@@ -979,9 +979,21 @@ class TransportBarBlurOverlay:
             f"total_ms={(t_blit_done - t_entry) * 1000:.2f}"
         )
 
-    def frost_panel_backdrop(self, panel, rect_in_main_window: QRect):
+    def frost_panel_backdrop(self, panel, rect_in_main_window: QRect, blur: bool = True):
         """Frost the backdrop of a panel that covers the whole content area, by
         giving THAT PANEL its own blurred-pixmap child. For Book Detail.
+
+        `blur=False` (added 2026-09-24, for Book Detail's Transparent backdrop mode): grabs
+        the same underlay region and composites the same translucent wash, but skips the
+        Gaussian blur pass — passed straight through to `_grab_and_blur`. Everything else
+        about this method (the hide/show grab safety, the wash compositing, the `frost` child
+        widget's Z-order/geometry) is IDENTICAL regardless of `blur`; only what's inside the
+        grabbed pixmap differs. See `PanelManager._arm_book_detail_frost_refresh`'s own
+        docstring for why Transparent mode needs this at all: it previously had NO backdrop
+        compositing whatsoever (this whole method is gated on `get_blur_enabled()` at its
+        caller, which is False for Transparent mode) — it relied entirely on the real panel's
+        own live paint blending against the underlay each frame, which the paint-suppression
+        proxy (`_wire_slide_paint_suppression`) cannot replicate with a single static grab.
 
         WHY NOT show_for_panel / self._overlay (found live 2026-08-01, with a
         pixmap dump + a Z-order probe, after a first attempt shipped invisible):
@@ -1048,7 +1060,7 @@ class TransportBarBlurOverlay:
         # below. Passed explicitly (not the default self._active_panel) — the
         # panel THIS call must hide is not the panel driving the transport-bar
         # overlay.
-        blurred = self._grab_and_blur(rect_common, panel)
+        blurred = self._grab_and_blur(rect_common, panel, blur=blur)
 
         # Paint the panel's OWN translucent wash on top of the blurred snapshot,
         # into the pixmap itself.
@@ -2177,11 +2189,20 @@ class TransportBarBlurOverlay:
         painter.end()
         self._overlay.setPixmap(pixmap)
 
-    def _grab_and_blur(self, rect: QRect, panel=None) -> QPixmap:
+    def _grab_and_blur(self, rect: QRect, panel=None, blur: bool = True) -> QPixmap:
         """Grabs main_window with `panel` hidden. `panel` defaults to
         self._active_panel (the transport-bar path's every call site); the
         frost path (frost_panel_backdrop) passes Book Detail explicitly, since
         the panel it must hide is not the one driving this overlay.
+
+        `blur=False` (added 2026-09-24, for Book Detail's Transparent backdrop mode — see
+        frost_panel_backdrop's own docstring) skips the padding/blur/crop tail entirely and
+        returns a plain crop of the grab at `rect`. The padding (`pad = int(_BLUR_RADIUS * 4)`,
+        below) exists ONLY to survive QGraphicsBlurEffect's edge-transparency artifact — with no
+        blur pass, there's nothing to compensate for, so padding would be pure wasted grab area
+        for no benefit. Every hide/show/cursor/focus/mouse-transparency safety mechanism in this
+        method runs identically regardless of `blur` — Transparent mode still needs the SAME
+        safe grab of what's behind the panel, it just doesn't need that grab blurred afterward.
 
         COLLAPSED BACK 2026-08-15 from a content_container/main_window split
         that lived here 2026-08-14–15. That split's premise — grab
@@ -2242,7 +2263,7 @@ class TransportBarBlurOverlay:
             self.main_window.mapFromGlobal(self._common_ancestor.mapToGlobal(rect.topLeft())),
             rect.size(),
         )
-        pad = int(_BLUR_RADIUS * 4)
+        pad = int(_BLUR_RADIUS * 4) if blur else 0
         padded_rect = main_window_rect.adjusted(-pad, -pad, pad, pad)
 
         t0 = time.perf_counter()
@@ -2345,6 +2366,20 @@ class TransportBarBlurOverlay:
                 QApplication.restoreOverrideCursor()
             self._grab_suppress_until = time.perf_counter() + _GRAB_FEEDBACK_SUPPRESS_S
         t1 = time.perf_counter()
+
+        if not blur:
+            # pad=0 above means padded_rect == main_window_rect, so `src` is already
+            # exactly the requested (unpadded, unblurred) region — nothing left to do.
+            # Deliberately does NOT call _blur_pad_crop: that function unconditionally
+            # calls _blur_pixmap, and threading a blur=False branch through its own
+            # padding-artifact-compensation logic (built and tuned specifically for the
+            # blur case) would touch more of that fragile, measurement-tuned code than
+            # this short-circuit needs to.
+            if _GRAB_TRACE_ENABLED:
+                logger.warning(
+                    f"[PERF] _grab_and_blur tag=transport rect={rect} blur=False "
+                    f"grab_ms={(t1 - t0) * 1000:.2f}")
+            return src
 
         return self._blur_pad_crop(src, rect, pad, t0=t0, t1=t1,
                                    padded_rect=padded_rect, tag="transport")

@@ -549,6 +549,14 @@ class PanelManager:
         # no-underlay cases stay explicit rather than silently falling through
         # generic panel handling.
         self._book_detail_underlay: str | None = None
+        # Periodic re-frost while Book Detail stays open with Frosty backdrop mode on — see
+        # _arm_book_detail_frost_refresh's own docstring for why this exists (the progress-bar
+        # strip is now included in the frost rect, and a ONE-SHOT static frost would freeze its
+        # fill for the panel's whole open duration otherwise). Armed at open-start, disarmed on
+        # close — never left running with no panel open.
+        self._book_detail_frost_refresh_timer = QTimer(main_window)
+        self._book_detail_frost_refresh_timer.timeout.connect(
+            self._on_book_detail_frost_refresh_tick)
         # The widget that held real Qt focus at the moment Book Detail opened, so closing it
         # (Esc/close button) can hand focus back to the EXACT control the user was on — added
         # 2026-09-09 for Stats' Day/Week/Month row lists (live report: Esc from Book Detail
@@ -732,13 +740,14 @@ class PanelManager:
         if self.config.get_blur_enabled():
             self._transport_bar_blur.show_for_panel(panel)
 
-    # Book Detail sits at y=32; the progress slider occupies y=32..56 and the
-    # window is 300x564. See _book_detail_frost_rect. Both underlay cases now
-    # start below the progress bar — the former _BOOK_DETAIL_FROST_TOP_UNDER_
-    # TITLEBAR (32) was removed 2026-08-14 when the library case stopped
-    # frosting the animating bar.
-    _BOOK_DETAIL_FROST_TOP_UNDER_PROGRESS = 56
+    # Book Detail sits at y=32; the window is 300x564. See _book_detail_frost_rect.
+    _BOOK_DETAIL_FROST_TOP_UNDER_TITLEBAR = 32
     _BOOK_DETAIL_FROST_BOTTOM_INSET = 10
+    # 10s: cheap enough to be a non-concern at this cadence (one panel.grab() + one blur
+    # pass every 10s, not per-frame), generous enough that the progress bar's fill is never
+    # visibly stale for more than a few seconds — Pryme's own call, 2026-09-24 ("it doesn't
+    # even need to be fast... 10 second refresh is more than plenty").
+    _BOOK_DETAIL_FROST_REFRESH_MS = 10_000
 
     def _book_detail_frost_rect(self) -> QRect:
         """The region Book Detail's frost should cover, in MAIN_WINDOW coords.
@@ -749,19 +758,11 @@ class PanelManager:
         - Over STATS (or any 90%-width panel): the player screen behind is
           already blurred by that panel's own visual_area blur, but the Stats
           panel ITSELF is sharp — and Stats is most of what is behind Book
-          Detail. So the frost must start under the PROGRESS BAR (y=56) and run
-          to 10px off the bottom, capturing Stats as content to be blurred. The
-          progress bar is excluded because it animates; the bottom 10px is the
-          panel's own padding.
-        - Over LIBRARY: the library is full-width and opaque, so everything from
-          under the PROGRESS BAR down is real content that must be frosted. The
-          library starts at y=32 like the progress bar itself, but the bar is
-          drawn OVER it and keeps animating while Book Detail is open — a static
-          grab of a moving widget is a frozen frame of it, which showed up as a
-          blurred smear across the bar in a screen recording (2026-08-14; the
-          real bar animates too subtly to catch by eye, which is why this went
-          unnoticed since the frost shipped). Same reason the Stats case
-          excludes it — the exclusion just was not applied here.
+          Detail. So the frost must run down to 10px off the bottom, capturing
+          Stats as content to be blurred; the bottom 10px is the panel's own
+          padding.
+        - Over LIBRARY: the library is full-width and opaque, so everything is
+          real content that must be frosted.
 
         WIDTH previously differed here (narrower over a 90%-width underlay, to keep its
         right-hand gutter live and sharp rather than frozen — see git history, fixed
@@ -771,40 +772,104 @@ class PanelManager:
         gutter never getting a live, sharp look until then anyway — moving the frost to
         open-START (same session, for the sliding-proxy fix) made the gutter's absence visible
         for the WHOLE slide, reading as an abrupt late pop rather than the brief flash it used
-        to be. Pryme's own call: blur the gutter immediately, matching everywhere else, rather
-        than trying to keep it live behind a proxy that structurally can't show live content
-        anyway (a `panel.grab()` freezes the whole panel at grab time, gutter included, whether
-        or not the frost rect claims to cover it). Full width now, in both branches — no more
-        gutter exclusion.
+        to be. Pryme's own call: blur the gutter immediately, matching everywhere else. Full
+        width now, in both branches — no more gutter exclusion.
 
-        The progress-bar exclusion (`top` staying at `_BOOK_DETAIL_FROST_TOP_UNDER_PROGRESS`,
-        not 0) is UNCHANGED and must stay — the bar genuinely animates while Book Detail is
-        open (playback continues), and freezing it in a static frost would make its fill
-        visibly JUMP on close if the position moved during the open window (confirmed as a real
-        concern, not touched by this width change; see the progress-bar-strip work tracked
-        separately in TODO.md — that strip needs to stay genuinely live for the panel's whole
-        open duration, not just be excluded from one static grab).
+        TOP previously excluded the progress-bar strip (y=32..56) entirely, in both branches —
+        the bar genuinely animates while Book Detail is open, and a ONE-SHOT static frost
+        covering it would freeze its fill for the panel's whole open duration, visibly JUMPING
+        to the real position on close if playback moved during that window (found and fixed
+        2026-08-14, "blurred smear across the bar in a screen recording"). **Superseded
+        2026-09-24, second correction**: Pryme reported this exclusion ITSELF as a bug — the
+        strip should be blurred like everywhere else, not left showing live-but-unblurred
+        content while the rest of the backdrop is frosted. A true one-shot static frost can't
+        satisfy both "blurred" and "never visibly stale on close" at the same time — the fix
+        is `_arm_book_detail_frost_refresh` (below): the WHOLE frost (this strip included) now
+        re-grabs and re-composites on a periodic timer while Book Detail stays open, so it's
+        blurred from the first frame AND never goes more than one refresh interval stale. `top`
+        is now always `_BOOK_DETAIL_FROST_TOP_UNDER_TITLEBAR` (32) in both branches — the
+        progress bar is included, not excluded.
         """
         mw = self.main_window
-        if self._book_detail_underlay == 'library':
-            top = self._BOOK_DETAIL_FROST_TOP_UNDER_PROGRESS
-            bottom_inset = 0
-        else:
-            top = self._BOOK_DETAIL_FROST_TOP_UNDER_PROGRESS
-            bottom_inset = self._BOOK_DETAIL_FROST_BOTTOM_INSET
+        top = self._BOOK_DETAIL_FROST_TOP_UNDER_TITLEBAR
+        bottom_inset = 0 if self._book_detail_underlay == 'library' else self._BOOK_DETAIL_FROST_BOTTOM_INSET
         return QRect(0, top, mw.width(), mw.height() - top - bottom_inset)
 
     def _apply_transport_bar_blur_full(self, panel):
-        """Frost Book Detail's own backdrop. See
+        """Frost/wash Book Detail's own backdrop. See
         TransportBarBlurOverlay.frost_panel_backdrop for why this cannot reuse the
         shared overlay (Z-order: that overlay is a child of content_container and
         can never rise above a panel parented to main_window).
 
-        Gated here rather than inside the overlay, matching _apply_transport_bar_blur
-        — one get_blur_enabled() convention across every call site."""
-        if self.config.get_blur_enabled():
-            self._transport_bar_blur.frost_panel_backdrop(
-                panel, self._book_detail_frost_rect())
+        Gate CHANGED 2026-09-24 (was `get_blur_enabled()` alone, matching
+        `_apply_transport_bar_blur`'s single-flag convention — that convention was correct for
+        the LIVE transport-bar overlay, which has no reason to run when there's nothing to
+        blur, but wrong here once this method also handles Transparent mode's unblurred
+        wash-compositing). Now runs for BOTH Frosty (`get_blur_enabled()`) and Transparent
+        modes — only Opaque skips it entirely, since an opaque panel has no translucent wash
+        to composite a backdrop for in the first place. `frost_panel_backdrop`'s own `blur`
+        parameter (True for Frosty, False for Transparent) controls whether the grabbed
+        pixmap gets the Gaussian blur pass — see that method's docstring for why Transparent
+        needs this call at all: it previously had NO backdrop compositing, relying entirely
+        on the real panel's own live paint, which the paint-suppression proxy cannot
+        replicate with a single static grab."""
+        backdrop = self.config.get_panel_backdrop()
+        if backdrop == "opaque":
+            return
+        self._transport_bar_blur.frost_panel_backdrop(
+            panel, self._book_detail_frost_rect(), blur=(backdrop == "frosty"))
+
+    def _arm_book_detail_frost_refresh(self) -> None:
+        """Start periodic re-frosting while Book Detail is open, added 2026-09-24 alongside
+        widening `_book_detail_frost_rect` to include the progress-bar strip. That strip
+        genuinely animates during playback — a ONE-SHOT static frost covering it (taken once
+        at open-start, refreshed once more at slide-finish, per the existing calls in
+        `_start_book_detail_entry`/`_on_book_detail_slide_finished`) would freeze its fill for
+        the panel's entire open duration, visibly jumping to the real position on close if
+        playback moved meanwhile — this is the EXACT bug `_book_detail_frost_rect`'s old
+        progress-bar exclusion existed to prevent (found and fixed 2026-08-14), reintroduced
+        the moment the strip was folded into the frost rect.
+
+        Fixed not by excluding the strip again (Pryme's own bug report: it should be blurred
+        like everywhere else, not left live-but-unblurred) but by periodically RE-frosting the
+        whole rect while the panel stays open — `_BOOK_DETAIL_FROST_REFRESH_MS` (10s) is cheap
+        at this cadence (one `panel.grab()` + one blur pass every 10s, not per-frame) and
+        generous enough that the fill is never visibly stale for more than a few seconds
+        (Pryme's own call: "it doesn't even need to be fast... 10 second refresh is more than
+        plenty").
+
+        GATE WIDENED 2026-09-24 (was `get_blur_enabled()` alone — Frosty only). Transparent
+        mode has the IDENTICAL problem: no per-frame live compositing while the paint-
+        suppression proxy is active, so its progress-bar strip and gutter would go just as
+        stale without periodic re-compositing, even with no blur step involved. Only Opaque
+        mode has nothing to refresh (an opaque panel has no translucent backdrop at all) — same
+        three-way split `_apply_transport_bar_blur_full` now uses.
+
+        Called from `_start_book_detail_entry`, once, at open-start — paired with
+        `_disarm_book_detail_frost_refresh` in both close paths
+        (`_close_book_detail_flow`/`_on_book_detail_hidden`), so the timer is NEVER left
+        running once Book Detail is closed."""
+        if self.config.get_panel_backdrop() == "opaque":
+            return
+        self._book_detail_frost_refresh_timer.start(self._BOOK_DETAIL_FROST_REFRESH_MS)
+
+    def _disarm_book_detail_frost_refresh(self) -> None:
+        """Stop the periodic re-frost armed by _arm_book_detail_frost_refresh. Safe to call
+        unconditionally (QTimer.stop() on an already-stopped timer is a harmless no-op) — every
+        close path calls this regardless of whether blur was ever on, so there's no risk of a
+        stray running timer surviving a backdrop-mode change mid-session."""
+        self._book_detail_frost_refresh_timer.stop()
+
+    def _on_book_detail_frost_refresh_tick(self) -> None:
+        """QTimer.timeout handler for the periodic re-frost. Guards against a stray tick
+        landing after Book Detail has already closed (e.g. a tick queued just before close,
+        delivered after) — re-frosting a hidden/gone panel would be wasted work at best, so
+        this bails out via the same isVisible() check every other book_detail-open predicate
+        in this class already uses."""
+        if not (self.book_detail_panel and self.book_detail_panel.isVisible()):
+            self._disarm_book_detail_frost_refresh()
+            return
+        self._apply_transport_bar_blur_full(self.book_detail_panel)
 
     def _wire_slide_paint_suppression(self, panel: QWidget, anim: QPropertyAnimation,
                                        proxy: QLabel) -> None:
@@ -2351,6 +2416,7 @@ class PanelManager:
         # the panel's own (still off-screen) position. Live-verified 2026-09-23 that this does
         # not reproduce the same-shaped bug the visual_area case had.
         self._apply_transport_bar_blur_full(self.book_detail_panel)
+        self._arm_book_detail_frost_refresh()
 
         def _on_book_detail_slide_finished():
             try:
@@ -2407,6 +2473,7 @@ class PanelManager:
     def _close_book_detail_flow(self):
         if self.book_detail_panel_animation.state() == QAbstractAnimation.State.Running:
             return
+        self._disarm_book_detail_frost_refresh()
         panel_w = self.main_window.width()
         book_detail_panel_y = 32 # Position under the titlebar
         self.book_detail_panel_animation.setStartValue(QPoint(0, book_detail_panel_y))
