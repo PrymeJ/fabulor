@@ -3043,7 +3043,40 @@ class PanelManager:
         or None. Same visibility checks and priority order as handle_drag_area_right_click —
         there is no existing single accessor, so this centralizes it.
 
-        A panel that is mid-CLOSE does not count as open — see _is_closing."""
+        A panel that is mid-CLOSE does not count as open — see _is_closing.
+
+        book_detail_panel IS CHECKED FIRST (2026-09-24 reorder, live-reported regression trace —
+        see the CLAUDE.md rule this fix produced, and NOTES.md, for the full mechanism). Book
+        Detail is the one panel that can be visible SIMULTANEOUSLY with another (it opens over
+        Stats or Library — see the class docstring/CLAUDE.md's "Book detail uniquely enters from
+        the right"/"can open over Stats or Library" notes), and it is always the topmost,
+        actually-interactive one when both are visible — it raises above the underlay rather than
+        hiding it. Checking library/settings/etc. first (the original order) meant this method
+        reported the UNDERLAY's key for the whole time Book Detail was open, which several real
+        consumers either had to work around with their own extra book_detail_panel.isVisible()
+        check (MainWindow._handle_tab_escape's library branch) or simply never reached at all
+        because Book Detail's own event filter wins the dispatch race first (escape_active_panel,
+        _handle_tab_escape's Tab branch) — masking the wrong answer rather than it mattering. But
+        at least two consumers were NOT masked and were genuinely wrong: (1) a right-click on the
+        cover art while Book Detail was open over Stats/Library closed the WRONG panel (Stats/
+        Library, via handle_drag_area_right_click's now-dead-until-this-fix `elif panel ==
+        "book_detail":` branch) instead of Book Detail itself; (2) MainWindow._kbdnav_active_panel_key
+        (app.py) resolved to "stats"/"settings" while Book Detail was open over Stats, which let
+        _set_keyboard_nav_active dispatch a SYNTHETIC QHoverEvent(HoverMove) at the real, occluded
+        Stats tab bar (via _resync_tab_bar_hover) using the cursor's live position — the cursor was
+        genuinely over Book Detail, not the tab bar, but the synthetic event doesn't know that and
+        Qt's native QTabBar hover state doesn't either. This produced a real, crisp (not blurred/
+        stale-pixmap) tab highlight that appeared to "come from nothing" on Book Detail close,
+        live-reported and traced via a focusChanged/hover-event tracer 2026-09-24 — the fix that
+        was tried first (protecting the tab bar during frost_panel_backdrop's own hide/show grab
+        window) made no difference because that was never the actual mechanism; this reorder is.
+        No consumer's behavior is worsened by this reorder — every call site was audited: two are
+        now MORE correct (the two bugs above), the rest either check `is None` (unaffected by
+        which non-None key is returned), are scoped to panels that can never coexist with Book
+        Detail (Settings/Speed/Sleep/Sprint — mutually exclusive with it), or already had their
+        own explicit book_detail_panel.isVisible() workaround (now redundant but harmless)."""
+        if self.book_detail_panel and self.book_detail_panel.isVisible():
+            return "book_detail"
         if self.library_panel.isVisible() and not self._is_closing("library"):
             return "library"
         if self.settings_panel.isVisible() and not self._is_closing("settings"):
@@ -3058,8 +3091,6 @@ class PanelManager:
             return "stats"
         if self.tags_panel.isVisible() and not self._is_closing("tags"):
             return "tags"
-        if self.book_detail_panel and self.book_detail_panel.isVisible():
-            return "book_detail"
         if self.main_window.chapter_list_widget.isVisible():
             return "chapter_list"
         return None
