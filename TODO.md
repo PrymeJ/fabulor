@@ -300,10 +300,23 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
     specifically, never applied here. Book Detail occludes rather than hides Tags, so with Tags
     open behind Book Detail, both trackers' filters stay live. This plausibly explains a real,
     smaller residual Pryme reported at the 09-22 checkpoint ("slightly worse than good 07-31 —
-    subtle"). **Concrete next step, not vague**: apply the same occlusion-guard shape (early
-    return in `eventFilter` when `book_detail_panel.isVisible()`) to
-    `ScrollHoverTracker.eventFilter`/`GridHoverTracker.eventFilter` directly, mirroring `e55fdb6`
-    exactly. Verify with the same before/after A/B methodology already proven for Stats.
+    subtle").
+  - **[2026-09-25] SHIPPED**: occlusion guard applied to `ScrollHoverTracker.eventFilter`/
+    `GridHoverTracker.eventFilter` (`hover_tracker.py`), mirroring `e55fdb6` exactly — both
+    reach `book_detail_panel` via `self.parent().window()` (these are `QObject`s, not
+    `QWidget`s, so `.parent()` reaches the owning `TagManagerWidget` first, mirroring that
+    file's own existing `self.window().book_detail_panel` lookup). 707/707 tests pass, no
+    regressions. **Also a real, important confound surfaced and checked before shipping** (see
+    NOTES.md for full detail): the historical bisect that pinned `a4e3d65` ran every "old"
+    build on TODAY's kernel/Mesa, never the version actually live at that commit's date.
+    Checked `/var/log/zypp/history*` directly — openSUSE Tumbleweed kernel updated ~13 times
+    and Mesa-libGL1 updated on a similar cadence between June and now, with real version bumps
+    landing on 07-30 (one day before the pinned regression), 08-02, 08-05, and 08-14 (all
+    inside or adjacent to the bisect's own window). The code-level bug is real and now fixed
+    regardless, but system drift cannot be ruled out as ALSO contributing to the felt
+    slowdown. Live-tested post-fix: "Playback opens normally... possible [improvement]... still
+    not perfectly smooth" — the expected, honest result given the confound, not a sign the fix
+    failed. No further action planned on this specific thread unless new evidence reopens it.
 
 ### Book Detail panel's tab bar — not wired into the shared `_kbdnav_active_panel_key` mechanism
 - [2026-09-15, scope corrected 2026-09-17] Still true and unrelated to the (now implemented, see

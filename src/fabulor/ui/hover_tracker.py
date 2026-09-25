@@ -146,6 +146,23 @@ class ScrollHoverTracker(QObject):
         QApplication.instance().removeEventFilter(self)
 
     def eventFilter(self, obj, event):
+        # OCCLUSION GUARD (2026-09-25) — same shape as TagManagerWidget.eventFilter's own
+        # occlusion guard and StatsPanel.eventFilter's (see either for the reference case).
+        # This filter is app-wide and only paired to the OWNER's showEvent/hideEvent (see
+        # install_filter()'s docstring) — Book Detail occludes (raises above) rather than
+        # hides its underlay, so hideEvent never fires while Book Detail covers Tags, and this
+        # filter stays fully live and walks every Qt event anywhere in the app, including
+        # Playback, for the whole time Book Detail is open. Nothing legitimate can be hovered
+        # while occluded, so declining early here costs nothing. book_detail_panel is reached
+        # via self.parent().window() (mirrors tag_manager.py's own book_detail_panel lookup)
+        # since this is a QObject, not a QWidget, and has no .window() of its own — the parent
+        # passed at construction is always the owning panel widget (TagManagerWidget).
+        try:
+            book_detail_panel = getattr(self.parent().window(), 'book_detail_panel', None)
+        except (RuntimeError, AttributeError):
+            book_detail_panel = None
+        if book_detail_panel is not None and book_detail_panel.isVisible():
+            return False
         from PySide6.QtCore import QEvent
         if ScrollHoverTracker._TRACKED_EVENTS is None:
             ScrollHoverTracker._TRACKED_EVENTS = frozenset((
@@ -366,6 +383,14 @@ class GridHoverTracker(QObject):
         QApplication.instance().removeEventFilter(self)
 
     def eventFilter(self, obj, event):
+        # OCCLUSION GUARD (2026-09-25) — see ScrollHoverTracker.eventFilter's identical guard
+        # for the full explanation; same reasoning applies here unchanged.
+        try:
+            book_detail_panel = getattr(self.parent().window(), 'book_detail_panel', None)
+        except (RuntimeError, AttributeError):
+            book_detail_panel = None
+        if book_detail_panel is not None and book_detail_panel.isVisible():
+            return False
         from PySide6.QtCore import QEvent
         if GridHoverTracker._TRACKED_EVENTS is None:
             GridHoverTracker._TRACKED_EVENTS = frozenset((

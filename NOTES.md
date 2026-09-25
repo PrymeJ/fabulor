@@ -96,6 +96,51 @@ localized to the panel being tested") but was not cross-checked against it this 
 `eventFilter` itself, then Stats' `eventFilter` via `e55fdb6`) to `ScrollHoverTracker`/
 `GridHoverTracker` directly — this is the concrete, scoped next step, not a vague follow-up.
 
+**Honest confound, raised directly by Pryme, checked rather than dismissed: system-level drift
+cannot be ruled out and genuinely overlaps the code-bisect window.** Every worktree build tested
+tonight ran on TODAY's kernel/Mesa/KWin, never on the version actually live at the historical
+commit under test — there is no way to have tested "old code on old system state" tonight. Checked
+`/var/log/zypp/history*` (openSUSE Tumbleweed, rolling release) directly rather than speculating:
+- **Kernel updated ~13 times between 2026-06-07 (7.0.11) and today (7.2.6, installed 09-20)** — a
+  new kernel roughly every 4-6 days throughout the whole window.
+- **Mesa-libGL1 updated on a similar cadence** (26.1.1 in early June → 26.2.3 today, ~13 point
+  releases plus one minor-version bump 26.1.6→26.2.0 on 08-14).
+- **Real version bumps landed inside or immediately around the code-bisect's own regression
+  window**: kernel 7.1.4-1.1→7.1.4-1.2 AND Mesa 26.1.5-1.1→26.1.5-1.2 both on **07-30**, one day
+  before `a4e3d65` (07-31) was pinned as the regression commit; kernel 7.1.4-1.2→7.1.5-1.1 on
+  **08-02**, the same day as the `e7e23d8` "still bad" checkpoint; Mesa 26.1.5-1.2→26.1.6-1.1 on
+  **08-05**; kernel 7.1.7-1.1→7.1.8-1.1 AND Mesa 26.1.6-1.1→26.2.0-1.1 (minor bump) both on
+  **08-14**.
+
+**What this does and doesn't undermine, precisely:** the SAME-DAY split within 07-31 itself
+(`0658e58`/clean vs. `a4e3d65`/`59ad261`/bad, both tested tonight on today's system, both
+representing code that historically ran on the SAME post-07-30-update system state) is NOT
+explained by system drift — that comparison is clean regardless, since neither side benefits or
+suffers from a system update the other side didn't also have. What IS genuinely unverified: whether
+`a4e3d65`'s code change would show the same gap running under 07-31's ACTUAL system stack instead of
+today's — i.e., whether the magnitude of "bad" felt tonight for `a4e3d65` on today's system matches
+what it would have felt like in July, or whether some of today's "bad" reading is system drift
+layered on top of a smaller original code-level effect. **Cannot be resolved without either an old
+kernel/Mesa snapshot (impractical/risky to set up safely) or a controlled test isolating the ONE
+variable we can actually control: whether fixing the code-level leak on TODAY's system measurably
+helps TODAY's felt experience** — which is the next concrete step, and stands on its own regardless
+of how much of the original regression was system-driven.
+
+**Occlusion guard shipped and tested against that exact question.** Applied the same shape already
+proven twice tonight (Tags' own `eventFilter`, then `StatsPanel.eventFilter` via `e55fdb6`) to
+`ScrollHoverTracker.eventFilter`/`GridHoverTracker.eventFilter` directly (`hover_tracker.py`): both
+now check `self.parent().window().book_detail_panel` (mirrors `tag_manager.py`'s own existing
+`self.window().book_detail_panel` lookup — these are `QObject`s, not `QWidget`s, so `.parent()` is
+needed to reach the owning `TagManagerWidget` first) and decline (`return False`) early whenever
+Book Detail is visible, same reasoning as the reference case: nothing legitimate can be hovered
+while occluded, so declining costs nothing. 707/707 tests pass (full suite, no regressions).
+Live-tested on current HEAD: "Playback opens normally... possible [improvement in other areas]...
+still not perfectly smooth." **This is the expected, honest result given the confirmed system
+drift above** — the fix closes a real, confirmed code-level gap, but was never expected to fully
+restore July's feel on its own, since kernel/Mesa version changes are very likely also contributing
+and are outside what a code fix can touch. Recorded as a genuine improvement to a real bug, not as
+"the fix," and not oversold as resolving the felt sluggishness completely.
+
 ---
 
 ## 2026-09-25 — KWin offscreen-framebuffer / kernel-trace correlation attempt CONCLUDED: overlap achieved, no correlation found
