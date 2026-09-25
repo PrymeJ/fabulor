@@ -867,6 +867,13 @@ class PanelManager:
         self.sidebar_expanded = False
         self._pending_panel_open = None
         self._sidebar_panel_signal_connected = False
+        # List-mode-only slide-paint-suppression proxy — see _start_library_entry,
+        # _on_library_shown, _close_library_flow, and _teardown_library_list_proxy.
+        self._library_list_proxy: "QLabel | None" = None
+        # True only during the first-open deferral gap between _start_library_entry
+        # scheduling _finish_library_entry_animation and that call actually running —
+        # see both methods and _close_library_flow's own guard.
+        self._library_entry_animation_pending = False
         
         # Widgets (references passed from MainWindow)
         self.sidebar = main_window.sidebar
@@ -1922,6 +1929,73 @@ class PanelManager:
         self.library_panel.show()
         self.library_panel.raise_()
 
+        # On a process's FIRST-EVER Library show, LibraryPanel.showEvent defers a
+        # geometry-correcting re-run of _apply_view_mode by one event-loop tick (see
+        # that method's own comment — a pre-existing, unrelated fix for List/Square
+        # mode's top-margin remainder math needing real, settled layout to compute
+        # correctly). Grabbing the viewport for the slide-paint-suppression proxy
+        # BEFORE that correction lands captures a viewport 1px short — confirmed live,
+        # 2026-09-25: only reproduces on a process's first Library open, and produces a
+        # visible ~1-2px vertical pop at handoff once the corrected viewport takes
+        # over. So: defer the grab (and the animation start with it) by that same one
+        # tick, but ONLY on this first-open case — every subsequent open already reads
+        # correct geometry synchronously (confirmed live) and stays on the fast,
+        # zero-added-latency path.
+        if self.library_panel._first_show_geometry_settled:
+            self._finish_library_entry_animation(panel_w, sidebar_y)
+        else:
+            # A DEDICATED flag, not _is_animating: _is_animating stays True for
+            # library_panel's whole open transition, INCLUDING scenarios (a stuck
+            # `finished` connection) that _close_library_flow's own teardown must be
+            # able to recover from — reusing it here to guard this narrow pre-start
+            # gap would also block that recovery path for the rest of the session.
+            # This flag is true ONLY between scheduling the deferred call below and
+            # _finish_library_entry_animation actually running, and is checked by
+            # _close_library_flow as an ADDITIONAL condition alongside its existing
+            # animation.state() == Running check (see that method).
+            self._library_entry_animation_pending = True
+            QTimer.singleShot(
+                0, lambda: self._finish_library_entry_animation(panel_w, sidebar_y)
+            )
+
+    def _finish_library_entry_animation(self, panel_w, sidebar_y):
+        """Sets up the slide-paint-suppression proxy (List mode only) and starts the
+        library_panel_animation slide. Split out of _start_library_entry so the first-
+        open case can defer this whole block by one event-loop tick — see that
+        method's own comment for why."""
+        self._library_entry_animation_pending = False
+        # List-mode-only slide paint suppression: grab the viewport NOW (content is already
+        # current — see NOTES.md/the design plan for why open-start beats close-and-store) with
+        # hover suppressed, and show a static proxy over the viewport for the duration of the
+        # slide instead of letting QListView repaint its full, expensive delegate-painted content
+        # on every position tick. Measured: QListView paint cost in List mode was 149-187ms of a
+        # ~300ms slide; the grab itself costs ~25-38ms steady-state, paid once up front. Any
+        # failure here must not prevent the slide itself from starting — see the except below.
+        if self.config.get_library_view_mode() == "List":
+            delegate = self.library_panel._delegate
+            try:
+                delegate._suppress_hover_for_grab = True
+                try:
+                    pixmap = self.library_panel._list_view.viewport().grab()
+                finally:
+                    delegate._suppress_hover_for_grab = False
+                top_left = self.library_panel._list_view.viewport().mapTo(
+                    self.library_panel, QPoint(0, 0)
+                )
+                viewport_size = self.library_panel._list_view.viewport().size()
+                proxy = QLabel(self.library_panel)
+                proxy.setPixmap(pixmap)
+                proxy.setGeometry(QRect(top_left, viewport_size))
+                proxy.raise_()
+                proxy.show()
+                self._library_list_proxy = proxy
+                self.library_panel._list_view.viewport().setUpdatesEnabled(False)
+            except Exception:
+                logger.exception(
+                    "[LIST-PROXY] grab/proxy setup failed, falling back to live slide"
+                )
+                self._teardown_library_list_proxy()
+
         # Set animation guard to prevent layout updates during slide
         self.library_panel._is_animating = True
         self.library_panel_animation.finished.connect(self._on_library_shown)
@@ -1943,13 +2017,25 @@ class PanelManager:
             pass
         self.library_panel._is_animating = False
         self.library_panel._list_view.setUpdatesEnabled(True)
+        # The slide-paint-suppression proxy (if one was created) disabled updates on the
+        # VIEWPORT specifically, not the QListView itself — the line above alone does not
+        # restore that. Idempotent/harmless if no proxy was ever created this open.
+        self.library_panel._list_view.viewport().setUpdatesEnabled(True)
         logger.debug(f"[STUTTER-TRACE] t={time.perf_counter():.6f} _on_library_shown: "
                      f"calling refresh()")
         self.library_panel.refresh()
         logger.debug(f"[STUTTER-TRACE] t={time.perf_counter():.6f} _on_library_shown: "
                      f"refresh() returned")
+
+        def _settle_and_teardown_proxy():
+            self.library_panel._list_view.viewport().update()
+            # Tear down the proxy only after requesting the live repaint above, so the
+            # handoff from frozen pixmap to live paint has no visible gap. Idempotent —
+            # safe even if _close_library_flow already tore it down first.
+            self._teardown_library_list_proxy()
+
         # Small delay lets the event loop settle before first paint
-        QTimer.singleShot(16, self.library_panel._list_view.viewport().update)
+        QTimer.singleShot(16, _settle_and_teardown_proxy)
 
     def _stop_stutter_profile(self):
         """TEMPORARY (library-panel stutter investigation, 2026-07-17): stop the profiler
@@ -2301,7 +2387,17 @@ class PanelManager:
         self._pending_panel_open = None
 
     def _close_library_flow(self):
-        if self.library_panel_animation.state() == QAbstractAnimation.State.Running:
+        # The second condition covers the brief window (first-open case only, see
+        # _start_library_entry) between that method deferring _finish_library_entry_
+        # animation and that deferred call actually starting the real animation —
+        # library_panel_animation.state() reads Stopped for that whole window since
+        # nothing has called .start() yet. Deliberately NOT _is_animating: that flag
+        # stays True for library_panel's entire open transition, including scenarios
+        # (a stuck `finished` connection) that _close_library_flow's own teardown must
+        # remain able to recover from — reusing it here would also block that recovery
+        # path for the rest of the session, not just this narrow pre-start gap.
+        if (self.library_panel_animation.state() == QAbstractAnimation.State.Running
+                or self._library_entry_animation_pending):
             logger.debug("[BOOKSWITCH-TRACE] _close_library_flow: already running, no-op return")
             return
         logger.debug(f"t={time.perf_counter():.6f} [BOOKSWITCH-TRACE] _close_library_flow: entry")
@@ -2311,6 +2407,15 @@ class PanelManager:
         # Set animation guard
         self.library_panel._is_animating = True
         self.library_panel._list_view.setUpdatesEnabled(True)
+        # Owns the OTHER end of the slide-paint-suppression proxy's lifecycle (the open path
+        # owns the normal case). Idempotent — a no-op if no proxy is currently up, which is
+        # the ordinary case (open already finished cleanly and tore its own proxy down). If a
+        # proxy WAS still up — e.g. a close landing between the open animation's finish and the
+        # 16ms settle callback, or a stuck `finished` connection that never fired
+        # _on_library_shown at all — this is what prevents it from sliding out frozen over the
+        # live list, and prevents a second proxy being created on top of an orphaned first one
+        # at the next open. See the design plan for the full reasoning.
+        self._teardown_library_list_proxy()
 
         self.library_panel_animation.setStartValue(QPoint(0, sidebar_y))
         self.library_panel_animation.setEndValue(QPoint(-panel_w, sidebar_y))
@@ -2323,6 +2428,19 @@ class PanelManager:
             self.blur_animation.setEndValue(0)
             self.blur_animation.start()
             self._clear_visual_area_clip()
+
+    def _teardown_library_list_proxy(self):
+        """Idempotent teardown for the List-mode slide-paint-suppression proxy (see
+        _start_library_entry). Safe to call whether or not a proxy currently exists — both
+        _on_library_shown's settle callback and _close_library_flow call this unconditionally,
+        so the proxy can never strand regardless of which transition actually runs."""
+        proxy = self._library_list_proxy
+        if proxy is None:
+            return
+        self._library_list_proxy = None
+        proxy.hide()
+        proxy.deleteLater()
+        self.library_panel._list_view.viewport().setUpdatesEnabled(True)
 
     def _on_library_hidden(self):
         logger.debug(f"t={time.perf_counter():.6f} [BOOKSWITCH-TRACE] _on_library_hidden: entry")
