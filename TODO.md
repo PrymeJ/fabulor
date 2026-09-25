@@ -43,6 +43,44 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
   fresh process per condition, `_wire_paint_probe` or an equivalent live sampler, system load
   toggled between runs (a synthetic load generator, not another app, to keep the comparison
   clean) — not another round of live impressions.
+  - **[2026-09-26] First real `_wire_paint_probe` numbers exist now, under LOAD only — still no
+    idle baseline to compare against, so this does NOT yet resolve the open question.** Fabulor
+    was running Chatterbox's text-to-speech conversion "full blast" at the time (Pryme's own
+    words) — i.e. the condition this same entry's live reports called the SMOOTHER one, not the
+    janky one. Under that load, Book Detail's own slide-open, split by underlay (`_stats_probe_context`/
+    `_book_detail_probe_context`, n=8-13 pairs each, nominal 300ms):
+    | Underlay (open) | Wall avg | Max frame gap avg | Worst sample |
+    |---|---|---|---|
+    | Library | 330ms | 43ms | 59ms gap |
+    | Tags | 391ms | 102ms | 284ms gap |
+    | Stats | 530ms | 239ms | 478ms gap (n=8, one sample 766ms wall) |
+
+    Close direction is uniform and clean across all three underlays (~307-309ms wall, ~20-23ms
+    gap) — the cost is entirely on OPEN, and scales with underlay exactly matching the
+    already-documented Stats > Tags > Library severity ranking, but harder than any prior number:
+    a 478ms max frame gap on a 300ms-nominal animation is a genuinely dropped frame, not sampling
+    noise. Stats' and Settings' OWN panel-slide (independent of Book Detail, now split by active
+    tab via the same `_stats_probe_context`) showed NO such problem under the same load — tight,
+    near-nominal timing (17-30ms max gap) regardless of Month/Week/Day/Overall/Themes. So this is
+    specifically "Book Detail is expensive to open when Stats is the underlay," not "Stats itself
+    is slow." **This is a WORST-CASE-UNDER-LOAD data point, not a worse-than-idle one** — no idle
+    measurement of Book-Detail-over-Stats exists yet to compare against; that comparison is
+    deferred to a follow-up session (relaunch fresh with Chatterbox stopped, repeat the identical
+    sequence). Until that idle run exists, this neither confirms nor refutes the "smoother under
+    load" pattern — it only proves the Stats-underlay cost is real and large under at least one
+    condition.
+  - **Probe capability gap closed the same night, while chasing the above**: `_wire_timing_probe`/
+    `_wire_paint_probe`'s `stats` wiring previously carried no per-tab context (unlike
+    `book_detail`, which already had `_book_detail_probe_context` for its underlay) — a run with
+    several Stats open/closes had no way to attribute any individual pair back to which tab
+    (Month/Week/Day/Overall/⚙) was active, short of an exact click-order transcript reconstructed
+    from memory, which isn't reasonable to ask for. New `_stats_probe_context(panel_manager)`
+    (`panels.py`, mirrors `_book_detail_probe_context`'s shape — reads real Qt state at start
+    time via `stats_panel.tabs.tabText(tabs.currentIndex())`, not inferred from history) is now
+    wired into both `_wire_timing_probe`'s generic `animations` loop and the dedicated
+    `_wire_paint_probe("stats", ...)` call site. This is a real, permanent capability addition
+    (not a one-off script) — every future Stats measurement session gets tab attribution for
+    free.
 
 ### Do NOT extend the Library List/Timeline grab-and-proxy paint-suppression pattern to Book Detail or Stats' Week/Month tabs without new, hard evidence — a deliberate non-fix, not an oversight
 - [2026-09-25] After shipping the Library List mode fix (see TODO_ARCHIVE.md) and confirming the

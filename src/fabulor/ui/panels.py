@@ -86,6 +86,27 @@ def _book_detail_probe_context(panel_manager: "PanelManager") -> str:
     return f"{underlay}({direction}{detail})"
 
 
+def _stats_probe_context(panel_manager: "PanelManager") -> str:
+    """Which Stats tab is active at the moment the stats panel's own slide starts, added
+    2026-09-26 to close a real measurement gap: Pryme asked to measure the panel opening with
+    Month/Week/Themes as the active tab (a panel reopens on whichever tab it was last closed on
+    — this is about the SLIDE cost with that tab loaded, not the tab-switch itself), but the
+    stats `[PANEL-TIMING]`/`[PAINT]` lines carried no tab label, so a run with several stats
+    open/closes couldn't be split back into "which pair was Month, which was Week" after the
+    fact — confirmed live the same night: a run logged 12 stats open/close pairs with no way to
+    attribute any of them to a specific tab without an exact click-order transcript, which
+    Pryme correctly declined to reconstruct from memory. Read the SAME way
+    _book_detail_probe_context reads direction — off real Qt state at start time, not inferred
+    from history — via `stats_panel.tabs.tabText(currentIndex())`."""
+    tabs = getattr(panel_manager.stats_panel, "tabs", None)
+    if tabs is None:
+        return "?"
+    try:
+        return tabs.tabText(tabs.currentIndex())
+    except (RuntimeError, AttributeError):
+        return "?"
+
+
 def install_panel_timing_probe(panel_manager: "PanelManager") -> None:
     """See _PANEL_TIMING_ENABLED's comment above. No-op unless that env var is set.
 
@@ -137,12 +158,20 @@ def install_panel_timing_probe(panel_manager: "PanelManager") -> None:
             continue
         # book_detail is the one panel openable from two different underlays
         # (Library or Stats/Tags) — this is exactly what the investigation this
-        # probe was built for needs to distinguish, so it alone gets a context
-        # callback read at start time rather than a static name.
-        context_fn = (
-            (lambda pm=panel_manager: _book_detail_probe_context(pm))
-            if name == "book_detail" else None
-        )
+        # probe was built for needs to distinguish, so it gets a context
+        # callback read at start time rather than a static name. stats gets the
+        # same treatment as of 2026-09-26 (see _stats_probe_context) — a panel
+        # reopens on whichever tab it was last closed on, and a run with several
+        # stats open/closes had no way to attribute any single pair to a specific
+        # tab (Month/Week/Day/...) after the fact without an exact click-order
+        # transcript, which isn't a reasonable thing to ask Pryme to reconstruct
+        # from memory.
+        if name == "book_detail":
+            context_fn = lambda pm=panel_manager: _book_detail_probe_context(pm)
+        elif name == "stats":
+            context_fn = lambda pm=panel_manager: _stats_probe_context(pm)
+        else:
+            context_fn = None
         _wire_timing_probe(name, anim, context_fn)
 
     # INSTALL-ORDER NOTE: both diagnostic probes below wrap book_detail_panel_animation.start()
@@ -209,10 +238,12 @@ def install_panel_timing_probe(panel_manager: "PanelManager") -> None:
                                        name="library")
         _wire_event_dispatch_probe("library", panel_manager.library_panel_animation, panel_manager.library_panel)
     if panel_manager.stats_panel_animation is not None and panel_manager.stats_panel is not None:
-        _wire_paint_probe("stats", panel_manager.stats_panel_animation, panel_manager.stats_panel)
+        _wire_paint_probe("stats", panel_manager.stats_panel_animation, panel_manager.stats_panel,
+                           context_fn=lambda pm=panel_manager: _stats_probe_context(pm))
         _wire_event_filter_cost_probe(panel_manager.stats_panel_animation, panel_manager,
                                        name="stats")
-        _wire_event_dispatch_probe("stats", panel_manager.stats_panel_animation, panel_manager.stats_panel)
+        _wire_event_dispatch_probe("stats", panel_manager.stats_panel_animation, panel_manager.stats_panel,
+                                    context_fn=lambda pm=panel_manager: _stats_probe_context(pm))
 
 
 def _wire_paint_probe(name: str, anim: QPropertyAnimation, panel: QWidget, context_fn=None) -> None:
