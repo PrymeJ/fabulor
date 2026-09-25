@@ -1,3 +1,143 @@
+## 2026-09-25 — TasselOverlay's ~30fps sway timer ruled out by architecture, before a live test was even needed — it's Timeline-tab-scoped, and Book Detail can only open from Day/Week/Month
+
+Direct follow-up to the entry below. The next named candidate after event-filter dispatch cost was
+`TasselOverlay._sway_timer` — a ~30fps (33ms interval) `QTimer` unique to Stats (Library/Tags have
+no equivalent), which calls `self.update()` (a real repaint request) on every tick and has an
+`isVisible()` safety net that, per this session's own established occlusion pattern, seemed
+plausibly capable of staying `True` — and therefore still ticking — while Book Detail occludes
+Stats. A probe (`_wire_event_filter_cost_probe`, extended to wrap
+`StatsPanel._tassel._on_sway_tick`) was written and shipped to test this directly.
+
+**Pryme caught the actual scope question before any test was needed**: "Tassel is in a different
+tab. I can interact with it separately, but I can't open the book details over the Timeline tab."
+This is correct and, on checking the code, turns out to be architecturally decisive, not just
+practically inconvenient: `StatsPanel._build_time_tab()` constructs `widget` with
+`objectName="stats_time_tab"` — **this IS the Timeline tab's own `QTabWidget` page** — and
+`self._tassel = TasselOverlay(widget)` parents the tassel directly inside it (`stats_panel.py:4027`,
+inside `_build_time_tab`, not in any shared/always-visible container). Since `QTabWidget` hides
+every non-current page, `TasselOverlay` is only a member of the visible widget tree — and only
+receives `showEvent`/keeps `_sway_timer` running — while the **Timeline tab specifically** is
+active. Book Detail only opens from clicking a book ROW, which exists only on the Day/Week/Month
+tabs — Timeline has no book rows. So a Book Detail slide sourced from Stats can, by construction,
+never happen while Timeline (and therefore the tassel) is the visible tab.
+
+**This rules out the sway timer as a candidate WITHOUT needing a live test** — every sample already
+collected for the severity-ranking measurement (all sourced from clicking a book row) is
+guaranteed to have had the tassel already hidden and its `_sway_timer` already stopped (via
+`TasselOverlay.hideEvent`, confirmed at `stats_panel.py:3249`) before Book Detail ever opened.
+Checked the already-captured `[PANEL-TIMING] book_detail EVENTFILTER` log for any `sway` mentions
+as a sanity pass — found none, but this is NOT treated as confirming evidence, since that log
+predates the sway-timer probe extension being added at all (the instrumentation didn't exist yet
+at capture time); the absence there is uninformative, not corroborating. The real, load-bearing
+reason this is closed is the tab-page parenting fact above, verified by reading
+`_build_time_tab`/`TasselOverlay.__init__`/`.hideEvent` directly, not by an absence in a log that
+was never capable of showing the opposite.
+
+**Net effect**: the sway timer's own `covers_opaquely()` docstring (found while checking this,
+`stats_panel.py` ~3985) already documents a DIFFERENT, real, but unrelated cost of the same timer —
+`TransportBarBlurOverlay`'s blur-grab cycle delays it from its nominal 33ms to an effective ~44ms
+(22.8fps) specifically because the Timeline tab's OWN opaque background makes grabbing/blurring
+underneath it wasted work the blur overlay already knows to skip. That is a real, previously-found,
+already-handled cost internal to the Timeline tab's own visual smoothness — unrelated to Book
+Detail's slide, and not reopened here.
+
+**Follow-up, same session — every other named Stats-owned timer checked, all ruled out or
+inapplicable:**
+- `StatsPanel._kbdnav_hover_poll` (60ms `QTimer`) is gated on keyboard navigation actually having
+  been used (`_enter_kbdnav_hover_mode`, called only from keyboard row-selection, never from a
+  mouse click) — every sample collected so far used mouse clicks to open Book Detail, so this
+  timer was very likely never started during any of them. Not tab-scoped like the tassel, so it
+  remains a genuinely open candidate IF keyboard navigation is ever mixed into a future test
+  session, but doesn't explain the mouse-driven data already collected.
+- `StatsRowListView._scroll_active_timer` — `setSingleShot(True)`, only fires once, only after a
+  real horizontal scroll of a `FinishedScrollRow`. Not a continuous per-tick cost; would need the
+  narrow coincidence of scrolling at the exact moment Book Detail opens. Not a systematic
+  explanation.
+- The shared 200ms `ui_timer`/`_update_ui_sync` heartbeat (`app.py`) — checked its actual sync
+  sub-methods (`_sync_playback_state`/`_sync_ui_render`/`_sync_progress_sliders`/
+  `_sync_chapter_ui`/`_sync_persistence`) directly for any panel-specific branching. Found exactly
+  ONE such branch in the whole block: `if self.library_panel.isVisible():
+  self.library_panel.update_current_book_progress()` — Stats and Tags have NO equivalent special
+  case in this shared timer at all. Since Book Detail occludes rather than hides its underlay,
+  `library_panel.isVisible()` stays `True` during a Library-sourced slide too — meaning if this
+  branch matters at all, it would add extra work to LIBRARY's slide, not Stats'. This is the
+  opposite of what would explain the reported ranking, so it's also ruled out as the explanation
+  (though it is informative: it shows the shared timer isn't the source of Stats' disadvantage
+  either).
+
+**Where this leaves the investigation**: three real, systematic, checkable candidates (widget
+paint cost, app-wide event-filter dispatch cost, and every Stats-owned periodic
+timer/heartbeat branch) have now all been checked directly against real captured data or code
+reading, and none of them explain the Stats > Tags > Library severity ranking on frame-delivery
+timing. The ranking itself remains real and measured (see the entry below — `max_frame_gap`/
+`jank_frame_rate` track it cleanly across three independent runs). What's causing it is now a
+genuinely harder question than "which specific piece of Stats' own code is doing more work" —
+the checked candidates covered the most obvious main-thread-competition explanations and came up
+empty. Not yet considered: whether Stats' widget TREE DEPTH itself (not paint cost, not filter
+cost, but literal Qt event-propagation/geometry-recalculation overhead simply from having more
+nested widgets to walk on each animation tick, independent of what any single widget's paintEvent
+or eventFilter actually does) could produce this pattern — this would be a different mechanism
+than anything checked so far and has not been designed or tested.
+
+## 2026-09-25 — Event-filter dispatch cost ALSO ruled out as the explanation — real, measured, but mismatched with the severity ranking; Tags' GridHoverTracker cost flagged as a separate, genuine issue worth its own fix
+
+Direct follow-up to the entry below this one, which found paint cost doesn't track the Stats >
+Tags > Library severity ranking but frame-delivery timing (`max_frame_gap`/`jank_frame_rate`)
+does. The next named candidate was app-wide `QApplication` event filter dispatch cost during the
+slide — `StatsPanel.eventFilter`, `TagManagerWidget.eventFilter`, and `hover_tracker.py`'s
+`ScrollHoverTracker`/`GridHoverTracker` all install via
+`QApplication.instance().installEventFilter(self)` (confirmed app-wide, confirmed still live
+during a Book Detail slide since occlusion doesn't fire `hideEvent`).
+
+**New probe** (`_wire_event_filter_cost_probe`, `panels.py`): wraps each candidate's live INSTANCE
+`eventFilter` method (never the class — see this session's own earlier class-vs-instance
+monkeypatching gotcha) with a timing wrapper, scoped to the Book Detail animation's start/finish
+only, same shape as `_wire_paint_probe`. Logs `[PANEL-TIMING] book_detail EVENTFILTER
+total_filter_ms=... total_filter_calls=... from='...' detail=...`.
+
+**Real, measured result — genuinely surprising, does NOT confirm the theory being tested:**
+
+| Source  | n  | avg filter_ms | max filter_ms | avg filter_calls | max filter_calls |
+|---------|----|--------------| --------------|-------------------|-------------------|
+| library | 18 | 0.000        | 0.000         | 0.0               | 0                 |
+| stats   | 10 | 8.773        | 16.670        | 1148.7            | 2816              |
+| tags    | 14 | 61.868       | 93.240        | 1789.5            | 3545              |
+
+Library: zero filter cost, zero calls, every single time — clean confirmation that nothing
+competes for the main thread via an app-wide filter during a Library-sourced slide. Stats: real,
+non-trivial cost (avg 8.8ms, ~1149 calls). **Tags: dramatically higher cost than Stats — 7x
+higher on average (61.9ms vs 8.8ms), driven almost entirely by `tags_panel._thumb_hover`
+(`GridHoverTracker`), not `tags_panel`'s own filter** — e.g. one sample: `tags_panel=19.99ms/1779x,
+tags_panel._thumb_hover=63.55ms/1766x`. The hover tracker alone regularly costs 2-3x what the
+panel's own filter does.
+
+**This does NOT explain the severity ranking — it contradicts it.** Tags has by far the highest
+event-filter dispatch cost of the three, yet Tags measured LESS janky than Stats on frame-gap
+timing (avg `max_frame_gap` 49.3ms for Tags vs. 58.3ms for Stats, from the entry below). If
+event-filter cost were the driver of frame-delivery delay, Tags should be worse than Stats, not
+better. It isn't. **Event-filter dispatch cost is ruled out as THE explanation for the severity
+ranking**, joining paint cost as a real, measured, but non-explanatory factor.
+
+**Two things worth keeping separate from that negative result, both real on their own merits:**
+1. **Tags' `GridHoverTracker` (`_thumb_hover`) event-filter cost (up to 93ms/slide, ~3500 calls) is
+   a genuine, independently-worth-fixing cost** — this is exactly the TODO.md "Remaining open
+   question, not started" item (hover_tracker.py's trackers have no occlusion guard, unlike the
+   guard shipped for `StatsPanel.eventFilter` earlier tonight). It doesn't explain THIS
+   investigation's severity ranking, but it's real overhead during every Tags-sourced Book Detail
+   open regardless, and the same occlusion-guard shape already proven twice (Tags' own
+   `TagManagerWidget.eventFilter`, then `StatsPanel.eventFilter`) would very likely apply here too.
+   Not yet attempted — flagged, not started.
+2. **Stats' own filter cost (8.8ms avg, ~1149 calls) is real but modest** — smaller than Tags'
+   hover-tracker cost in absolute terms, yet Stats is the panel with the worse frame-delivery
+   problem. This reinforces that whatever's actually causing Stats' frame-delivery delay is
+   NOT (primarily) event-filter dispatch cost, at least not on its own.
+
+**Next candidate, not yet checked**: the 200ms `ui_timer` heartbeat (`_update_ui_sync`) landing
+mid-slide — specifically whether Stats' own tab-refresh path (heatmap/streak-grid recompute,
+`StatsRowListView` model refresh, or similar) does meaningfully more work per tick than whatever
+Library/Tags have running at the same cadence, and whether that tick's work is what's actually
+delaying `valueChanged` ticks during a Stats-sourced slide.
+
 ## 2026-09-25 — Severity ranking now measured, not just felt: Stats > Tags > Library holds on frame-DELIVERY timing, and does NOT hold on paint cost — the two are cleanly separated
 
 Direct follow-up to the entry below this one. Pryme asked what angles were left on Stats

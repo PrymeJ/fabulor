@@ -132,6 +132,14 @@ def install_panel_timing_probe(panel_manager: "PanelManager") -> None:
         _wire_paint_probe("book_detail", panel_manager.book_detail_panel_animation,
                            panel_manager.book_detail_panel,
                            context_fn=lambda pm=panel_manager: pm._book_detail_underlay)
+        # 2026-09-25: paint cost was checked (above) and ruled out — identical across
+        # Library/Stats/Tags. The real signal is in _wire_timing_probe's max_frame_gap/
+        # jank_frame_rate, which DOES track the reported Stats > Tags > Library ranking. This
+        # probe tests the next candidate: are Stats'/Tags' app-wide QApplication event filters
+        # (StatsPanel.eventFilter, TagManagerWidget.eventFilter, hover_tracker.py's
+        # ScrollHoverTracker/GridHoverTracker) competing for main-thread time DURING the slide,
+        # delaying the animation's own ticks. See NOTES.md, "Severity ranking now measured..."
+        _wire_event_filter_cost_probe(panel_manager.book_detail_panel_animation, panel_manager)
 
 
 def _wire_paint_probe(name: str, anim: QPropertyAnimation, panel: QWidget, context_fn=None) -> None:
@@ -226,6 +234,137 @@ def _wire_paint_probe(name: str, anim: QPropertyAnimation, panel: QWidget, conte
         state["per_widget_calls"] = None
         state["orig_paint_events"] = None
         state["context"] = None
+
+    orig_start = anim.start
+
+    def _traced_start(*args, **kwargs):
+        _on_start()
+        return orig_start(*args, **kwargs)
+
+    anim.start = _traced_start
+    anim.finished.connect(_on_finished)
+
+
+def _wire_event_filter_cost_probe(anim: QPropertyAnimation, panel_manager: "PanelManager") -> None:
+    """Measures app-wide QApplication event filter dispatch cost DURING a single Book Detail
+    slide, added 2026-09-25 after _wire_paint_probe ruled out paint cost as the explanation for
+    Pryme's reported Stats > Tags > Library jank severity ranking (paint cost was identical
+    across all three; _wire_timing_probe's max_frame_gap/jank_frame_rate tracked the ranking
+    instead — see NOTES.md, "Severity ranking now measured, not just felt"). This probe tests
+    the next candidate directly: do StatsPanel.eventFilter / TagManagerWidget.eventFilter /
+    hover_tracker.py's ScrollHoverTracker/GridHoverTracker — all installed via
+    QApplication.instance().installEventFilter(self), confirmed app-wide, confirmed still live
+    during a Book Detail slide (Book Detail occludes rather than hides its underlay, so
+    hideEvent never fires — see StatsPanel's own OCCLUSION GUARD comment) — actually cost
+    measurable main-thread time WHILE the slide's own animation ticks are trying to run.
+
+    Wraps each candidate's live INSTANCE eventFilter method (never the class — see this
+    session's own earlier finding: class-level monkeypatching of an already-installed
+    eventFilter is silently invisible to Qt's C++ dispatch, which binds to the method resolved
+    at installEventFilter() call time) with a timing wrapper, ONLY between this animation's
+    start and finish — same scoped-install/scoped-remove shape as _wire_paint_probe, so nothing
+    is left wrapped outside the measurement window.
+
+    Candidates: StatsPanel.eventFilter (panel_manager.stats_panel), TagManagerWidget.eventFilter
+    (panel_manager.tags_panel), Tags' own two hover trackers (_row_hover, _thumb_hover — both
+    ScrollHoverTracker/GridHoverTracker instances, also app-wide, per this file's TODO.md
+    "Remaining open question" note on hover_tracker.py never having gotten an occlusion guard),
+    and (added same day, second pass) StatsPanel._tassel._on_sway_tick — a ~30fps QTimer tick
+    unique to Stats, checked after the eventFilter-only version of this probe ruled out filter
+    cost as the severity-ranking explanation. Stats has no hover_tracker instance of its own
+    (confirmed by grep, 2026-09-25 — see NOTES.md's "RETRACTED... Stats installs TWO app-wide
+    filters" correction).
+    """
+    candidates = []  # (key, obj, attr_name) — attr_name lets the wrapper generalize past eventFilter
+    stats_panel = getattr(panel_manager, "stats_panel", None)
+    if stats_panel is not None and hasattr(stats_panel, "eventFilter"):
+        candidates.append(("stats_panel", stats_panel, "eventFilter"))
+    tags_panel = getattr(panel_manager, "tags_panel", None)
+    if tags_panel is not None and hasattr(tags_panel, "eventFilter"):
+        candidates.append(("tags_panel", tags_panel, "eventFilter"))
+        for tracker_attr in ("_row_hover", "_thumb_hover"):
+            tracker = getattr(tags_panel, tracker_attr, None)
+            if tracker is not None and hasattr(tracker, "eventFilter"):
+                candidates.append((f"tags_panel.{tracker_attr}", tracker, "eventFilter"))
+    # 2026-09-25, added after the eventFilter-only version of this probe ruled out filter cost
+    # as the explanation (Tags' filter cost is 7x Stats' yet Tags is LESS janky — see NOTES.md).
+    # Next candidate: TasselOverlay._sway_timer, a ~30fps (33ms) QTimer independent of the
+    # shared 200ms ui_timer, unique to Stats (Library/Tags have no equivalent). Its own
+    # _on_sway_tick has an isVisible() safety net, but that checks the TasselOverlay WIDGET's
+    # own Qt visibility flag, not whether Book Detail is occluding it — and per this session's
+    # established finding, occlusion never fires hideEvent, so this timer may keep ticking (and
+    # calling self.update(), a real repaint request) the entire time Book Detail is open on top
+    # of Stats. Checking whether it actually does, not assuming.
+    tassel = getattr(stats_panel, "_tassel", None) if stats_panel is not None else None
+    if tassel is not None and hasattr(tassel, "_on_sway_tick"):
+        candidates.append(("stats_panel._tassel._on_sway_tick", tassel, "_on_sway_tick"))
+
+    state = {"active": False, "per_obj_ms": None, "per_obj_calls": None, "orig_methods": None}
+
+    def _on_start():
+        if not _PANEL_TIMING_ENABLED:
+            return
+        per_obj_ms = {}
+        per_obj_calls = {}
+        orig_methods = {}
+        for key, obj, attr_name in candidates:
+            per_obj_ms[key] = 0.0
+            per_obj_calls[key] = 0
+            orig = getattr(obj, attr_name)
+            orig_methods[(obj, attr_name)] = orig
+
+            if attr_name == "eventFilter":
+                def _make_wrapper(orig_fn, k):
+                    def _wrapped(watched, event, _orig=orig_fn, _k=k):
+                        t0 = time.perf_counter()
+                        result = _orig(watched, event)
+                        dt_ms = (time.perf_counter() - t0) * 1000
+                        per_obj_ms[_k] += dt_ms
+                        per_obj_calls[_k] += 1
+                        return result
+                    return _wrapped
+            else:
+                # A timer-tick callback (e.g. TasselOverlay._on_sway_tick) — no args, no
+                # QObject.eventFilter signature to preserve.
+                def _make_wrapper(orig_fn, k):
+                    def _wrapped(_orig=orig_fn, _k=k):
+                        t0 = time.perf_counter()
+                        result = _orig()
+                        dt_ms = (time.perf_counter() - t0) * 1000
+                        per_obj_ms[_k] += dt_ms
+                        per_obj_calls[_k] += 1
+                        return result
+                    return _wrapped
+
+            setattr(obj, attr_name, _make_wrapper(orig, key))
+
+        state["active"] = True
+        state["per_obj_ms"] = per_obj_ms
+        state["per_obj_calls"] = per_obj_calls
+        state["orig_methods"] = orig_methods
+
+    def _on_finished():
+        if not state["active"]:
+            return
+        state["active"] = False
+        for (obj, attr_name), orig in state["orig_methods"].items():
+            try:
+                setattr(obj, attr_name, orig)
+            except RuntimeError:
+                pass  # object was deleted mid-animation; nothing to restore
+
+        per_ms = state["per_obj_ms"]
+        per_calls = state["per_obj_calls"]
+        total_ms = sum(per_ms.values())
+        total_calls = sum(per_calls.values())
+        ctx = panel_manager._book_detail_underlay
+        detail = ", ".join(f"{k}={per_ms[k]:.2f}ms/{per_calls[k]}x" for k in per_ms if per_calls[k] > 0)
+        logger.warning(
+            f"[PANEL-TIMING] book_detail EVENTFILTER total_filter_ms={total_ms:.2f} "
+            f"total_filter_calls={total_calls} from={ctx!r} detail={detail}")
+        state["per_obj_ms"] = None
+        state["per_obj_calls"] = None
+        state["orig_methods"] = None
 
     orig_start = anim.start
 

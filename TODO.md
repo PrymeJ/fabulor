@@ -72,15 +72,31 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
     much larger sample) shows the reported ranking cleanly on three independent metrics:
     avg max_frame_gap 40.0/49.3/58.3ms and jank_frame_rate 44.8/51.0/55.4% for library/tags/stats
     respectively, with Stats' single worst frame gap (349.3ms) more than double either other
-    panel's worst. **Next step, not yet started**: correlate this against Stats'
-    `eventFilter`/`hover_tracker.py` app-wide-filter dispatch cost (already-documented open
-    question elsewhere in this file — "why does Stats' one filter outpace Tags' two combined") and
-    against the 200ms `ui_timer` heartbeat landing mid-slide, since paint cost is now ruled out and
-    the remaining candidates are all main-thread scheduling/dispatch competition, not rendering
-    cost. Also not yet checked: whether this ordering holds with playback OFF (all samples so far
-    had a book playing) — would help isolate `transport_bar_blur`'s per-tick re-grab cost as a
-    confound vs. not. Full numbers and reasoning: NOTES.md, "Severity ranking now measured, not
-    just felt."
+    panel's worst.
+  - **[2026-09-25] Three further candidates checked, ALL ruled out or inapplicable — this is now
+    a harder question than "which piece of Stats' own code does more work."** (1) Event-filter
+    dispatch cost (`StatsPanel.eventFilter`, `TagManagerWidget.eventFilter`,
+    `hover_tracker.py`'s trackers, via a new `_wire_event_filter_cost_probe`): real numbers, but
+    Tags' cost (avg 61.9ms, driven by `GridHoverTracker`) is 7x Stats' (8.8ms) — the OPPOSITE of
+    what would explain Tags being less janky than Stats. Ruled out. (2) `TasselOverlay`'s ~30fps
+    sway timer: ruled out architecturally, no live test even needed — it's parented inside the
+    Timeline tab's own page (`stats_panel.py:4027`, `_build_time_tab`), so `QTabWidget` hides it
+    (stopping the timer via `hideEvent`) whenever Day/Week/Month is active — and Book Detail can
+    only open from clicking a book row, which only exists on Day/Week/Month. Structurally cannot
+    overlap. (3) Every other Stats-owned `QTimer` checked: `_kbdnav_hover_poll` (60ms) is gated on
+    keyboard nav having been used, inactive during the mouse-driven test samples so far;
+    `_scroll_active_timer` is single-shot and scroll-triggered, not continuous; the shared 200ms
+    `ui_timer` has exactly one panel-specific branch in its whole sync path and it's for LIBRARY
+    (`library_panel.update_current_book_progress()`), not Stats — if anything this would
+    disadvantage Library's own slide, the opposite of the reported ranking. **Not yet considered**:
+    whether Stats' widget tree DEPTH itself (Qt event-propagation/geometry overhead from more
+    nested widgets, independent of what any widget's paint/filter code actually does) could produce
+    this pattern — a different mechanism than anything checked, not yet designed or tested. Also
+    still not checked: whether the ranking holds with playback OFF (all samples so far had a book
+    playing — would help isolate `transport_bar_blur`'s per-tick re-grab cost as a confound).
+    Full numbers and reasoning across all three checks: NOTES.md, entries titled "Severity ranking
+    now measured, not just felt," "Event-filter dispatch cost ALSO ruled out," and "TasselOverlay's
+    ~30fps sway timer ruled out by architecture."
 
 ### Transport-bar blur got visibly stuck in the background — one-off, not reproducible, cause unknown
 - [2026-09-23] Pryme's own report, verbatim: "I was trying to open Settings or the Library, my
