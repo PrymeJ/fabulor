@@ -33,19 +33,34 @@ fully installed and fully live for the panel's whole open duration, taxing every
 Detail's own internally-generated events (paint, mouse-tracking, focus, the slide animation's
 `valueChanged` ticks) on top of whatever it would already process for itself.
 
-**This is additive, and Stats pays it twice over.** Library installs ZERO app-wide filters while
-visible — its own filter is viewport-scoped, so it costs nothing extra while occluded. Tags
-installs TWO (`TagManagerWidget`'s own + `GridHoverTracker`'s), which is why its cProfile dump
-(0.397s, 46,940 calls) is meaningfully cheaper than a full grab/blur-carrying Stats dump but still
-shows real `eventFilter` volume (`hover_tracker.py:368`, 1288 calls; `tag_manager.py:1777`, 1301
-calls) that Library's dump has none of at all. **Stats installs TWO of its own kind** —
-`StatsPanel.eventFilter` AND `ScrollHoverTracker`'s — landing at 5,388 calls to
-`app.py:6604(eventFilter)` (the app-wide dispatcher every one of these filters chains through)
-versus Library's 1,474, a ~3.7x difference in raw event-filter-dispatch volume alone, before any
-per-call work inside those filters is even counted. Confirmed the volume difference is real
-architecture, not incidental: `grep -c "QApplication.instance().installEventFilter"` returns 1 hit
-in `library.py`'s own file (none of them app-wide) vs. multiple in `stats_panel.py`/
-`tag_manager.py`/`hover_tracker.py`, all app-wide.
+**RETRACTED (2026-09-25, caught while tracing risk for a possible fix, not live-reported): the
+"Stats pays it twice over / installs TWO app-wide filters" claim immediately below was wrong.**
+Checked directly by re-reading the actual Frosty/Stats cProfile dump line-by-line rather than
+trusting the earlier summary: it contains ONLY `stats_panel.py:4892(eventFilter)` (5,388 calls) —
+`hover_tracker.py:368` never appears in it at all. That line came from a DIFFERENT dump (Tags'),
+conflated with Stats' own while writing the original version of this entry. **`StatsRowListView`
+does not use `hover_tracker.py`** — it drives its own `_hovered_row` directly via
+`mouseMoveEvent`/`entered` (`stats_panel.py:948-1536`), a per-widget mechanism with no
+`QApplication`-wide filter of its own. `hover_tracker.py`'s `ScrollHoverTracker`/`GridHoverTracker`
+are used ONLY by Tags (`tag_manager.py`'s `_row_hover`/`_thumb_hover`), confirmed by
+`grep -rn "hover_tracker\|ScrollHoverTracker\|GridHoverTracker" src/fabulor/ui/stats_panel.py`
+returning zero hits.
+
+**Corrected picture**: Stats installs exactly ONE app-wide filter (`StatsPanel.eventFilter`
+itself); Tags installs TWO (`TagManagerWidget`'s own + whichever of `ScrollHoverTracker`/
+`GridHoverTracker` is currently active); Library installs zero. Stats' single filter still
+processes 5,388 calls in the sampled dump — more than Tags' combined two-filter total in ITS own
+dump (1301 + 1288 = 2589) — so **Stats' one filter alone is doing more raw dispatch work than
+Tags' two filters combined**, meaning "number of app-wide filters installed" does not fully
+explain the ordering by itself; `StatsPanel.eventFilter`'s own per-call cost or a difference in
+how much event traffic Book Detail's Stats-tab content generates versus its Tags-tab content are
+both still open, unexamined candidates. This is a genuine, only-partially-resolved question, not
+settled by the filter-count theory alone — flagged honestly rather than smoothed over.
+
+Library installs ZERO app-wide filters while visible — its own filter is viewport-scoped, so it
+costs nothing extra while occluded. Confirmed directly, not assumed:
+`grep -c "QApplication.instance().installEventFilter"` returns 0 in `library.py`, vs. 1 in
+`stats_panel.py`, 3 in `tag_manager.py`, 2 in `hover_tracker.py` — all real, all app-wide.
 
 ### Not yet fixed — this entry is diagnosis, not a shipped change
 
