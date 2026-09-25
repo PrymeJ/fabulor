@@ -1,3 +1,43 @@
+## 2026-09-25 — First real same-boot KWin offscreen-framebuffer hit, and a 15-minute trace running to try to catch the next one with overlapping data
+
+Direct continuation of the entry below (boot-boundary correction, 115 not 16). Plan was to stay on
+the current boot and periodically check `journalctl --user -b 0 | grep -c "offscreen framebuffer"`
+during ordinary app use, since the error recurs in irregular bursts (previous boot's `kwin_wayland`
+occurrences: gaps ranging 1.3-107 minutes, median ~7.4 minutes excluding one long outlier).
+
+**First real hit on this boot**, found on Pryme's check at 07:26:
+
+```
+Sep 25 07:19:01 localhost.localdomain kwin_wayland[2271]: 0x1: GL_INVALID_VALUE in glTexStorage2D(width, height or depth < 1)
+Sep 25 07:19:01 localhost.localdomain kwin_wayland[2271]: Invalid framebuffer status:  "GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT"
+Sep 25 07:19:01 localhost.localdomain kwin_wayland[2271]: Failed to create an offscreen framebuffer
+```
+
+Same three-line signature as every prior occurrence, confirmed still reproducing on this fresh
+boot (~29 minutes after Fabulor was relaunched at 06:53) — this alone is useful: the bug is not a
+one-off artifact of the previous boot's specific state, it recurs under ordinary conditions on a
+clean boot too.
+
+**No kernel trace was running at 07:19:01** — the only trace captured tonight covers 06:56:44-
+06:57:44, far earlier, zero overlap. Started a new 15-minute `trace-cmd` capture
+(`i915:intel_plane_update_arm`/`_noarm` only this time, dropped `sched:sched_switch` to keep the
+file smaller for a longer duration) at ~07:26, running in the background while Pryme continued
+normal use. **Result: the trace ran its full 15 minutes (07:26-07:41) with no second
+offscreen-framebuffer hit landing inside it** — checked twice during the window (07:36, 07:41) and
+once more after it finished, all showing the same single 07:19:01 occurrence, unchanged. The
+trace file itself is preserved (`/tmp/fabulor_correlate_trace.dat`, 4.9MB) in case a future
+session wants to re-attempt this specific correlation, but as captured it has no matching KWin
+error inside its window and can't be used for the intended cross-reference.
+
+**Session ending here** (Pryme: "I'll go to sleep soon") — this specific cross-reference (a real,
+same-boot KWin offscreen-framebuffer hit landing inside an active kernel trace window) was not
+achieved tonight, despite two proactive trace attempts. This is genuinely just a timing/luck
+problem given the error's irregular, sometimes 7+ minute-apart recurrence — not a flaw in the
+method. **Next session's most direct path**: start a trace covering a LONGER window (the
+15-minute attempt here may simply have been too short relative to the actual gap distribution) or
+revisit the plan once there's a longer natural-use session to work with, rather than trying to
+force a short, deliberate capture window.
+
 ## 2026-09-25 — Cross-referencing the kernel trace against KWin's offscreen-framebuffer errors hit a real boundary: a boot switch split the two signals into different journal scopes; corrected count is 115, not 16, and 21 of those are under kwin_wayland specifically
 
 Direct follow-up attempting the "not yet started" next step from the entry directly below. Tried

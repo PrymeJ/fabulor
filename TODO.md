@@ -148,13 +148,15 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
     `kwin_x11` (the brief NVIDIA-testing session, not yet normalized by duration). Real bug, both
     backends, count previously undercounted for an unknown reason. Full detail: NOTES.md, "Cross-
     referencing the kernel trace against KWin's offscreen-framebuffer errors hit a real boundary."
-  - **Current plan, in progress**: stay on the current boot (no more session switches) and let the
-    KWin error recur naturally during ordinary app use — it comes in irregular bursts sometimes 7+
-    minutes apart, so forcing it with a long orchestrated trace isn't the efficient approach.
-    Periodically check `journalctl --user -b 0 | grep -c "offscreen framebuffer"`; once a real hit
-    lands, correlate that specific timestamp against whatever kernel trace data covers that
-    moment. This is the actual mechanism-level cross-reference the ranking investigation needs —
-    not yet completed.
+  - **[2026-09-25] One real same-boot hit found (07:19:01, kwin_wayland), but two trace attempts
+    (a 60s targeted one, a 15-min opportunistic one 07:26-07:41) both missed overlapping it —
+    genuinely a timing/luck problem given the error's irregular recurrence, not a method flaw.**
+    Session ended here for the night. `/tmp/fabulor_correlate_trace.dat` (the 15-min attempt) is
+    preserved but has no matching error inside its window, so it isn't directly usable for the
+    correlation as captured. **Next session's most direct path**: run a longer trace window (15
+    min may simply be too short against gaps that were up to 12+ minutes in the historical data),
+    or piggyback the check on a longer natural-use session rather than a short deliberate capture.
+    Full detail: NOTES.md, "First real same-boot KWin offscreen-framebuffer hit..."
 
 ### Transport-bar blur got visibly stuck in the background — one-off, not reproducible, cause unknown
 - [2026-09-23] Pryme's own report, verbatim: "I was trying to open Settings or the Library, my
