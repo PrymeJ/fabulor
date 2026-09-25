@@ -119,12 +119,22 @@ def install_panel_timing_probe(panel_manager: "PanelManager") -> None:
     # suppression's grab/proxy-setup run AFTER the probe's own START log line, making the
     # logged context appear to fire before the panel is actually ready to slide. Do not reorder
     # main_window_builders.py's call relative to this function without re-checking this.
+    # 2026-09-25 correction: an earlier version of this wiring pointed _wire_paint_probe at
+    # Library/Stats/Tags' OWN open/close slides, on the assumption that was what Pryme's
+    # "Stats worst, Library best, Tags between" report meant. Pryme corrected this directly:
+    # "It's not these panel openings, but the book details opening over these panels." The
+    # thing to measure is Book Detail's OWN slide, split out by which panel it opened over —
+    # which this probe already runs (it's the one panel _wire_paint_probe covered from the
+    # start), just without the underlay recorded in its log line. Fixed below by passing a
+    # context_fn through, same mechanism _wire_timing_probe already uses for this exact panel
+    # (pm._book_detail_underlay) — see install_panel_timing_probe's book_detail wiring above.
     if panel_manager.book_detail_panel_animation is not None:
         _wire_paint_probe("book_detail", panel_manager.book_detail_panel_animation,
-                           panel_manager.book_detail_panel)
+                           panel_manager.book_detail_panel,
+                           context_fn=lambda pm=panel_manager: pm._book_detail_underlay)
 
 
-def _wire_paint_probe(name: str, anim: QPropertyAnimation, panel: QWidget) -> None:
+def _wire_paint_probe(name: str, anim: QPropertyAnimation, panel: QWidget, context_fn=None) -> None:
     """Per-widget Paint-event cost during a single panel animation, added
     2026-09-23 after four other measurement layers (wall-clock duration,
     valueChanged frame-gap, own-process CPU%, external compositor-load
@@ -144,17 +154,24 @@ def _wire_paint_probe(name: str, anim: QPropertyAnimation, panel: QWidget) -> No
     already-built panel, but not assumed impossible) will not be tracked —
     acceptable for this diagnostic, not correctness-critical.
 
+    context_fn (added 2026-09-25, mirrors _wire_timing_probe's identical parameter): called
+    once at start and its result stashed, so the finish-time PAINT log line can report WHICH
+    underlay this Book Detail slide opened over (Library/Stats/Tags) — captured at start, not
+    finish, same reasoning as _wire_timing_probe: the underlay is the thing that was true when
+    the slide began, not whatever might be true by the time it settles.
+
     Times the widget's real paintEvent via a monkey-patched wrapper (same
     start/finished shape as _wire_timing_probe's QPropertyAnimation.start
     hook) rather than the event filter alone — the filter tells us Paint
     events ARRIVED and roughly when, but not how long the widget's own
     paintEvent took to run, which is the actual cost being hunted."""
     state = {"active": False, "per_widget_ms": None, "per_widget_calls": None,
-             "orig_paint_events": None}
+             "orig_paint_events": None, "context": None}
 
     def _on_start():
         if not _PANEL_TIMING_ENABLED:
             return
+        state["context"] = context_fn() if context_fn is not None else None
         widgets = [panel] + panel.findChildren(QWidget)
         per_widget_ms = {}
         per_widget_calls = {}
@@ -201,12 +218,14 @@ def _wire_paint_probe(name: str, anim: QPropertyAnimation, panel: QWidget) -> No
         total_calls = sum(per_calls.values())
         top = sorted(per_ms.items(), key=lambda kv: kv[1], reverse=True)[:8]
         top_str = ", ".join(f"{k}={v:.1f}ms/{per_calls[k]}x" for k, v in top if v > 0)
+        ctx = f" from={state['context']!r}" if state["context"] is not None else ""
         logger.warning(
             f"[PANEL-TIMING] {name} PAINT total_paint_ms={total_ms:.1f} "
-            f"total_paint_calls={total_calls} top={top_str}")
+            f"total_paint_calls={total_calls}{ctx} top={top_str}")
         state["per_widget_ms"] = None
         state["per_widget_calls"] = None
         state["orig_paint_events"] = None
+        state["context"] = None
 
     orig_start = anim.start
 
