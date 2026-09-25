@@ -49,6 +49,43 @@ _GRAB_TRACE_ENABLED = os.environ.get("FABULOR_GRAB_TRACE") == "1"
 _PANEL_TIMING_ENABLED = os.environ.get("FABULOR_PANEL_TIMING", "1") != "0"
 
 
+def _book_detail_probe_context(panel_manager: "PanelManager") -> str:
+    """Richer replacement for the bare `panel_manager._book_detail_underlay` string every
+    probe log line used to read directly, added 2026-09-25 after a live test round couldn't be
+    reconciled against Pryme's own lived experience ("Tags with a few thumbnails opens Book
+    Detail less jankily than Stats") — the existing log lines recorded WHICH underlay but
+    neither OPEN-vs-CLOSE direction nor, for Tags specifically, how many thumbnails were
+    actually loaded at the time. Both turned out to matter: re-analysis of that round found
+    OPEN is ~3.7x more filter-dispatch-expensive than CLOSE regardless of source (real, not
+    noise — see NOTES.md), and Tags' book count was never recorded at all, so "was this a
+    heavily-loaded tag or a small one" could not be answered after the fact. Returns a single
+    formatted string (not a tuple/dict) so every existing `from={ctx!r}` call site needs no
+    structural change — only this function's own body needs to grow if a future investigation
+    needs another dimension recorded.
+
+    Direction is read from the animation's OWN end value, not inferred from before/after state,
+    per this file's established preference for reading intent from where it's actually decided
+    (`_open_book_detail`/`_close_book_detail_flow` each call `setEndValue` before `start()` —
+    see those methods) rather than guessing from a snapshot taken after the fact."""
+    underlay = panel_manager._book_detail_underlay
+    anim = panel_manager.book_detail_panel_animation
+    direction = "?"
+    if anim is not None:
+        try:
+            direction = "open" if anim.endValue().x() == 0 else "close"
+        except (RuntimeError, AttributeError):
+            direction = "?"
+    detail = ""
+    if underlay == "tags":
+        tags_panel = getattr(panel_manager, "tags_panel", None)
+        book_grid = getattr(tags_panel, "_book_grid", None) if tags_panel is not None else None
+        thumbs = getattr(book_grid, "_thumbs", None) if book_grid is not None else None
+        current_tag = getattr(tags_panel, "_current_tag", None) if tags_panel is not None else None
+        if thumbs is not None:
+            detail = f", tag={current_tag!r}, books={len(thumbs)}"
+    return f"{underlay}({direction}{detail})"
+
+
 def install_panel_timing_probe(panel_manager: "PanelManager") -> None:
     """See _PANEL_TIMING_ENABLED's comment above. No-op unless that env var is set.
 
@@ -103,7 +140,7 @@ def install_panel_timing_probe(panel_manager: "PanelManager") -> None:
         # probe was built for needs to distinguish, so it alone gets a context
         # callback read at start time rather than a static name.
         context_fn = (
-            (lambda pm=panel_manager: pm._book_detail_underlay)
+            (lambda pm=panel_manager: _book_detail_probe_context(pm))
             if name == "book_detail" else None
         )
         _wire_timing_probe(name, anim, context_fn)
@@ -131,7 +168,7 @@ def install_panel_timing_probe(panel_manager: "PanelManager") -> None:
     if panel_manager.book_detail_panel_animation is not None:
         _wire_paint_probe("book_detail", panel_manager.book_detail_panel_animation,
                            panel_manager.book_detail_panel,
-                           context_fn=lambda pm=panel_manager: pm._book_detail_underlay)
+                           context_fn=lambda pm=panel_manager: _book_detail_probe_context(pm))
         # 2026-09-25: paint cost was checked (above) and ruled out — identical across
         # Library/Stats/Tags. The real signal is in _wire_timing_probe's max_frame_gap/
         # jank_frame_rate, which DOES track the reported Stats > Tags > Library ranking. This
@@ -151,7 +188,7 @@ def install_panel_timing_probe(panel_manager: "PanelManager") -> None:
         # filter cost, which is why a new probe is needed rather than reusing either existing one.
         _wire_event_dispatch_probe("book_detail", panel_manager.book_detail_panel_animation,
                                     panel_manager.book_detail_panel,
-                                    context_fn=lambda pm=panel_manager: pm._book_detail_underlay)
+                                    context_fn=lambda pm=panel_manager: _book_detail_probe_context(pm))
 
 
 def _wire_paint_probe(name: str, anim: QPropertyAnimation, panel: QWidget, context_fn=None) -> None:
@@ -369,7 +406,7 @@ def _wire_event_filter_cost_probe(anim: QPropertyAnimation, panel_manager: "Pane
         per_calls = state["per_obj_calls"]
         total_ms = sum(per_ms.values())
         total_calls = sum(per_calls.values())
-        ctx = panel_manager._book_detail_underlay
+        ctx = _book_detail_probe_context(panel_manager)
         detail = ", ".join(f"{k}={per_ms[k]:.2f}ms/{per_calls[k]}x" for k in per_ms if per_calls[k] > 0)
         logger.warning(
             f"[PANEL-TIMING] book_detail EVENTFILTER total_filter_ms={total_ms:.2f} "

@@ -357,6 +357,19 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
     both — not a restatement of the same cause. `StatsPanel.eventFilter`'s own real per-call cost
     (as opposed to the generic ~15µs synthetic-filter benchmark above) has not been separately
     measured. Full correction in NOTES.md.
+  - **[2026-09-25] Third correction, same night: a controlled retest shows "Tags worst" itself
+    doesn't hold up.** Extended `_book_detail_probe_context()` (`panels.py`) to log open/close
+    direction and, for Tags, the exact tag name + live book count, then had Pryme redo the test
+    deliberately varying tag size (3/4/19/84 books). Isolated to opens only: Library still
+    clearly best (0.56 jank ratio), but Stats (0.64 jank, 102.6% CPU) vs. Tags (0.76 jank, 98.0%
+    CPU) now DISAGREE across metrics — jank ratio says Tags worse, CPU% says Stats worse. Worse
+    for the size theory: Tags' jank ratio does NOT scale with book count at all (3 books = 0.84
+    jank, the WORST; 19 books = 0.69, the BEST; 84 books = 0.78, in between) — directly confirms
+    Pryme's own observation that grid size isn't what's driving Tags' variance. **Standing
+    conclusion, honestly: Library is reliably best; Stats-vs-Tags cannot currently be ordered
+    with confidence; tag size is ruled out as Tags' variance driver.** Not yet identified: the
+    actual driver of Tags' open-to-open variance. 707/707 tests pass after the probe extension.
+    Full data and analysis in NOTES.md.
 
 ### Library List mode and Timeline/Streak view are janky at EVERY tested historical checkpoint — no bisectable regression exists
 - [2026-09-25] During the same-session Playback bisect (see the entry above and NOTES.md), both

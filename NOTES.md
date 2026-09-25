@@ -112,6 +112,58 @@ not been separately measured — flagged here rather than left implied as alread
 generic marginal-cost number above, which was measured against a synthetic bare filter, not
 `StatsPanel.eventFilter`'s own real body.
 
+**Second correction, same night: a controlled retest shows "Tags worst" was itself an artifact of
+the first test round, not a stable finding.** Pryme directly disputed the ordering: "my eyes also
+don't agree with the numbers about Tags being worse than Stats... a tag with a few thumbnails
+usually opens the book details less jankier than the Stats." Rather than re-argue from the
+existing data, extended the probe itself — `_book_detail_probe_context()` (`panels.py`) now
+records OPEN-vs-CLOSE direction (read from `book_detail_panel_animation.endValue().x()`, not
+inferred) and, for Tags specifically, the exact tag name and live thumbnail count
+(`len(tags_panel._book_grid._thumbs)`) — so a retest would be self-documenting instead of needing
+reconstruction after the fact. 707/707 tests still pass; four log call sites updated to use the
+new helper instead of reading `_book_detail_underlay` directly.
+
+Pryme then did a SECOND, better-controlled round (86 real opens/closes, deliberately varying tag
+size: `humor`=3 books, `2015`=4 books, `elide`=19 books, `dummy`=84 books — a genuine stress-test
+range, not a single arbitrary tag). Isolated to OPEN only (the direction actually being judged):
+
+| source | n | avg wall | avg gap | avg jank ratio | avg cpu% |
+|---|---|---|---|---|---|
+| library | 13 | 397.7ms | 98.3ms | 0.56 | 94.1% |
+| tags | 19 | 379.5ms | 73.0ms | 0.76 | 98.0% |
+| stats | 11 | 411.5ms | 100.1ms | 0.64 | 102.6% |
+
+**Library is still clearly best. Stats vs. Tags is now genuinely mixed, not a clean ordering**:
+Tags has the higher jank ratio (0.76 vs 0.64) but the LOWER CPU% (98.0 vs 102.6) and a lower avg
+gap (73.0ms vs 100.1ms) than Stats — the two metrics disagree on which is "worse," which they did
+NOT do in the first round's cleaner-looking 0.39/0.66/0.82 ordering. That first ordering should be
+read as noisier than it looked, not as a stable ranking.
+
+**The book-count breakdown is the more important finding, and it directly supports Pryme's
+correction: jank does NOT scale monotonically with tag size at all.**
+
+| tag | books | n | avg jank ratio | avg cpu% |
+|---|---|---|---|---|
+| humor | 3 | 3 | 0.84 | 103.7% |
+| 2015 | 4 | 4 | 0.75 | 96.2% |
+| elide | 19 | 4 | **0.69 (lowest)** | 96.2% |
+| dummy | 84 | 8 | 0.78 | 97.6% |
+
+The SMALLEST tag (`humor`, 3 books) had the WORST jank ratio of the four; a mid-sized tag
+(`elide`, 19 books) was the smoothest; the heaviest stress-test tag (`dummy`, 84 books) sat
+in between, not at the top. **This directly confirms Pryme's lived observation that grid size is
+not a reliable predictor of Book Detail jank when opened from Tags** — whatever drives the
+variance, it isn't simply "how many thumbnails are loaded." Not yet identified: what actually
+does drive the per-open variance (candidates not yet checked — how recently the mouse moved
+over the grid before the click, which specific book/row was clicked, GC pauses, or genuine
+run-to-run noise this measurement granularity can't resolve). **The honest state of this
+sub-investigation is now: Library is reliably best, but Stats-vs-Tags cannot currently be ordered
+with confidence, and tag size specifically is ruled out as the explanation for Tags' internal
+variance.** This does not retract the earlier ~15µs/event marginal-filter-cost mechanism (still
+real, still measured independently via a synthetic isolated benchmark) — it retracts the CLAIM
+that this mechanism produces a clean, stable Tags > Stats ordering, which the first round's small
+sample made look more decisive than a larger, controlled sample actually supports.
+
 ---
 
 ## 2026-09-25 — General app sluggishness: live bisect finds a real, precisely-dated regression (Playback smoothness, `a4e3d65`, 2026-07-31), partially fixed 09-22, and separates several older/structural jank sources from it
