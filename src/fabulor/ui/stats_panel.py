@@ -2852,14 +2852,44 @@ class TasselOverlay(QWidget):
     _FRINGE_ANIM_PHASE_LAG = 1.8       # rad, per-thread stagger (was 0.6 — too subtle to read)
 
     # --- sway physics constants ---
-    _TICK_MS = 33                 # ~30fps, mastches CoverCarousel._TICK_MS
-    _DT = _TICK_MS / 1000.0       # tick duration in seconds
+    _TICK_MS = 33                 # ~30fps, matches CoverCarousel._TICK_MS — used ONLY while a
+                                   # kick is actively decaying (see _IDLE_TICK_MS below for why
+                                   # idle sway runs far slower than this).
+    _DT = _TICK_MS / 1000.0       # kick-tick duration in seconds — kick's own decay/frequency
+                                   # math (_kick_t += self._DT) assumes this exact interval, so
+                                   # _TICK_MS must stay the timer's interval for the ENTIRE time
+                                   # _kick_active is True. Never change _TICK_MS itself; add a
+                                   # second interval instead (see _IDLE_TICK_MS) if a different
+                                   # rate is ever needed for idle.
     IDLE_AMP = 1.0               # px, barely-noticeable perpetual sway
-    IDLE_STEP = 0.03              # _idle_phase increment/tick (~3.5s per full cycle)
+    IDLE_STEP = 0.03              # _idle_phase increment per _TICK_MS-length tick (~3.5s per
+                                   # full cycle at the FAST interval) — see _on_sway_tick for how
+                                   # this is scaled when ticking at _IDLE_TICK_MS instead.
     KICK_AMP = 6.0                # px, activation swing amplitude
     KICK_DECAY = 2.2              # exp decay rate (per second)
     KICK_FREQ = 16.0              # rad/s swing frequency (~3 visible cycles before settling)
     _KICK_CLEAR_PX = 0.3          # clear the kick once its ENVELOPE falls below this
+
+    # Idle sway's own tick rate — deliberately much slower than _TICK_MS. Root cause
+    # (2026-09-25, see NOTES.md/TODO.md "Continuous ~90% CPU while Stats' Timeline tab is
+    # open"): self.update() forces Qt to repaint the WHOLE WA_StyledBackground region this
+    # widget sits in, including HourlyHeatmap/StreakGrid's own expensive paintEvent (20-27ms
+    # EACH), even though those grids never actually changed — a pure side effect of this
+    # widget being non-opaque inside that styled-background region. At _TICK_MS=33ms that
+    # cascade fires ~30x/sec continuously while Timeline is open, measured at ~90% sustained
+    # CPU. A WA_OpaquePaintEvent fix on the GRIDS was tried and CAUSED A REAL SIGSEGV
+    # (crashed inside Qt's own compiled code, from one of the grids' own QPropertyAnimations
+    # ticking — see NOTES.md for the coredumpctl trace) — reverted, do not re-attempt without
+    # first understanding that crash. This fix instead reduces how often the EXPENSIVE
+    # cascade can even fire, without touching the grids' paint contract at all: idle sway
+    # (IDLE_AMP is only ±1px total motion — most _TICK_MS-rate ticks were already moving the
+    # sway by a sub-pixel amount, i.e. paying the full cascade cost for an invisible change)
+    # ticks at this much coarser rate instead. _kick() switches back to the fast _TICK_MS
+    # interval immediately (a kick is a real, visible ~6px swing and benefits from
+    # smoothness); _on_sway_tick's own envelope-clear switches back to idle-slow once the
+    # kick has fully decayed. See _on_sway_tick/_kick/showEvent for the three points that
+    # keep the timer's interval and _idle_phase's per-tick step in sync with each other.
+    _IDLE_TICK_MS = 150            # ~6.7fps while idle — still smooth for a ±1px sway
 
     clicked = Signal()
 
@@ -2977,7 +3007,9 @@ class TasselOverlay(QWidget):
         self._kick_t = 0.0
         self._kick_active = False
         self._sway_timer = QTimer(self)   # parented so Qt cleans it up
-        self._sway_timer.setInterval(self._TICK_MS)
+        # Starts at the slow idle rate — _kick_active is False here, and _kick()
+        # switches to the fast rate itself the moment a real kick actually arrives.
+        self._sway_timer.setInterval(self._IDLE_TICK_MS)
         self._sway_timer.timeout.connect(self._on_sway_tick)
 
     @property
@@ -3029,6 +3061,10 @@ class TasselOverlay(QWidget):
             self._kick_active = False
             self._kick_t = 0.0
         elif self.isVisible():
+            # _kick_active was just unconditionally cleared above the last time this
+            # was False->True->False, so always resume at the idle-slow rate here —
+            # unlike showEvent's resume, there is no preserved kick state to honor.
+            self._sway_timer.setInterval(self._IDLE_TICK_MS)
             self._sway_timer.start()
         self.update()
 
@@ -3060,7 +3096,18 @@ class TasselOverlay(QWidget):
         # hideEvent was never delivered (tab-stack propagation is not assumed).
         if not self.isVisible():
             return
-        self._idle_phase += self.IDLE_STEP
+        if self._kick_active:
+            # Fast interval (_TICK_MS) — IDLE_STEP applies as-is, same as before this
+            # rate-switching fix existed.
+            self._idle_phase += self.IDLE_STEP
+        else:
+            # Slow interval (_IDLE_TICK_MS) — scale the phase step by how many fast-
+            # ticks' worth of wall-clock time this one slow tick actually covers, so
+            # the sway's real-world PERIOD stays ~3.5s regardless of sample rate. Not
+            # doing this would make the idle sway visibly slow down by the same
+            # factor the tick rate dropped by — a real behavior change, not just a
+            # resolution change.
+            self._idle_phase += self.IDLE_STEP * (self._IDLE_TICK_MS / self._TICK_MS)
         if self._idle_phase > 2 * math.pi:
             self._idle_phase -= 2 * math.pi
         if self._kick_active:
@@ -3071,6 +3118,10 @@ class TasselOverlay(QWidget):
             if envelope < self._KICK_CLEAR_PX:
                 self._kick_active = False
                 self._kick_t = 0.0
+                # Kick has fully decayed — drop back to the slow idle-only rate. Takes
+                # effect on the timer's NEXT tick (confirmed live: QTimer.setInterval
+                # while running applies to the following timeout, no restart needed).
+                self._sway_timer.setInterval(self._IDLE_TICK_MS)
         self.update()
 
     def _kick(self):
@@ -3078,6 +3129,12 @@ class TasselOverlay(QWidget):
         impulse, not added-to-velocity) — intended for MVP, not a bug."""
         self._kick_t = 0.0
         self._kick_active = True
+        # Switch to the fast interval immediately — needed unconditionally, not just
+        # when the timer was stopped: idle sway may already be running at the slow
+        # _IDLE_TICK_MS interval when a kick arrives, and a real ~6px swing benefits
+        # from the fast rate's smoothness. Takes effect on the timer's NEXT tick if
+        # already running (confirmed live — see _on_sway_tick's own note).
+        self._sway_timer.setInterval(self._TICK_MS)
         if not self._sway_timer.isActive() and self.isVisible():
             self._sway_timer.start()
 
@@ -3244,6 +3301,15 @@ class TasselOverlay(QWidget):
     def showEvent(self, event):
         super().showEvent(event)
         if self._show_tassel and not self._sway_timer.isActive():
+            # _kick_active survives a hide/show cycle by design (see hideEvent's own
+            # docstring — the transport-bar blur grab hides/shows this widget every
+            # ~64ms, and a kick decaying over ~1s must not be wiped by that churn).
+            # Resume at whichever interval matches that preserved state, not
+            # unconditionally the slow idle rate — a kick still decaying when this
+            # widget was last hidden needs to resume fast, not idle-slow.
+            self._sway_timer.setInterval(
+                self._TICK_MS if self._kick_active else self._IDLE_TICK_MS
+            )
             self._sway_timer.start()
 
     def hideEvent(self, event):
