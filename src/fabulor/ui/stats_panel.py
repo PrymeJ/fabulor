@@ -4890,6 +4890,26 @@ class StatsPanel(QWidget):
         super().hideEvent(event)
 
     def eventFilter(self, obj, event):
+        # OCCLUSION GUARD (2026-09-25, added while tracing a Book Detail open-cost investigation
+        # — not a live-reported correctness bug like the same-shaped Tags fix this mirrors, see
+        # TagManagerWidget.eventFilter's own OCCLUSION GUARD comment for the reference case).
+        # This is a QApplication-wide filter, installed in showEvent and removed only in
+        # hideEvent — and Book Detail occludes (raises above) rather than hides Stats, so this
+        # filter stays fully installed and fully live for the whole time Book Detail is open on
+        # top of it, taxing every single Qt event anywhere in the app for no benefit (the whole
+        # filter exists only to dismiss the "Reset all stats" confirmation on a stray key/click,
+        # and neither can legitimately reach Stats' widgets while Book Detail covers them and
+        # holds real Qt focus). Checked before deciding this was safe to add (not assumed): the
+        # confirmation this filter dismisses already has an independent hard-timeout QTimer
+        # (_on_reset_stats, 7000ms singleShot -> _cancel_reset_stats) that fires regardless of
+        # this filter, so silencing the filter while occluded cannot strand the confirmation
+        # permanently — at worst it stays visibly armed up to 7s longer than it would have with
+        # a legitimate dismiss input, which was never reachable while occluded anyway. Same
+        # shape as the Tags fix: check whether something is genuinely on top FIRST, decline
+        # (return False) if so, rather than trusting isVisible() alone.
+        bdp = getattr(getattr(self, '_panel_manager', None), 'book_detail_panel', None)
+        if bdp is not None and bdp.isVisible():
+            return False
         # ANY key other than Space/Enter/Return while "Reset all stats" is armed must cancel
         # JUST the confirmation (and swallow that press — pure dismiss, not also whatever the
         # key would otherwise do), not fall through to MainWindow._handle_tab_escape ->
