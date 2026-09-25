@@ -1,3 +1,89 @@
+## 2026-09-25 — `StatsPanel.eventFilter` occlusion guard shipped: confirmed real win for Stats-sourced opens, plus an honest unexplained anomaly
+
+**Direct follow-up to the root-cause entry immediately below.** Implemented the guard the root-cause
+entry proposed, traced the specific risk Pryme asked about first ("what is the downside, what is
+the risk?"), then verified the fix with real measurement rather than assuming it worked.
+
+### Risk trace, before writing any code
+
+`StatsPanel.eventFilter`'s ENTIRE body (36 lines) exists to dismiss the "Reset all stats" 7-second
+confirmation on a stray key/click. Checked directly: that confirmation already has an independent
+hard-timeout `QTimer` (`_on_reset_stats`, `7000ms` `singleShot` → `_cancel_reset_stats`) that fires
+regardless of the event filter — so silencing the filter while Book Detail occludes Stats cannot
+strand the confirmation permanently; worst case it stays visibly armed up to 7s longer than a
+legitimate dismiss input would have taken, and that input could never legitimately reach Stats'
+widgets while occluded and Book Detail holds real Qt focus anyway. Risk assessed as low and
+effectively closed, not just small — see the conversation for the full trace.
+
+### The fix
+
+Same shape as the Tags occlusion-guard fix (`tag_manager.py`'s `eventFilter`, shipped earlier this
+session for a correctness reason): an early-return at the very top of `StatsPanel.eventFilter`
+when `book_detail_panel.isVisible()`, using the existing
+`getattr(getattr(self, '_panel_manager', None), 'book_detail_panel', None)` access pattern already
+used twice elsewhere in this same file. `tests/test_stats_panel_occlusion_guard.py` mirrors the
+existing Tags guard's test shape.
+
+### A real methodology gotcha, hit while trying to measure the guard directly
+
+First verification attempt monkeypatched `StatsPanel.eventFilter` at the CLASS level after the
+panel was already open — this produced 0 recorded calls, which read at first like the guard was
+somehow suppressing 100% of dispatch (implausible) rather than what it actually was: **PySide6
+binds the C++-side event-filter callback to the method resolved at `installEventFilter()` call
+time, not re-resolved per dispatched event** — a class-level reassignment after installation is
+silently invisible to Qt's own dispatch. Patching the live INSTANCE's `eventFilter` attribute
+directly (`sp.eventFilter = wrapped`) worked correctly and gave real counts. Worth remembering for
+any future attempt to instrument a `QObject.eventFilter` after it's already installed: patch the
+instance, not the class.
+
+### Verification — two independent full A/B runs, 270 cycles each
+
+Both runs used the exact same (uncommitted at the time) code, different random seeds
+(`after-guard`, seed 1 — same seed as the `heavy-load-v4` baseline being compared against;
+`after-guard-v2`, seed 4). **Stats-sourced Book Detail opens are consistently, repeatably faster
+with the guard**, closely reproduced across both independent runs (median wall-clock, ms):
+
+| mode | before (heavy-load-v4) | after-guard | after-guard-v2 |
+|---|---|---|---|
+| transparent/stats | 463.7 | 405.7 (−58.0) | 412.6 (−51.2) |
+| frosty/stats | 376.2 | 354.9 (−21.3) | 356.1 (−20.2) |
+| opaque/stats | 368.3 | 347.8 (−20.5) | 350.1 (−18.2) |
+
+This is a real win, largest in Transparent mode (where Stats' own live, unsuppressed paint work —
+the mechanism the earlier cProfile entry found — is presumably now competing with less event-filter
+overhead for the same CPU budget).
+
+### An honest, unresolved anomaly found in the same two runs
+
+**Library- and Tags-sourced opens — a code path this guard never touches at all — also came out
+consistently SLOWER in both after-guard runs**, by a similar margin in both (+11 to +44ms), never
+recovering to the `heavy-load-v4` baseline:
+
+| mode | before (heavy-load-v4) | after-guard | after-guard-v2 |
+|---|---|---|---|
+| transparent/library | 317.1 | 335.6 (+18.4) | 328.4 (+11.3) |
+| transparent/tags | 331.2 | 369.4 (+38.1) | 374.9 (+43.7) |
+| frosty/library | 326.0 | 340.4 (+14.4) | 344.5 (+18.5) |
+| frosty/tags | 331.2 | 362.4 (+31.2) | 358.4 (+27.2) |
+| opaque/library | 322.9 | 346.6 (+23.7) | 342.5 (+19.6) |
+| opaque/tags | 327.6 | 354.2 (+26.7) | 356.7 (+29.1) |
+
+Ruled out directly rather than assumed away: thermal throttling (CPU at 48°C, not throttled),
+memory pressure (8Gi available via reclaimable buff/cache, swap essentially untouched), and a
+stray competing process (`ps aux` clean before and during both runs). No confirmed cause found —
+candidates considered but not verified: cumulative effect of running many consecutive Book Detail
+opens within one long-lived `MainWindow` process (an unbounded cache growing across the session —
+see the existing "Pending Debt" note on `_cover_cache` having no eviction policy — though this
+would equally affect the `heavy-load-v4` baseline run, which was also a single long-lived process
+of the same total cycle count, so this candidate doesn't cleanly explain a baseline-vs-after-guard
+DIFFERENCE); some environmental factor on this one machine not yet identified. **Pryme's own call,
+consistent with this project's measurement discipline: keep the guard regardless** — it structurally
+cannot cause a slowdown in code it never touches, so the Stats-specific improvement stands on its
+own logic even with this separate question left open. Flagged here plainly rather than smoothed
+over or silently dropped from the record.
+
+---
+
 ## 2026-09-25 — Why Stats-sourced Book Detail opens cost more: two app-wide `QApplication` event filters stay fully installed and running the whole time Book Detail is open over it
 
 **Direct continuation of the entry immediately below** ("Book Detail backdrop-mode A/B test"),

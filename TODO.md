@@ -107,19 +107,28 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
     (app-wide) rather than scoped to their own widget the way `LibraryPanel` does
     (`self._list_view.viewport().installEventFilter(self)`) — and because Book Detail occludes
     rather than hides its underlay, Stats' `hideEvent` never fires while Book Detail is open, so
-    BOTH of Stats' app-wide filters (its own + hover_tracker's) stay fully installed and tax
-    EVERY event anywhere in the app for the panel's whole open duration, including all of Book
-    Detail's own internally-generated events. Tags has the same shape but only ONE extra
-    app-wide filter of its own (`TagManagerWidget`'s), landing it between Library (zero) and
-    Stats (two) in cost — matches the measured ordering exactly.
-  - **Next step, not yet decided**: whether to port the Tags occlusion-guard fix (already shipped
-    for a correctness reason — see the "Tags focus-stealing" entry elsewhere in this file/NOTES.md
-    — an early-return in `eventFilter` when `book_detail_panel.isVisible()`) to
-    `StatsPanel.eventFilter` and `hover_tracker.py`, for the COST reason found here. Given the
-    A/B test's own conclusion that backdrop mode doesn't meaningfully move felt smoothness, it's
-    an open question whether trimming this specific cost would be felt at all — same shape as the
-    original paint-suppression question. Not started; needs a decision on whether it's worth
-    pursuing before writing any code.
+    its app-wide filter stays fully installed and taxes EVERY event anywhere in the app for the
+    panel's whole open duration. **Correction (2026-09-25): Stats installs exactly ONE app-wide
+    filter of its own (`StatsPanel.eventFilter`), not two — `StatsRowListView` never uses
+    `hover_tracker.py` at all, confirmed by grep. Tags installs two (`TagManagerWidget`'s own +
+    whichever `hover_tracker` class is active). Stats' single filter still outpaces Tags' two
+    combined in raw call volume, so filter COUNT alone doesn't explain the full cost ordering —
+    see NOTES.md for the corrected picture.**
+  - [2026-09-25, commit `e55fdb6`] **SHIPPED**: the same occlusion-guard shape already proven for
+    Tags (early-return in `eventFilter` when `book_detail_panel.isVisible()`), applied to
+    `StatsPanel.eventFilter`. Risk traced first (the filter's only job — dismissing the "Reset all
+    stats" 7s confirmation — already has an independent hard-timeout `QTimer`, so silencing it
+    while occluded can't strand anything). Verified with two independent full 270-cycle A/B runs:
+    **Stats-sourced Book Detail opens are consistently faster** — ~51-58ms in Transparent mode,
+    ~18-21ms in Frosty/Opaque, reproduced closely across both runs. See NOTES.md, "`StatsPanel.
+    eventFilter` occlusion guard shipped," for full numbers and the honest caveat: the same two
+    runs ALSO showed Library/Tags (a code path this guard never touches) consistently slower by a
+    similar margin, with no confirmed cause found (thermal/memory/competing-process all ruled
+    out) — kept the guard anyway per Pryme's own call, since it can't logically cause a slowdown
+    in code it doesn't touch.
+  - **Remaining open question, not started**: `hover_tracker.py`'s `ScrollHoverTracker`/
+    `GridHoverTracker` (used by Tags only, not Stats) still install app-wide with no occlusion
+    guard — same class of fix could apply there too, not yet investigated or measured.
 
 ### Book Detail panel's tab bar — not wired into the shared `_kbdnav_active_panel_key` mechanism
 - [2026-09-15, scope corrected 2026-09-17] Still true and unrelated to the (now implemented, see
