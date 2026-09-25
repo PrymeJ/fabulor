@@ -1,3 +1,61 @@
+## 2026-09-25 — Cross-referencing the kernel trace against KWin's offscreen-framebuffer errors hit a real boundary: a boot switch split the two signals into different journal scopes; corrected count is 115, not 16, and 21 of those are under kwin_wayland specifically
+
+Direct follow-up attempting the "not yet started" next step from the entry directly below. Tried
+to correlate the >100ms plane-update gap timestamps from the Library/Stats kernel trace against
+the KWin `Failed to create an offscreen framebuffer` dmesg/journalctl errors found earlier tonight.
+
+**Found nothing in the trace's own window** — `journalctl --user -b 0` over the exact 06:56:00-
+06:58:00 span returned only 16 unrelated lines (sudo/PAM session bookkeeping for the two
+`trace-cmd` invocations, plus unrelated Discover-notifier noise). Checking the WHOLE current
+boot's journal (`journalctl --user -b 0`, no time filter) also returned zero
+`offscreen framebuffer` hits — not a narrow-window miss, a genuine zero for the entire boot so
+far.
+
+**Root cause, confirmed via `journalctl --list-boots`, not guessed**: switching between the
+Wayland and X11 sessions earlier tonight (for the NVIDIA PRIME-offload testing) triggered a full
+**reboot**, not just a re-login — `journalctl --list-boots` shows the current boot
+(`bfc262cede4e4d3c8e2198fd559cee80`) started at 06:50:14, well after every one of tonight's
+original KWin-error sightings. `journalctl -b 0` only ever searches the CURRENT boot by
+definition, so the zero-hit result is completely explained by this — the errors are real and
+still exist, just filed under the PREVIOUS boot's journal (`-b -1`,
+`3017853a906f484ba0f90a71434e8dab`, spanning 02:29:39-06:49:56).
+
+**Checking the previous boot directly surfaced a real correction to the earlier count**:
+`journalctl --user -b -1 | grep -c "offscreen framebuffer"` returns **115**, not the 16 originally
+reported earlier tonight — the original search must have covered a narrower window or otherwise
+undercounted; not yet root-caused why the two counts differ, flagged honestly as a real
+discrepancy rather than silently using whichever number is more convenient. Breaking the 115 down
+by which KWin process logged them:
+
+```
+ 21 kwin_wayland[2301]
+ 94 kwin_x11[51724]
+```
+
+So the bug is real and reproduces under BOTH compositor backends — but the large majority of
+tonight's occurrences (94 of 115) are from the brief X11 session used for the NVIDIA offload
+testing, not the Wayland session this whole investigation is otherwise scoped to. The 21
+`kwin_wayland` occurrences are the ones actually relevant to the Stats-vs-Library jank
+investigation; NOT yet normalized by session duration (the X11 session's higher raw count could
+simply reflect it running longer/more actively, not X11 being inherently worse — this has not been
+checked).
+
+**The kernel trace and the KWin errors can no longer be directly timestamp-correlated** — they
+sit in different journal boot-scopes, and `trace-cmd`'s uptime-relative timestamps aren't
+meaningfully comparable across a boot boundary either. This specific cross-reference attempt is
+closed, not completed.
+
+**Pryme's own framing of the fix, worth recording verbatim**: asked "how do we reach the same
+state where we can cross-reference reliably?" — the direct answer is that nothing special needs
+reaching: the current boot (started 06:50, no session switch/reboot since) already IS the right
+state; a same-boot correlation just requires NOT switching sessions again and letting both signals
+(a kernel trace, and a KWin error) land within this same boot's scope. Since the KWin error
+recurs in irregular bursts sometimes 7+ minutes apart (per the original finding), Pryme's own
+choice was to let it surface naturally during ordinary app use rather than force a match with a
+long orchestrated trace — check `journalctl --user -b 0 | grep -c "offscreen framebuffer"`
+periodically, and once it shows a genuine hit, correlate that specific timestamp against whatever
+trace data covers that moment.
+
 ## 2026-09-25 — Fifth measurement layer, outside the app entirely: a targeted kernel trace at the real i915 compositor level confirms Stats is worse than Library — the strongest evidence yet, since it can't be explained by anything inside Fabulor's own process
 
 Direct follow-up to the four in-app probes below (paint cost, event-filter cost, Stats-owned

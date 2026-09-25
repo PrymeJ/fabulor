@@ -139,13 +139,22 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
     signal**: it's the GPU/compositor's own frame-commit events, unfakeable by anything in
     Fabulor's Python process. Confirms the ranking exists at the layer downstream of everything
     checked so far, without yet explaining WHY frames arrive later for Stats specifically.
-  - **Concrete next step, not yet started**: correlate the >100ms plane-update gap timestamps
-    against the KWin `Failed to create an offscreen framebuffer` dmesg errors from earlier
-    tonight's general jank investigation — same mechanism, check whether they cluster around
-    Stats-sourced Book Detail opens specifically rather than being uniformly distributed. Uses the
-    same dmesg/journalctl cross-reference technique already established. If they DO cluster, that
-    would be the first mechanism-level explanation for the ranking rather than just another
-    correlated symptom of it.
+  - **[2026-09-25] Attempted, hit a real boundary — NOT completed, and the earlier "16 times"
+    count is corrected to 115.** A session switch (Wayland↔X11, for the NVIDIA offload testing)
+    triggered a full reboot, so the kernel trace above (this boot, started 06:50:14) and the KWin
+    offscreen-framebuffer errors (previous boot, `-b -1`) sit in different journal scopes and
+    can't be directly timestamp-correlated. Re-counting on the correct boot: **115** occurrences,
+    not 16 — 21 under `kwin_wayland` (the session this investigation is scoped to), 94 under
+    `kwin_x11` (the brief NVIDIA-testing session, not yet normalized by duration). Real bug, both
+    backends, count previously undercounted for an unknown reason. Full detail: NOTES.md, "Cross-
+    referencing the kernel trace against KWin's offscreen-framebuffer errors hit a real boundary."
+  - **Current plan, in progress**: stay on the current boot (no more session switches) and let the
+    KWin error recur naturally during ordinary app use — it comes in irregular bursts sometimes 7+
+    minutes apart, so forcing it with a long orchestrated trace isn't the efficient approach.
+    Periodically check `journalctl --user -b 0 | grep -c "offscreen framebuffer"`; once a real hit
+    lands, correlate that specific timestamp against whatever kernel trace data covers that
+    moment. This is the actual mechanism-level cross-reference the ranking investigation needs —
+    not yet completed.
 
 ### Transport-bar blur got visibly stuck in the background — one-off, not reproducible, cause unknown
 - [2026-09-23] Pryme's own report, verbatim: "I was trying to open Settings or the Library, my
