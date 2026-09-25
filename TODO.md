@@ -99,11 +99,27 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
     cost from Stats' own heavier widget tree. Both point at the same root: **Stats' own panel
     architecture costs more to render than Library's or Tags' does**, independent of backdrop
     mode.
-  - **Next step, not yet started**: identify exactly WHAT inside Stats' own widget tree accounts
-    for this (StatsRowDelegate's own `paint()`? the tab widget itself? the specific tab Book
-    Detail opens onto?) — Pryme's own explicit call was to write the A/B finding up first, before
-    digging further into this. Old "84-book dummy tag" wording below is kept for history but its
-    framing (tag size) is superseded by the above (panel source).
+  - [2026-09-25] **Root cause found — see NOTES.md, "Why Stats-sourced Book Detail opens cost
+    more."** `StatsRowDelegate.paint()` was checked and ruled out (real but small — fresh
+    `QFont`/`QFontMetrics` construction per row, 0.031s/24 calls, not the dominant cost). The
+    real mechanism: `StatsPanel.eventFilter` and `hover_tracker.py`'s `ScrollHoverTracker`/
+    `GridHoverTracker` both install via `QApplication.instance().installEventFilter(self)`
+    (app-wide) rather than scoped to their own widget the way `LibraryPanel` does
+    (`self._list_view.viewport().installEventFilter(self)`) — and because Book Detail occludes
+    rather than hides its underlay, Stats' `hideEvent` never fires while Book Detail is open, so
+    BOTH of Stats' app-wide filters (its own + hover_tracker's) stay fully installed and tax
+    EVERY event anywhere in the app for the panel's whole open duration, including all of Book
+    Detail's own internally-generated events. Tags has the same shape but only ONE extra
+    app-wide filter of its own (`TagManagerWidget`'s), landing it between Library (zero) and
+    Stats (two) in cost — matches the measured ordering exactly.
+  - **Next step, not yet decided**: whether to port the Tags occlusion-guard fix (already shipped
+    for a correctness reason — see the "Tags focus-stealing" entry elsewhere in this file/NOTES.md
+    — an early-return in `eventFilter` when `book_detail_panel.isVisible()`) to
+    `StatsPanel.eventFilter` and `hover_tracker.py`, for the COST reason found here. Given the
+    A/B test's own conclusion that backdrop mode doesn't meaningfully move felt smoothness, it's
+    an open question whether trimming this specific cost would be felt at all — same shape as the
+    original paint-suppression question. Not started; needs a decision on whether it's worth
+    pursuing before writing any code.
 
 ### Book Detail panel's tab bar — not wired into the shared `_kbdnav_active_panel_key` mechanism
 - [2026-09-15, scope corrected 2026-09-17] Still true and unrelated to the (now implemented, see

@@ -1,4 +1,60 @@
-## 2026-09-24/25 — Book Detail backdrop-mode A/B test: real harness built, three harness bugs found and fixed, real conclusion is "source, not mode"
+## 2026-09-25 — Why Stats-sourced Book Detail opens cost more: two app-wide `QApplication` event filters stay fully installed and running the whole time Book Detail is open over it
+
+**Direct continuation of the entry immediately below** ("Book Detail backdrop-mode A/B test"),
+picking up its own stated next step: what specifically inside Stats' own panel accounts for the
+measured ~50-150ms open-cost gap versus Library/Tags, independent of backdrop mode.
+
+### `StatsRowDelegate.paint()` checked first, ruled out as the dominant cost
+
+`stats_panel.py:1046(paint)` (24 calls, 0.031s in the Frosty/Stats cProfile sample) does
+construct fresh `QFont`/`QFontMetrics` objects on every single row paint (`QFont(option.font)`,
+`QFont(title_font)` for `author_font`, four separate `QFontMetrics(...)` constructions — none
+cached across rows or across repaints) — a real, fixable inefficiency, but at 24 calls / 0.031s
+total it is nowhere near the dominant cost in either dump. Not the answer to "why Stats costs
+more," even though it's real waste worth fixing on its own merits (see TODO.md).
+
+### The real mechanism: `installEventFilter(QApplication.instance())`, not narrowly scoped
+
+Checked directly, not inferred: `LibraryPanel` installs its own event filter narrowly —
+`self._list_view.viewport().installEventFilter(self)` (`library.py:719`) — so it only ever
+receives events actually destined for that one widget. `StatsPanel.eventFilter`
+(`stats_panel.py:4884-4890`) and `TagManagerWidget.eventFilter` (`tag_manager.py:929/1703/1750`)
+both instead call `QApplication.instance().installEventFilter(self)`, on `showEvent`/removed on
+`hideEvent` — meaning while either panel is genuinely visible, its filter receives and must check
+EVERY SINGLE Qt event delivered ANYWHERE in the entire app. `ui/hover_tracker.py`'s
+`ScrollHoverTracker`/`GridHoverTracker` (used by both Stats' row list and Tags' thumbnail grid)
+install the SAME way (`hover_tracker.py:139/361`).
+
+Because Book Detail occludes (raises above) rather than hides its underlay — the same
+"showEvent()d but not actually visible to the user" state this session's earlier Tags
+focus-stealing bug depended on, see the entry further below — Stats' `showEvent`/`hideEvent`
+pairing never fires while Book Detail sits on top of it, so its `QApplication`-wide filter stays
+fully installed and fully live for the panel's whole open duration, taxing every one of Book
+Detail's own internally-generated events (paint, mouse-tracking, focus, the slide animation's
+`valueChanged` ticks) on top of whatever it would already process for itself.
+
+**This is additive, and Stats pays it twice over.** Library installs ZERO app-wide filters while
+visible — its own filter is viewport-scoped, so it costs nothing extra while occluded. Tags
+installs TWO (`TagManagerWidget`'s own + `GridHoverTracker`'s), which is why its cProfile dump
+(0.397s, 46,940 calls) is meaningfully cheaper than a full grab/blur-carrying Stats dump but still
+shows real `eventFilter` volume (`hover_tracker.py:368`, 1288 calls; `tag_manager.py:1777`, 1301
+calls) that Library's dump has none of at all. **Stats installs TWO of its own kind** —
+`StatsPanel.eventFilter` AND `ScrollHoverTracker`'s — landing at 5,388 calls to
+`app.py:6604(eventFilter)` (the app-wide dispatcher every one of these filters chains through)
+versus Library's 1,474, a ~3.7x difference in raw event-filter-dispatch volume alone, before any
+per-call work inside those filters is even counted. Confirmed the volume difference is real
+architecture, not incidental: `grep -c "QApplication.instance().installEventFilter"` returns 1 hit
+in `library.py`'s own file (none of them app-wide) vs. multiple in `stats_panel.py`/
+`tag_manager.py`/`hover_tracker.py`, all app-wide.
+
+### Not yet fixed — this entry is diagnosis, not a shipped change
+
+Per this session's own working pattern (write up, then decide whether/how to act), no code change
+has been made here. The Tags occlusion-guard fix from earlier this session (an early-return in
+`TagManagerWidget.eventFilter` when `book_detail_panel.isVisible()`) is the PROVEN shape of the
+right fix for this exact class of problem — it already exists for TAGS, for a CORRECTNESS reason
+(focus-stealing), but was never extended to `StatsPanel.eventFilter` or ported to `hover_tracker.py`
+for the COST reason documented here. See TODO.md for the concrete next-step pointer.
 
 **Scope.** Direct follow-up to the paint-suppression work below. Pryme's own framing going in:
 "Transparent mode has no jank suppression at all, so if paint suppression genuinely helps felt
