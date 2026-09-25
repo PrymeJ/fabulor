@@ -9,6 +9,35 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
 
 ## Summary index
 
+### General app jank — traced to system/KWin level, NOT Fabulor's own code; two concrete leads, neither pursued yet
+- [2026-09-25] Continuation of the "General app sluggishness investigation" (below) and the
+  two-month bisect that found the same jank at a commit predating any of this session's own
+  changes. See NOTES.md, "General jank investigation, continued," for the full trail. Confirmed
+  via THREE independent methods, all outside Fabulor's own process: two real screen recordings
+  (with and without VS Code open — ruled out VS Code contention a second time) showing real,
+  extracted per-frame gaps (32-38 stutters >100ms per ~90s recording); GPU frequency sampling
+  showing the Intel iGPU never leaves its floor frequency even during active jank (rules out
+  render/compute saturation); and real kernel-level `trace-cmd`/ftrace captures (a genuine system
+  package install + root access, confirmed with Pryme first) showing the same gap pattern via i915
+  driver plane-update events, with scheduler data proving Fabulor and KWin both get scheduled
+  normally during the gaps (rules out simple CPU starvation).
+  - **Two concrete, real, previously-unknown system-level leads found by checking `dmesg`/
+    `journalctl` directly**: (1) a single kernel warning inside the i915 driver's own timer code
+    (`hrtimer_forward`, `timer->is_queued` assertion, fired once this session — too rare alone to
+    be the main cause); (2) **the more promising one** — KWin's own compositor logging `Failed to
+    create an offscreen framebuffer` (preceded by a `GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT` /
+    `glTexStorage2D` error), recurring 16 times across one session in irregular bursts, a pattern
+    shape consistent with genuinely intermittent jank. This is KWin itself failing to allocate a
+    GPU render target — plausibly for a blur effect — which this app leans on heavily.
+  - **Not yet started, concrete next steps**: search for this exact KWin error against known
+    KDE/Mesa/i915-Optimus bug reports; check KWin's Effects debug-console tab for which effect is
+    active when it fires; test whether disabling KWin's own (system-level, not Fabulor's) blur
+    effect changes the error's frequency; consider the Mesa/i915 driver version and this laptop's
+    specific Optimus/PRIME setup (Dell Inspiron 7577, Intel HD 630 + NVIDIA GTX 1060 Mobile) as a
+    real variable. This is genuinely a system/distro-level question now, not an application one —
+    any fix here would not be a Fabulor code change.
+  - Also see: `trace-cmd` is now installed on this machine (`sudo zypper install trace-cmd`) —
+    available for reuse without a re-install next time this angle is picked up.
 
 ### Transport-bar blur got visibly stuck in the background — one-off, not reproducible, cause unknown
 - [2026-09-23] Pryme's own report, verbatim: "I was trying to open Settings or the Library, my

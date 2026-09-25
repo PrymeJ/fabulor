@@ -1,3 +1,149 @@
+## 2026-09-25 — General jank investigation, continued: confirmed real via kernel-level tracing (independent of Fabulor/KWin/screen-recorder self-reporting); two concrete system-level leads found, neither yet acted on
+
+**Direct continuation of "General app sluggishness investigation" (2026-09-22/23, below)** — Pryme's
+own words reopening this thread: "As janky as before. We were going to check 'why is Stats' single
+filter alone doing 2x Tags'. And yesterday's bisect into commits from 2 months earlier, when the
+keyboard support was not even extended yet, still had the same jankiness. So, nothing really
+explains." Correctly read as: the `StatsPanel.eventFilter` fix (immediately below) and everything
+else app-side tonight is real but cannot be THE cause, since the bisect already showed the same
+jank at a commit predating all of it. Abandoned further app-code investigation and went outside
+Fabulor entirely, per that entry's own "genuinely open questions" list.
+
+### Screen recording, twice — confirms the jank is real and independent of anything Fabulor/KWin self-report
+
+Used Spectacle (KDE's native Wayland screen recorder, PipeWire portal) to record two full-screen
+sessions of real Fabulor use: once with VS Code/Claude Code also open (the normal daily-use
+condition), once with everything else closed. Extracted REAL per-frame presentation timestamps from
+each `.webm` via `ffprobe -show_entries frame=pts_time` (not the container's nominal 60fps — actual
+decoded frame PTS) and computed inter-frame deltas.
+
+Both recordings show the same shape, nearly identical distributions: median ~18-19ms (healthy,
+close to the 16.7ms/60fps ideal — confirms the RECORDER's own baseline is trustworthy, not itself
+the source of noise), but a genuine heavy tail — p90 ~37ms, p99 ~91-101ms — and **32-38 severe
+stutter events (gaps >100ms) in each ~88-90 second recording**, roughly one every 2-3 seconds.
+Extracted still frames at several stutter timestamps in both recordings and visually confirmed real
+Fabulor interaction (Stats Day/Week/Month tabs, Tags panel, Library) at each one — genuine jank
+during genuine use, not an artifact of idle time or another window.
+
+**This directly settles the "is it VS Code contention" question Pryme had already tested once
+before** (2 days prior, per his own account) and now confirmed again here: closing everything else
+made no meaningful difference to the jank's frequency or severity. Ruled out as a cause, for the
+second time, by two independent tests.
+
+### GPU utilization sampled during genuine active use — the iGPU is never the bottleneck
+
+This laptop (Dell Inspiron 7577) is a hybrid Intel+NVIDIA Optimus setup — `glxinfo`/`lspci` confirm
+KWin actually composites on the Intel HD Graphics 630 (`card1`, Kaby Lake, several years old), with
+the NVIDIA GTX 1060 Mobile (`card0`) sitting almost entirely idle (`nvidia-smi`: 0% util, P8/lowest
+power state, 14MiB used) even during active jank-producing use. Sampled `/sys/class/drm/card1/
+gt_cur_freq_mhz` (world-readable, no root needed) at ~50Hz for 90 seconds of confirmed real, active
+Fabulor interaction: **99.8% of samples sat at 350MHz, the iGPU's OWN FLOOR frequency** (max is
+1100MHz) — it essentially never ramped up at all, even while jank was actively occurring. **This
+rules out GPU compute/render saturation as the cause** — whatever is happening, the iGPU is not
+struggling to keep up with rendering work; it's barely being asked to do any.
+
+### Real kernel-level tracing (`trace-cmd`, ftrace) — the most authoritative evidence in the whole investigation
+
+Installed `trace-cmd` (`sudo zypper install -y trace-cmd`, a real system package addition — done
+with Pryme's explicit confirmation) to capture real kernel scheduler and i915 GPU-driver events,
+completely independent of Fabulor's process, KWin's own event loop, AND the screen recorder's own
+encoding pipeline (which the earlier two methods could not fully rule out as a confound).
+
+`i915:intel_crtc_flip_done` never fired on this kernel/driver combination (0 events across every
+capture) — not a capture bug, this kernel's atomic-modesetting path apparently signals frame
+presentation through `intel_plane_update_arm`/`_noarm` instead. Used the plane-1A `intel_
+plane_update_arm` event stream (real `frame=`/`scanline=` counters from the driver, genuine
+per-commit ground truth) as the frame-timing signal instead. Two captures, ~45s and ~60s, both
+during confirmed real active Fabulor use:
+
+- First capture: real but contaminated (a stray `nvidia-smi dmon` process I had started earlier in
+  the session for the GPU-frequency check, and never confirmed stopped, was still polling
+  throughout — ~40K scheduler events; VS Code also present). Still showed p50=16.7ms, p90=83ms,
+  p99=300ms, max=500ms, **96 gaps >100ms in 45 seconds**.
+- Second capture (self-timed via a 15s-delay wrapper script, so Pryme could close VS Code first
+  without needing me actively running anything): `nvidia-smi` confirmed killed beforehand (real
+  contamination source, only found by checking `pgrep` directly rather than assuming an earlier
+  command had cleanly exited); VS Code still showed some residual scheduler presence (~5,530
+  events, likely the extension host or a not-fully-closed window) but far cleaner overall. Result:
+  p50=16.7ms, p90=100ms, p99=250ms, max=683ms, **143 gaps >100ms in 60 seconds** — same shape,
+  same order of magnitude, if anything slightly worse (plausibly denser interaction during this
+  specific window).
+
+**Directly examined the scheduler trace during the single biggest gap (683ms)**: `kwin_wayland` was
+scheduled 143 times and Fabulor's own `python` process 78 times DURING that gap — both receiving
+substantial, active CPU time throughout, not starved. **This rules out simple CPU-scheduling
+starvation as the cause** — whatever is stalling the frame, it is not because Fabulor or KWin were
+denied the CPU.
+
+### Two concrete, real, previously-unknown leads found while checking system logs for context — neither acted on yet
+
+Per this project's own measurement discipline, checked `dmesg`/`journalctl` directly rather than
+stopping at "scheduling looks fine, therefore no more information available":
+
+1. **A single kernel warning, real but likely not the primary cause given it only fired once**:
+   `WARNING: kernel/time/hrtimer.c:1071 at hrtimer_forward+0x78/0xb0` — `timer->is_queued` assertion
+   failure, triggered from inside `i915_sample()` (`Fri Sep 25 03:34:21`, this exact session). A
+   genuine kernel-level timer-bookkeeping inconsistency inside the Intel driver's own GPU-busy
+   sampling code, on a `Tainted: P OE` kernel (proprietary NVIDIA modules loaded alongside i915 —
+   consistent with this being an Optimus hybrid-GPU machine). Checked frequency: fired exactly ONCE
+   across the whole session (`grep -c "cut here"` = 1) — real, but too rare on its own to explain
+   jank recurring every 2-3 seconds throughout hours of use.
+2. **The more promising lead: KWin's own compositor logging a real GPU-resource-allocation
+   failure, recurring throughout the ENTIRE session, in irregular bursts**: `GL_INVALID_VALUE in
+   glTexStorage2D(width, height or depth < 1)` → `Invalid framebuffer status: "GL_FRAMEBUFFER_
+   INCOMPLETE_ATTACHMENT"` → `Failed to create an offscreen framebuffer`, all three lines together,
+   16 times across the session (`journalctl --user -b 0`), clustered irregularly (e.g. 3 times
+   within 40 seconds around 04:23:56-04:24:34, then quiet for ~7 minutes, then more) — a pattern
+   shape consistent with genuinely intermittent, not periodic, jank. This is KWin's COMPOSITOR
+   itself — the thing directly responsible for painting every window including Fabulor's — failing
+   to allocate a GPU offscreen framebuffer it needs (very plausibly for a blur effect, given how
+   heavily this desktop's own effects and this app's own `visual_area`/backdrop blur mechanisms
+   lean on offscreen render targets), which would plausibly force a fallback path, a skipped frame,
+   or a visible hitch exactly matching what's been reported for months.
+
+### Where this leaves things — genuinely promising, not yet actionable
+
+**Neither lead has been investigated further or acted on** — this entry is diagnosis, not a fix,
+consistent with tonight's own working pattern. The KWin offscreen-framebuffer failure is the
+stronger, more frequent, more directly plausible lead of the two and is the natural next-session
+starting point: it is NOT a Fabulor bug (it's the system compositor, external to this codebase
+entirely) but it could very plausibly explain visible jank in Fabulor specifically, since Fabulor's
+own panels are among the most blur/effect-heavy surfaces on this desktop. Concrete next steps, not
+yet started:
+- Search for this exact KWin error text (`Failed to create an offscreen framebuffer` +
+  `GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT` on Intel i915/Optimus hardware) against known KDE/Mesa bug
+  reports — this looks like the kind of thing that would already have a tracked upstream issue.
+- Check KWin's own debug console (`org.kde.KWin.showDebugConsole()` via D-Bus, `Effects` tab) for
+  which effect(s) are active when this error fires — blur is the natural suspect given this app's
+  own heavy reliance on it, but not yet confirmed.
+- Check whether disabling KWin's blur effect system-wide (Settings > Desktop Effects, separate from
+  Fabulor's own in-app blur toggle) changes the frequency of this specific log line — a real,
+  checkable experiment, not yet run.
+- Consider whether Mesa/i915 driver version, or the specific Optimus/PRIME configuration on this
+  machine, is implicated — this is genuinely more of a system/distro-level question than an
+  application one at this point.
+
+**Methodology notes worth keeping for reuse:**
+- Real per-frame video PTS extraction (`ffprobe -show_entries frame=pts_time`) is a solid, cheap,
+  no-new-privilege way to get ground-truth frame timing independent of the app under test — but
+  keep in mind it inherits whatever the RECORDER's own encoding introduces; cross-check the
+  BASELINE median against the expected frame interval before trusting the tail.
+- `trace-cmd`/ftrace needed a real system package install (`trace-cmd`) and root (`sudo`) for
+  `/sys/kernel/debug/tracing` — a genuine, confirmed-with-Pryme-first system change, not a quiet
+  side effect.
+- `intel_crtc_flip_done` not firing at all on this kernel is itself informative, not a dead end —
+  `intel_plane_update_arm`'s own `frame=`/`scanline=` fields are a valid substitute ground-truth
+  signal when the "expected" event doesn't fire.
+- A background monitoring command (`nvidia-smi dmon`) started earlier in a long session can
+  silently keep running and contaminate a LATER, unrelated measurement — confirmed via `pgrep`
+  directly rather than assumed stopped. Always verify a background process actually exited before
+  treating a "clean environment" test as clean.
+- `/sys/class/drm/card*/gt_cur_freq_mhz` (Intel iGPU) is world-readable, no root/new package needed,
+  and is a fast, cheap way to rule GPU-render-saturation in or out before reaching for anything
+  heavier (kernel tracing, `intel_gpu_top`, etc.).
+
+---
+
 ## 2026-09-25 — `StatsPanel.eventFilter` occlusion guard shipped: confirmed real win for Stats-sourced opens, plus an honest unexplained anomaly
 
 **Direct follow-up to the root-cause entry immediately below.** Implemented the guard the root-cause
