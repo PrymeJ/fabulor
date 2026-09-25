@@ -1,3 +1,69 @@
+## 2026-09-25 — Severity ranking now measured, not just felt: Stats > Tags > Library holds on frame-DELIVERY timing, and does NOT hold on paint cost — the two are cleanly separated
+
+Direct follow-up to the entry below this one. Pryme asked what angles were left on Stats
+specifically; the paint-cost probe (`_wire_paint_probe`, corrected earlier the same session to
+record which panel — Library/Stats/Tags — a Book Detail slide opened over via a new `context_fn`
+parameter, `from=` in the `[PANEL-TIMING] book_detail PAINT` log line) was checked first, since it
+was the cheapest thing already wired and ready to run.
+
+**Paint cost: NO signal, real negative result, not inconclusive.** From a live test session
+(n=10/12/16 for library/stats/tags — small, but the numbers land in the same range with no
+separation):
+
+| Source  | n  | avg paint ms | max paint ms | avg paint calls |
+|---------|----|-----------  |-------------|-----------------|
+| library | 10 | 5.82        | 9.10        | 49.6            |
+| stats   | 12 | 5.82        | 9.30        | 53.2            |
+| tags    | 16 | 6.11        | 9.10        | 36.6            |
+
+Library and Stats are tied on average paint cost; Tags — which Pryme reports as SOMETIMES better
+than Stats — has the highest average of the three. This flatly does not track the reported
+ranking. Individual widget paint calls are cheap and roughly equal cost across all three panels;
+whatever's different about Stats is not "its widgets are more expensive to paint."
+
+**Frame-delivery timing: a real, clean, three-way-corroborated signal — this is the actual
+finding.** `_wire_timing_probe` (the wall-clock/frame-gap probe, already existing, already wired
+with the same `from=` context for Book Detail since an earlier point in this investigation)
+produced a MUCH larger sample from the same test session (n=337/421/354, the full session rather
+than a short manual window) and shows the reported ranking on THREE independent metrics at once:
+
+| Source  | n   | avg wall_ms | avg max_frame_gap | worst-ever max_frame_gap | jank_frame_rate |
+|---------|-----|-------------|--------------------|--------------------------|------------------|
+| library | 337 | 338.3       | 40.0ms             | 163.5ms                  | 44.8%            |
+| tags    | 354 | 352.1       | 49.3ms             | 155.8ms                  | 51.0%            |
+| stats   | 421 | 359.6       | 58.3ms             | **349.3ms**              | 55.4%            |
+
+`jank_frame_rate` = fraction of `valueChanged` ticks whose gap from the previous tick exceeded one
+60fps frame budget (16.7ms) — i.e. how often the animation visibly stutters, not just how long it
+takes overall. All three metrics agree on the SAME ordering Pryme reported purely from feel:
+Library best, Tags in the middle, Stats worst. Stats' average worst-single-gap is 46% higher than
+Library's, and its single worst outlier across the session (349ms) is more than double the worst
+seen for either other panel — a gap that size is a genuinely visible freeze, not "a bit choppy."
+
+**This precisely separates two different questions that could both have been "the answer," and
+only one of them is**: it is NOT that Stats' widgets are expensive to paint once a frame arrives
+to paint them. It IS that frames arrive late / ticks get delayed more often and more severely
+during a Stats-sourced Book Detail slide than a Library-sourced one, with Tags in between. That
+points at something competing for the main thread's time DURING the slide — not rendering cost,
+but scheduling/dispatch cost. The most obvious existing candidates already on record in this same
+investigation: `StatsPanel.eventFilter`'s app-wide install (even with tonight's earlier occlusion
+guard, it's still live and dispatching during a Library/Tags-sourced open, and fully live during a
+Stats-sourced one before the slide even starts), `hover_tracker.py`'s `ScrollHoverTracker`/
+`GridHoverTracker` (Tags-only, also app-wide, no occlusion guard yet — see TODO.md), and the
+already-documented "why does Stats' one filter outpace Tags' two combined" open question — none of
+these have been directly correlated against per-slide `max_frame_gap`/`jank_frame_rate` yet; that
+correlation is the natural next step, not yet started.
+
+**Not yet checked, explicitly**: whether the 200ms `ui_timer` heartbeat (`_update_ui_sync`) landing
+mid-slide contributes — Stats' own tab refresh/heatmap-streak-grid work if a tick lands while Book
+Detail is opening over it, versus Library's comparatively cheap `BookModel`/`BookDelegate` list
+paint. Also not checked: whether this ordering holds with playback OFF (all of tonight's samples
+had a book playing, since the transport-bar-blur re-grab investigation from earlier the same night
+required it) — if the ranking persists with playback off, that would rule out `_grab_and_blur`'s
+own per-tick blur-grab-and-composite cost as a confound; if it disappears, that reopens the blur
+grab cycle as a candidate specifically for why Stats fares worst (larger widget tree behind it to
+re-grab/re-blur on each of `_grab_and_blur`'s ~65-200ms cycles).
+
 ## 2026-09-25 — Jank characterization from Pryme: sporadic/intermittent (not constant), and a consistent Stats > Tags > Library severity ranking — single-machine/single-DE caveat acknowledged, not actionable
 
 Pryme's own description, worth recording verbatim rather than paraphrased, since the exact shape
