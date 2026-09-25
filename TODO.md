@@ -9,6 +9,41 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
 
 ## Summary index
 
+### Two open observations from 2026-09-25/26, neither confirmed enough to act on yet
+- **A real SIGSEGV crash, cause NOT pinned down, not yet reproduced a second time.**
+  `coredumpctl` confirmed a genuine native crash (PID 184751, 2026-09-26 01:53:59) with the same
+  structural signature as the earlier, already-reverted `WA_OpaquePaintEvent` crash from earlier
+  the same night (`QAnimationDriver::advanceAnimation` → `QAbstractAnimationPrivate::setState` →
+  a Qt signal dispatched into Python → `__dynamic_cast` failure in `QtWidgets.abi3.so`) — but the
+  code that caused THAT crash is fully reverted and not present in this session's shipped changes
+  at all, so this is either a separate trigger of the same underlying Qt/PySide bug class, or
+  unrelated. Coredump investigation hit a real dead end: no `py-bt` support and no debuginfo
+  installed, so the crashing Python frame's actual identity (which `QPropertyAnimation` —
+  `TasselOverlay._slide`, one of the grids' reveal/label animations, or something else) could not
+  be determined from the dead core alone; installing debuginfo packages to go further was
+  deliberately declined (a real system package-manager change, not offered without asking first).
+  Pryme's own call, and the reasonable one: Fabulor had "just started" when this happened — a
+  real, plausible confound sitting right next to the crash in time — so until it recurs, treat as
+  not having happened. A relaunch immediately after did NOT reproduce it under the same
+  conditions (increased system load, active use). If this recurs, the priority next step is
+  catching it live (watch what's on screen at the moment, not just the coredump after the fact)
+  rather than another blind coredump read.
+- **Fabulor reportedly runs SMOOTHER under heavy system load than idle — the opposite of normal
+  intuition — reported live, twice, independently, but still anecdotal, not measured.** Pryme's
+  own framing: "Although I have been noticing this for days, load vs idle behavior is just
+  anecdotal evidence at this point, not backed by numbers." Reported specifically across Book
+  Detail's slide, the tassel, and Stats' Month panel — i.e. not scoped to one panel. Two live
+  observations tonight matched this direction (janky at idle, smooth once system load was pushed
+  up — Chatterbox running, then later a general "full blast" load), but neither was measured with
+  `_wire_paint_probe` or any other real instrumentation, and the earlier ~90%-CPU tassel
+  investigation this same night already showed how easy it is to draw a wrong conclusion from an
+  unmeasured live impression (see the "measurement discipline" note in NOTES.md/TODO_ARCHIVE.md
+  for the CPU-storm entry). If this is ever investigated: the natural first step is a controlled
+  A/B exactly like tonight's 150ms-vs-180ms tassel comparison — same panel, same interaction,
+  fresh process per condition, `_wire_paint_probe` or an equivalent live sampler, system load
+  toggled between runs (a synthetic load generator, not another app, to keep the comparison
+  clean) — not another round of live impressions.
+
 ### Do NOT extend the Library List/Timeline grab-and-proxy paint-suppression pattern to Book Detail or Stats' Week/Month tabs without new, hard evidence — a deliberate non-fix, not an oversight
 - [2026-09-25] After shipping the Library List mode fix (see TODO_ARCHIVE.md) and confirming the
   Timeline-tab StreakGrid/HourlyHeatmap fix from earlier the same night, Pryme did a ~2-minute
