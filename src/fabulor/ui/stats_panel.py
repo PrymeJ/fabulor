@@ -5087,6 +5087,60 @@ class StatsPanel(QWidget):
             # closed. See _refresh_time's streak_mode docstring.
             self._refresh_time(streak_mode="catch_up")
 
+    def suspend_timeline_paint(self) -> None:
+        """Stops the currently-visible Timeline grid (`_streak_grid` or `_heatmap`) from
+        repainting for the duration of the Stats panel's own slide, added 2026-09-25 after
+        live instrumentation (`_wire_paint_probe`, generalized the same night to cover Stats'
+        own slide, not just Book Detail's — see NOTES.md) found `StreakGrid.paintEvent` costing
+        20-27ms per call and firing 6-12 times during a single ~300ms Stats slide — the grid's
+        content is already fully determined by `refresh_current_tab()`/`_refresh_time()`, which
+        run BEFORE `.show()`/the slide starts (see `_start_stats_entry`, panels.py), so nothing
+        legitimate changes what either grid paints between slide-start and slide-finish.
+
+        FIRST VERSION WAS WRONG, corrected same night, live-reported by Pryme with screenshots:
+        a bare `setUpdatesEnabled(False)` with no proxy made the grid slide in visibly BLANK,
+        then pop fully-painted the instant `resume_timeline_paint()` ran — because disabling
+        updates doesn't skip repainting unchanged content, it skips ALL painting, including the
+        grid's very first paint if it hadn't painted yet by the time it became visible (which it
+        hadn't — `_start_stats_entry` calls this before `.show()`). The original reasoning
+        ("neither grid moves, so no proxy is needed") addressed the wrong risk — a proxy isn't
+        needed to track MOTION here (correct, unlike Book Detail's own
+        `_wire_slide_paint_suppression`, panels.py, where the panel's own `pos` IS the animated
+        property), but IS needed to show the grid's ALREADY-CORRECT content immediately instead
+        of nothing. Now: grabs a pixmap of the grid BEFORE disabling its updates, shows that
+        pixmap via a plain `QLabel` proxy (`self._timeline_paint_proxy`, built lazily, parented
+        to the grid's own parent so it shares the same coordinate space, positioned at the
+        grid's exact `.geometry()`, raised above it) for the whole suspended window. The proxy
+        needs no position tracking (see above — nothing here moves relative to its parent).
+
+        Only suspends whichever grid `_show_streak_grid` says is actually visible — the hidden
+        one already has `setVisible(False)` and gets no paint events regardless, so suspending
+        it too would be a no-op, not a second real saving. Call `resume_timeline_paint()` at
+        slide-finish; do not leave a grid suspended indefinitely, or a genuine external content
+        change (day-start-hour rollover, a book finished while the panel is open) would silently
+        fail to repaint until the next full show/hide cycle."""
+        grid = self._streak_grid if getattr(self, "_show_streak_grid", False) else self._heatmap
+        if not hasattr(self, "_timeline_paint_proxy"):
+            self._timeline_paint_proxy = QLabel(grid.parentWidget())
+            self._timeline_paint_proxy.hide()
+        proxy = self._timeline_paint_proxy
+        proxy.setPixmap(grid.grab())
+        proxy.setGeometry(grid.geometry())
+        proxy.raise_()
+        proxy.show()
+        grid.setUpdatesEnabled(False)
+
+    def resume_timeline_paint(self) -> None:
+        """Pairs with suspend_timeline_paint() — re-enables the same grid's updates, forces one
+        real repaint so it reflects its current (unchanged, per suspend's own docstring) content
+        rather than staying visually stale until something else happens to trigger a repaint,
+        then hides the proxy (the grid's own live paint takes over from here)."""
+        grid = self._streak_grid if getattr(self, "_show_streak_grid", False) else self._heatmap
+        grid.setUpdatesEnabled(True)
+        grid.update()
+        if hasattr(self, "_timeline_paint_proxy"):
+            self._timeline_paint_proxy.hide()
+
     def _inject_active_covers(self, rows: list[dict]) -> list[dict]:
         for row in rows:
             bp = row.get("book_path")

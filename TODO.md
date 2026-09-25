@@ -371,25 +371,40 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
     actual driver of Tags' open-to-open variance. 707/707 tests pass after the probe extension.
     Full data and analysis in NOTES.md.
 
-### Library List mode and Timeline/Streak view are janky at EVERY tested historical checkpoint — no bisectable regression exists
+### Library List mode is janky at EVERY tested historical checkpoint — no bisectable regression exists; Timeline/Streak's own cause FOUND and FIXED
 - [2026-09-25] During the same-session Playback bisect (see the entry above and NOTES.md), both
-  were checked incidentally at nearly every checkpoint tested, back to the earliest practical
-  points: Library List mode janky as far back as `4700b31`/`21ac097`/`0658e58` (all 2026-07-28
-  through 07-31); Timeline/Streak janky as far back as StreakGrid's own FIRST commit (`6002e4d`,
-  2026-06-11 — "still worse [than Heatmap]... could be slightly better than today, but hard to
-  say"). **Neither has a "before" state to bisect against — they read as janky at every point
-  tested, including the very first commit that made the feature exist at all.** This rules out a
-  recent regression as the explanation for either. Two honest possibilities, not distinguished
-  yet: (1) this is simply the inherent/structural cost of what each does (List mode paints many
-  more visible rows without thumbnails competing for a different paint budget than the other
-  Library modes; StreakGrid paints 364 cells vs. HourlyHeatmap's much smaller 14x24 grid — a
-  real, likely unavoidable size difference), or (2) both have carried a real inefficiency since
-  their very first implementation that was simply never fast to begin with, rather than having
-  regressed. **Git bisection cannot distinguish between these two** — the tool only finds
-  boundaries, and there isn't one here. The tractable next step, if this is picked up again, is
-  the same live-instrumentation approach used for Book Detail above (`_wire_paint_probe`-style
-  probes wired to Library's/Stats' own panel-open animations) to get an absolute cost number for
-  each, rather than another round of relative-to-history comparison.
+  Library List mode and Timeline/Streak were checked incidentally at nearly every checkpoint
+  tested, back to the earliest practical points — both janky at every point, including each
+  feature's own first commit, ruling out a recent regression as the explanation for either. Git
+  bisection can't distinguish "inherent structural cost" from "always been inefficient" when
+  there's no boundary to find either way.
+- **[2026-09-25] Timeline/Streak: CLOSED, root cause found and fixed, not just characterized.**
+  Extended the Book Detail paint/filter/dispatch probes to Library's and Stats' own slide
+  animations (new, not a repeat of the Book-Detail-content finding) and found the actual cause:
+  `StreakGrid.paintEvent` costs 20-27ms PER CALL (a 364-cell loop redoing `timedelta`/`isoformat`/
+  dict-lookup/`QColor` work unconditionally, every call, none of it cached) and fires 6-12 times
+  during one ~300ms Stats slide — easily enough to blow multiple frame budgets on its own.
+  Checked against Pryme's own memory of `streak_grid_cache` (2026-06-11, confirmed via git log —
+  a real, deliberate design decision) before writing any fix: that cache covers the underlying
+  DATA only: matches Pryme's own four invalidation triggers exactly (book finished/unfinished for
+  the day, session deleted, day-start-hour changed) — it never addressed the PAINT side, because
+  live paint-cost-during-an-unrelated-slide measurement didn't exist as a technique until
+  tonight's Book Detail investigation. **Fixed**: `StatsPanel.suspend_timeline_paint()`/
+  `resume_timeline_paint()` suspend whichever grid is visible for the slide's duration via a
+  pixmap-proxy (same SHAPE as Book Detail's own mechanism, but no position-tracking needed since
+  neither grid moves relative to its parent during Stats' own slide). A first version (bare
+  `setUpdatesEnabled(False)`, no proxy) shipped a real regression — live-reported by Pryme with
+  screenshots, grid slid in blank then popped painted — corrected same session. Live-confirmed
+  fixed: "I confirm that it works as intended with the sluggishness gone." 9 new tests
+  (`tests/test_stats_timeline_paint_suppression.py`), 716/716 full suite passes. Full trace in
+  NOTES.md. **HourlyHeatmap's own paint cost is untested** (Pryme's live rounds targeted Streak
+  specifically) but the fix already covers it structurally if it turns out to need it — no
+  further code change required, just verification.
+- **Library List mode remains genuinely open** — no cause found tonight, still just "janky at
+  every checkpoint, no boundary to bisect." The tractable next step, if picked up again, is the
+  same live-instrumentation approach that found StreakGrid's cause: wire `_wire_paint_probe` to
+  `library_panel_animation` specifically while in List mode and read what's actually expensive,
+  rather than another round of relative-to-history comparison.
 
 ### Book Detail panel's tab bar — not wired into the shared `_kbdnav_active_panel_key` mechanism
 - [2026-09-15, scope corrected 2026-09-17] Still true and unrelated to the (now implemented, see

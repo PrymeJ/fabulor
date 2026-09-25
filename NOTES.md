@@ -1,3 +1,78 @@
+## 2026-09-25 — StreakGrid's own-slide jank root-caused and FIXED: 20-27ms/paintEvent call, 6-12 calls per Stats slide, real content re-derived every frame for a genuinely static view
+
+Direct continuation of the Book Detail investigation below — after finding the ~15µs/event
+app-wide-filter tax (see the entry directly below this one), extended the same live-probe
+approach (`_wire_paint_probe`/`_wire_event_filter_cost_probe`/`_wire_event_dispatch_probe`,
+previously only wired to `book_detail_panel_animation`) to Library's and Stats' OWN slide
+animations, generalizing `_wire_event_filter_cost_probe` with a `name` parameter (it previously
+hardcoded `"book_detail"` in its log line and read Book-Detail-specific context unconditionally
+— fixed to only do either when actually measuring Book Detail's own slide).
+
+**Real, striking result from Pryme's live test round**: `StreakGrid.paintEvent` cost 93.7-187.4ms
+across just 4 Stats-on-Timeline-Streak opens, at 6-12 calls per open — **20-27ms per single
+paintEvent call**, easily enough on its own to blow a 60fps frame budget. Traced to the actual
+`paintEvent` body (`stats_panel.py:2593`): a `for r in range(26): for c in range(14)` loop (364
+cells) doing `timedelta` subtraction, `isoformat()` string construction, dict lookups, and
+`QColor` allocation/`setAlpha` PER CELL, unconditionally, on every single call — none of it
+cached or short-circuited for a call where nothing changed.
+
+**Pryme asked the right question before any fix was written**: whether this had already been
+addressed when `StreakGrid` was originally designed, since he specifically remembered a cache
+being built for exactly this reason. Checked git history and SESSION.md rather than assumed:
+`73f64c9` ("add streak_grid_cache backend", 2026-06-11) landed the SAME DAY as `6002e4d`
+(StreakGrid's own UI), confirming this was a real, deliberate, from-day-one design decision —
+but it caches the underlying DATA only (the 364-day listened/finished-day sets, avoiding
+re-querying `listening_sessions`/`book_events`), matching exactly the four invalidation triggers
+Pryme named (a book finished for the first time that day, a book unfinished, a session deleted,
+`day_start_hour` changed). **It never addressed the PAINT side** — nobody in 2026-06-11 measured
+`paintEvent`'s own per-call cost during an unrelated panel-slide animation, because that class of
+measurement (live paint-cost probing during a panel slide) didn't exist until tonight's Book
+Detail investigation invented it. So this is a genuinely separate, newly-discovered gap on an
+axis the original design was never built to address — not something that fell through a crack in
+work already done.
+
+**Fix, corrected once after a live-reported regression.** First version: `StreakGrid.
+setUpdatesEnabled(False)` for the Stats slide's duration (mirroring "the data can't have changed,
+so don't repaint it"), no proxy — reasoned (wrongly) that no proxy was needed since, unlike Book
+Detail's own slide, the grid doesn't MOVE relative to its parent during Stats' slide. **Live-
+reported by Pryme with screenshots**: the grid slid in visibly BLANK, then popped fully-painted
+the instant `resume_timeline_paint()` ran. Root cause of the regression: `setUpdatesEnabled(False)`
+doesn't skip repainting only unchanged content — it skips ALL painting, including the grid's very
+first paint, and the grid hadn't painted yet by the time it became visible (`_start_stats_entry`
+calls suspend before `.show()`'s cascade ever reaches it). The "no proxy needed" reasoning
+addressed the wrong risk — a proxy isn't needed for MOTION tracking here (correct), but IS needed
+to show the grid's already-correct content immediately instead of nothing.
+
+**Corrected fix**: `StatsPanel.suspend_timeline_paint()`/`resume_timeline_paint()` (`stats_panel.
+py`) now grab a pixmap of the grid BEFORE disabling updates, show it via a lazily-built,
+reused-not-leaked `QLabel` proxy (`self._timeline_paint_proxy`) positioned at the grid's own
+`.geometry()` within its shared parent (no position-tracking needed, since nothing here moves
+relative to its parent — unlike Book Detail's `_wire_slide_paint_suppression`, where the
+animated widget IS the thing sliding). Wired into `PanelManager._start_stats_entry`/
+`_close_stats_flow`/`_on_stats_hidden` (`panels.py`), suspend right after `.show()`+
+`refresh_current_tab()` (so content is fully determined first) and right before the slide starts,
+resume at slide-finish. Only suspends whichever grid `_show_streak_grid` says is actually
+visible — the hidden one is already `setVisible(False)` and gets no paint events regardless.
+
+**Live-confirmed working, twice — once catching the regression, once confirming the fix**:
+"Fast but displays a behavior I don't like. Slides blank, then populates in a blink" (first
+version) → "I confirm that it works as intended with the sluggishness gone" (corrected version).
+9 new tests (`tests/test_stats_timeline_paint_suppression.py`) specifically cover the proxy
+mechanism (visibility, geometry match, non-null pixmap, hide-on-resume, reuse-not-leak-a-new-
+proxy-per-call) — the first version's own test suite (5 tests, `updatesEnabled()` only) would
+NOT have caught the blank-flash regression, since it never asserted anything about what's
+actually shown. 716/716 full suite passes.
+
+**Not yet checked**: whether `HourlyHeatmap` (the OTHER Timeline view) has the same class of
+expensive per-cell paintEvent cost — untested tonight (Pryme's live rounds specifically targeted
+Streak), though `suspend_timeline_paint`/`resume_timeline_paint` already cover it structurally
+(the fix suspends whichever grid is visible, not Streak specifically) since HourlyHeatmap is a
+similarly-sized grid (14×24=336 cells vs Streak's 26×14=364) with the same "static once built"
+design. If HourlyHeatmap's own paint cost is ever measured and found expensive too, this fix
+already applies to it with no further code change needed.
+
+---
+
 ## 2026-09-25 — Book Detail's per-source jank ordering (Tags worst, Stats middle, Library best) quantified and explained at the mechanism level: ~15µs/event marginal cost per app-wide `eventFilter`, structurally irreducible without removing the filter entirely
 
 Direct continuation of the entry below (occlusion guard shipped for `ScrollHoverTracker`/

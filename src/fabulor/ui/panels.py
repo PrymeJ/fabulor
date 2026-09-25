@@ -176,7 +176,8 @@ def install_panel_timing_probe(panel_manager: "PanelManager") -> None:
         # (StatsPanel.eventFilter, TagManagerWidget.eventFilter, hover_tracker.py's
         # ScrollHoverTracker/GridHoverTracker) competing for main-thread time DURING the slide,
         # delaying the animation's own ticks. See NOTES.md, "Severity ranking now measured..."
-        _wire_event_filter_cost_probe(panel_manager.book_detail_panel_animation, panel_manager)
+        _wire_event_filter_cost_probe(panel_manager.book_detail_panel_animation, panel_manager,
+                                       name="book_detail")
         # 2026-09-25, third pass: paint cost, app-level event-filter dispatch cost, and every
         # Stats-owned periodic timer have all been checked and ruled out (see NOTES.md). None of
         # them explain why Stats' underlay produces worse frame-delivery timing than Library's or
@@ -189,6 +190,29 @@ def install_panel_timing_probe(panel_manager: "PanelManager") -> None:
         _wire_event_dispatch_probe("book_detail", panel_manager.book_detail_panel_animation,
                                     panel_manager.book_detail_panel,
                                     context_fn=lambda pm=panel_manager: _book_detail_probe_context(pm))
+
+    # Library's/Stats' OWN slide, added 2026-09-25 — a genuinely new question, not a repeat of
+    # the "paint cost identical across all three" finding above. That finding was about Book
+    # Detail's OWN widget tree painting the same regardless of which panel it opened over; it
+    # never measured Library's or Stats' own panel-open animation directly, because the whole
+    # investigation up to this point was specifically about Book Detail's slide (Pryme's own
+    # correction, 2026-09-25: "It's not these panel openings, but the book details opening over
+    # these panels" — see the comment block above). Tonight's Library-List/Timeline-Streak
+    # thread is different: those ARE about the panel's own open/close, with no Book Detail
+    # involved, and have never been measured past the wall-clock/frame-gap numbers
+    # _wire_timing_probe already gives every panel above. Reuses the exact same three probes,
+    # unmodified — all three already take `anim`/`panel` generically, none of their internals
+    # assume book_detail specifically.
+    if panel_manager.library_panel_animation is not None and panel_manager.library_panel is not None:
+        _wire_paint_probe("library", panel_manager.library_panel_animation, panel_manager.library_panel)
+        _wire_event_filter_cost_probe(panel_manager.library_panel_animation, panel_manager,
+                                       name="library")
+        _wire_event_dispatch_probe("library", panel_manager.library_panel_animation, panel_manager.library_panel)
+    if panel_manager.stats_panel_animation is not None and panel_manager.stats_panel is not None:
+        _wire_paint_probe("stats", panel_manager.stats_panel_animation, panel_manager.stats_panel)
+        _wire_event_filter_cost_probe(panel_manager.stats_panel_animation, panel_manager,
+                                       name="stats")
+        _wire_event_dispatch_probe("stats", panel_manager.stats_panel_animation, panel_manager.stats_panel)
 
 
 def _wire_paint_probe(name: str, anim: QPropertyAnimation, panel: QWidget, context_fn=None) -> None:
@@ -294,17 +318,26 @@ def _wire_paint_probe(name: str, anim: QPropertyAnimation, panel: QWidget, conte
     anim.finished.connect(_on_finished)
 
 
-def _wire_event_filter_cost_probe(anim: QPropertyAnimation, panel_manager: "PanelManager") -> None:
-    """Measures app-wide QApplication event filter dispatch cost DURING a single Book Detail
-    slide, added 2026-09-25 after _wire_paint_probe ruled out paint cost as the explanation for
-    Pryme's reported Stats > Tags > Library jank severity ranking (paint cost was identical
-    across all three; _wire_timing_probe's max_frame_gap/jank_frame_rate tracked the ranking
-    instead — see NOTES.md, "Severity ranking now measured, not just felt"). This probe tests
-    the next candidate directly: do StatsPanel.eventFilter / TagManagerWidget.eventFilter /
-    hover_tracker.py's ScrollHoverTracker/GridHoverTracker — all installed via
-    QApplication.instance().installEventFilter(self), confirmed app-wide, confirmed still live
-    during a Book Detail slide (Book Detail occludes rather than hides its underlay, so
-    hideEvent never fires — see StatsPanel's own OCCLUSION GUARD comment) — actually cost
+def _wire_event_filter_cost_probe(anim: QPropertyAnimation, panel_manager: "PanelManager",
+                                   name: str = "book_detail") -> None:
+    """Measures app-wide QApplication event filter dispatch cost DURING a single panel-slide
+    animation — originally Book Detail-only (added 2026-09-25, see below), generalized the same
+    day to also cover Library's/Stats' OWN slide (`name` parameter, default `"book_detail"` for
+    backward compatibility with the original call site) once the Book-Detail-specific
+    investigation this was built for gave way to a broader question: is the SAME app-wide filter
+    cost also present during Library's/Stats' own open/close, not just while Book Detail slides
+    over them? `name` controls both the log line's prefix and whether Book-Detail-specific
+    context (`_book_detail_probe_context`, meaningless for a non-Book-Detail slide) is read.
+
+    Original motivation (2026-09-25, Book-Detail-specific): added after _wire_paint_probe ruled
+    out paint cost as the explanation for Pryme's reported Stats > Tags > Library jank severity
+    ranking (paint cost was identical across all three; _wire_timing_probe's max_frame_gap/
+    jank_frame_rate tracked the ranking instead — see NOTES.md, "Severity ranking now measured,
+    not just felt"). This probe tests the next candidate directly: do StatsPanel.eventFilter /
+    TagManagerWidget.eventFilter / hover_tracker.py's ScrollHoverTracker/GridHoverTracker — all
+    installed via QApplication.instance().installEventFilter(self), confirmed app-wide, confirmed
+    still live during a Book Detail slide (Book Detail occludes rather than hides its underlay,
+    so hideEvent never fires — see StatsPanel's own OCCLUSION GUARD comment) — actually cost
     measurable main-thread time WHILE the slide's own animation ticks are trying to run.
 
     Wraps each candidate's live INSTANCE eventFilter method (never the class — see this
@@ -406,11 +439,16 @@ def _wire_event_filter_cost_probe(anim: QPropertyAnimation, panel_manager: "Pane
         per_calls = state["per_obj_calls"]
         total_ms = sum(per_ms.values())
         total_calls = sum(per_calls.values())
-        ctx = _book_detail_probe_context(panel_manager)
+        # ctx is only meaningful for book_detail (which underlay, open/close, tag/book-count —
+        # see _book_detail_probe_context's own docstring); for library/stats measuring their
+        # OWN slide there is no "underlay" concept, so ctx stays empty rather than misleadingly
+        # calling into book-detail-specific state that has nothing to do with this animation.
+        ctx = _book_detail_probe_context(panel_manager) if name == "book_detail" else None
+        ctx_str = f" from={ctx!r}" if ctx is not None else ""
         detail = ", ".join(f"{k}={per_ms[k]:.2f}ms/{per_calls[k]}x" for k in per_ms if per_calls[k] > 0)
         logger.warning(
-            f"[PANEL-TIMING] book_detail EVENTFILTER total_filter_ms={total_ms:.2f} "
-            f"total_filter_calls={total_calls} from={ctx!r} detail={detail}")
+            f"[PANEL-TIMING] {name} EVENTFILTER total_filter_ms={total_ms:.2f} "
+            f"total_filter_calls={total_calls}{ctx_str} detail={detail}")
         state["per_obj_ms"] = None
         state["per_obj_calls"] = None
         state["orig_methods"] = None
@@ -2392,6 +2430,11 @@ class PanelManager:
         self.stats_panel.show()
         self.stats_panel.refresh_current_tab()
         self.stats_panel.raise_()
+        # Timeline grid content is fully determined by refresh_current_tab() above, before the
+        # slide even starts — nothing legitimate changes it while the panel is merely sliding
+        # into view. See StatsPanel.suspend_timeline_paint's own docstring for the measured
+        # cost this avoids (StreakGrid.paintEvent: 20-27ms/call, 6-12 calls per slide).
+        self.stats_panel.suspend_timeline_paint()
         # panel_key="stats" (2026-09-08, first keyboard-nav pass): lands initial focus on
         # Stats' own tab bar (via panel_tab_widgets("stats")'s first entry) instead of the
         # panel root — same shape as Settings. Without this, _claim_panel_focus's default
@@ -2407,6 +2450,7 @@ class PanelManager:
                 self.stats_panel_animation.finished.disconnect(_on_stats_slide_finished)
             except (TypeError, RuntimeError):
                 pass
+            self.stats_panel.resume_timeline_paint()
             self._apply_transport_bar_blur(self.stats_panel)
             # visual_area blur starts HERE (not at panel-open) so it matches the
             # transport bar's timing — see _start_visual_area_blur.
@@ -2590,6 +2634,12 @@ class PanelManager:
         sidebar_y = 56
         self.stats_panel_animation.setStartValue(QPoint(0, sidebar_y))
         self.stats_panel_animation.setEndValue(QPoint(-panel_w, sidebar_y))
+        # Same cost, same fix as the open path (_start_stats_entry) — the Timeline grid's
+        # content doesn't change while the panel is merely sliding out either. _on_stats_hidden
+        # calls hide() at finish, which stops paint delivery on its own regardless, but resuming
+        # explicitly there keeps the grid's updatesEnabled state consistent for the NEXT open
+        # rather than relying on hide()'s side effect to leave it in a sane state.
+        self.stats_panel.suspend_timeline_paint()
         self.stats_panel_animation.finished.connect(self._on_stats_hidden)
         self.stats_panel_animation.start()
         self._clear_transport_bar_blur()
@@ -2610,6 +2660,7 @@ class PanelManager:
         except RuntimeError:
             pass
         self.stats_panel.hide()
+        self.stats_panel.resume_timeline_paint()
         self._release_panel_focus(self.stats_panel)
         self._notify_panel_closed()
 
