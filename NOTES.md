@@ -1,4 +1,63 @@
-## 2026-09-25 — Qt event-dispatch volume confirms Stats' tree is genuinely larger and costs more to dispatch on OPEN — but does NOT fully explain the ranking (Library/Tags order inverts from frame-gap data)
+## 2026-09-25 — Fifth measurement layer, outside the app entirely: a targeted kernel trace at the real i915 compositor level confirms Stats is worse than Library — the strongest evidence yet, since it can't be explained by anything inside Fabulor's own process
+
+Direct follow-up to the four in-app probes below (paint cost, event-filter cost, Stats-owned
+timers, Qt event-dispatch volume) — none of which fully explained the Stats > Tags > Library
+severity ranking. Since Fabulor's own instrumentation was exhausted, the next step went outside
+the process entirely: a real kernel trace (`trace-cmd`, `i915:intel_plane_update_arm`/
+`intel_plane_update_noarm`, same events used earlier tonight's general jank investigation), this
+time deliberately scoped to compare Library-sourced vs. Stats-sourced Book Detail opens
+specifically, rather than general playback jank.
+
+**Setup, and an honest correction mid-way through**: first attempted with Pryme giving a live
+"switching to stats" cue mid-capture — he caught mid-turn that he'd forgotten to start playback
+for that first attempt, and asked to discard and redo rather than analyze a compromised trace.
+Second attempt used a different protocol per Pryme's own suggestion: no live cue, just note the
+wall-clock switch time afterward. The trace file's own mtime (06:57:44, a few seconds after the
+`sleep 60` wrapper's actual end due to `trace-cmd`'s post-capture flush) gave an estimated trace
+start of ~06:56:44, and Pryme's reported switch time (06:57:20) was converted to a corresponding
+trace-internal uptime timestamp (**428.06**) via that estimate — confirmed independently, before
+Pryme's exact wording arrived, by a real secondary signal: destination-rect (`dst=`) geometry in
+the plane-update events showed 93 patterns appearing ONLY before that computed point and 38 ONLY
+after, consistent with a genuine panel-geometry change (Library full-width vs. Stats 90%-width,
+per this codebase's own `panels.py`) landing right around there. **Pryme's own confirmation
+arrived matching this estimate almost exactly** ("06:56:44 to 06:57:20 is library, the rest
+stats") — the mtime-based reconstruction and the independent geometry-shift check were both
+right, not just plausible.
+
+**Result — real, measured, at the actual compositor level, independent of anything inside
+Fabulor's own process**:
+
+| Block   | n events | avg gap | median gap | max gap    | >100ms gaps | >100ms gap rate (normalized) |
+|---------|----------|---------|------------|------------|--------------|-------------------------------|
+| Library | 1701     | 20.8ms  | 16.6ms     | 216.5ms    | 56           | 1.58/s (35.4s block)          |
+| Stats   | 903      | 27.2ms  | 16.7ms     | **482.9ms**| 43           | 1.75/s (24.6s block)          |
+
+Stats' average gap is ~31% higher than Library's, and its single worst gap (483ms — a genuinely
+visible freeze) is more than double Library's worst (217ms). Median gap is nearly identical
+(16.6ms vs 16.7ms) — the difference is concentrated in the WORST-case tail, not a uniform shift
+across every frame, which matches the "sometimes smooth, sometimes janky" bursty character Pryme
+described earlier tonight rather than a constant, always-present slowdown. The normalized
+>100ms-gap RATE is closer between the two (1.58/s vs 1.75/s, ~11% higher for Stats) than the raw
+average/worst-case numbers suggest — reported honestly rather than only quoting the more dramatic
+comparison.
+
+**Why this result matters more than the four in-app probes**: this is measured at the i915 kernel
+driver's own plane-commit events — literally the GPU/compositor accepting a new frame to display.
+Nothing in Fabulor's Python process, no matter how it's instrumented, can fake or distort this
+signal; it is ground truth about what actually reached the screen. Paint cost, event-filter cost,
+and event-dispatch cost were all checked and found NOT to explain the ranking (or to invert it) —
+this result confirms the ranking is real at the one layer downstream of all of them, without yet
+explaining WHY. That "why" remains open: the compositor-cost theory from the previous entry (GPU/
+compositor round-trip cost tied to Stats' larger backdrop-frost/blur composite area) is now
+better-supported circumstantially (a real compositor-level effect exists) but still not pinned to
+a specific mechanism — this trace shows THAT frames arrive later for Stats, not WHY KWin takes
+longer to commit them.
+
+**Not yet done**: correlating the >100ms gap timestamps against the earlier dmesg-level KWin
+`Failed to create an offscreen framebuffer` errors from earlier tonight's investigation (same
+mechanism as the general jank case) to see if they cluster around Stats-sourced opens specifically
+— the natural next step if this thread is picked back up, using the same dmesg/journalctl
+cross-reference technique already established earlier tonight.
 
 Direct follow-up to the entries below. With paint cost, event-filter dispatch cost, and every
 Stats-owned periodic timer all checked and ruled out, the next candidate was a DIFFERENT

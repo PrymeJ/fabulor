@@ -125,6 +125,27 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
     now measured, not just felt," "Event-filter dispatch cost ALSO ruled out," "TasselOverlay's
     ~30fps sway timer ruled out by architecture," and "Qt event-dispatch volume confirms Stats'
     tree is genuinely larger... but does NOT fully explain the ranking."
+  - **[2026-09-25] Fifth measurement layer, and the strongest evidence yet — a real kernel trace
+    at the i915 compositor level (outside Fabulor's process entirely), confirming the ranking is
+    real at the layer that actually reaches the screen.** `trace-cmd` capture of
+    `i915:intel_plane_update_arm`/`_noarm` events, split into a Library-opens block (06:56:44-
+    06:57:20) and a Stats-opens block (06:57:20-06:57:44), confirmed by Pryme directly. Library:
+    1701 events, avg gap 20.8ms, worst gap 216.5ms. Stats: 903 events, avg gap 27.2ms, **worst gap
+    482.9ms** (more than double Library's worst). Median gap nearly identical (16.6ms vs 16.7ms) —
+    the difference concentrates in the worst-case tail, matching the "sometimes smooth, sometimes
+    janky" bursty character reported earlier, not a constant slowdown. Normalized >100ms-gap rate
+    is closer (1.58/s vs 1.75/s, ~11% higher for Stats) than the raw average/worst-case numbers —
+    reported honestly, not cherry-picked. **This is real ground truth, not just another correlated
+    signal**: it's the GPU/compositor's own frame-commit events, unfakeable by anything in
+    Fabulor's Python process. Confirms the ranking exists at the layer downstream of everything
+    checked so far, without yet explaining WHY frames arrive later for Stats specifically.
+  - **Concrete next step, not yet started**: correlate the >100ms plane-update gap timestamps
+    against the KWin `Failed to create an offscreen framebuffer` dmesg errors from earlier
+    tonight's general jank investigation — same mechanism, check whether they cluster around
+    Stats-sourced Book Detail opens specifically rather than being uniformly distributed. Uses the
+    same dmesg/journalctl cross-reference technique already established. If they DO cluster, that
+    would be the first mechanism-level explanation for the ranking rather than just another
+    correlated symptom of it.
 
 ### Transport-bar blur got visibly stuck in the background — one-off, not reproducible, cause unknown
 - [2026-09-23] Pryme's own report, verbatim: "I was trying to open Settings or the Library, my
