@@ -1,3 +1,106 @@
+## 2026-09-25 — Continuous ~90% CPU while Stats' Timeline tab is open: real root cause found (TasselOverlay's 30fps sway forces a full styled-background repaint cascade), fix attempt CRASHED (real SIGSEGV) and was reverted — root cause stands, fix does NOT ship
+
+Direct continuation of tonight's StreakGrid slide-jank fix (see the entry below). Pryme reported,
+mid-session, something that broke the pattern of everything else investigated tonight: "there is
+definitely something wrong somewhere that affects all animations. Now I clicked on the tassel...
+even in a short distance it travels in a short time, it drops frames" — the tassel toggle, a
+trivial ~20×56px widget click-animation that had never shown a problem before, all session.
+
+**Investigation, in order, each step either confirming or ruling out a candidate directly rather
+than guessing:**
+- `ps`/`top` on the live process: **~90% CPU, sustained, not a spike** — confirmed across three
+  separate samples 2s apart. Closing Stats dropped it to ~5% instantly; reopening on Heatmap
+  brought it straight back to ~79-90%. This is CONTINUOUS cost tied to Stats/Timeline being
+  visible, not a per-slide cost like everything else found tonight.
+- `py-spy` (installed fresh via pip into the venv) dump + a 5-second 100Hz statistical profile:
+  **56.9-65.7% of ALL CPU time in `paintEvent`** (later confirmed as `HourlyHeatmap`'s, once a
+  mix-up with Streak-being-default-on-restart was caught and corrected), 15.5% in
+  `visual_area_blur.py`'s `draw` (real blur work, confirmed separately NOT causal — switching
+  Panel Backdrop away from Frosty dropped `draw`'s share to 1.7% but `paintEvent`'s share went
+  UP, to 65.7%, proving blur was a bystander cost, not the driver).
+- **Ruled out directly, not assumed**: real mouse movement (cursor was confirmed outside the app
+  the whole time); `TasselOverlay._sway_timer`/`_on_sway_tick` (searched all profile samples —
+  never appeared as a leaf OR a caller, despite being the obvious first suspect); `focus_marker.py`
+  (searched — never appeared anywhere in any sampled stack); a stuck/still-running
+  `reveal_progress`/`label_progress` animation (py-spy `--locals` dump showed `anim_alpha: 1,
+  anim_scale: 1, local: 1` — fully settled, steady-state values, not mid-animation); a Python-level
+  `HourlyHeatmap.update()`/`repaint()` override (a temporary traceback-logging override was added,
+  restarted, reproduced — only ONE hit ever logged, the harmless construction-time call, despite
+  `paintEvent` clearly still firing dozens of times per second live).
+- **Real root cause found via `QT_LOGGING_RULES="qt.widgets.painting=true"`** (Qt's own native
+  paint-diagnostic category, set at process launch — the only technique that could see past
+  Python's inability to trace a C++-level trigger). The captured log showed an exact, repeating
+  cycle: `Marking QRect(...) of TasselOverlay dirty ... Sending update request to MainWindow ...
+  Syncing dirty widgets ... Painting and flushing dirty ... QList(TasselOverlay(...))` — and
+  critically, EVERY cycle's paint pass also re-marked `stats_time_tab` (FULL SIZE, 260x463) and
+  `StreakGrid` (FULL SIZE, 242x448, even though HIDDEN) dirty alongside `HourlyHeatmap`, not just
+  the tassel's own small rect.
+
+**Mechanism, confirmed via direct code read (not inferred)**: `TasselOverlay` has NO
+`setAttribute` calls anywhere in its `__init__` — no `WA_OpaquePaintEvent`, no opacity effect, a
+completely default `QWidget`. Its `_sway_timer` (33ms interval, ~30fps, by design — a continuous
+idle-sway micro-animation, not gateable since it's ALWAYS visually changing) calls `self.update()`
+every tick. Because `TasselOverlay` is a non-opaque widget sitting inside `stats_time_tab` (which
+has `WA_StyledBackground=True` and paints an opaque `bg_main`, per `covers_opaquely()`'s own
+docstring), Qt's compositor cannot treat the tassel's dirty region as isolated — it has to
+re-composite the WHOLE styled-background region behind it, sweeping in every sibling sharing that
+region: `HourlyHeatmap` (visible) AND `StreakGrid` (hidden, but still repainted — its own
+`paintEvent` still runs even while `setVisible(False)`, per Qt's own semantics for a widget that's
+merely not shown vs. one that's been destroyed). This directly explains the earlier `_on_sway_tick`
+py-spy absence too: the Python call itself (`self.update()`) executes in well under 1ms and was
+never once caught mid-execution by 100Hz sampling — only its much more expensive DOWNSTREAM
+consequence (`HourlyHeatmap`/`StreakGrid`'s own expensive `paintEvent`, the same 20-27ms/call cost
+measured for StreakGrid earlier tonight) was visible in the profile.
+
+**This explains Pryme's tassel-jank report directly, not just the CPU number**: with
+`HourlyHeatmap`/`StreakGrid` each costing tens of milliseconds per paint and BOTH being dragged
+into every single 33ms tassel tick's repaint cascade, the tassel's own trivial slide animation was
+competing for main-thread time against a self-inflicted ~30Hz storm of expensive, unnecessary
+repaints of completely unrelated widgets — a textbook explanation for "a widget that's been
+clicked many times without issue suddenly drops frames," once something else (StreakGrid/Heatmap
+being the active Timeline view) put load into the same feedback loop.
+
+**Fix attempted, CRASHED with a real SIGSEGV, REVERTED — do not re-attempt without much more
+careful testing.** The standard Qt fix for "a translucent widget forces its styled-background
+ancestor's region to repaint": give `HourlyHeatmap`/`StreakGrid` `WA_OpaquePaintEvent` (so Qt's
+compositor never needs to touch them on an unrelated sibling's repaint) — but that flag is a
+correctness CONTRACT requiring the widget to paint every pixel of its own rect on every call, so a
+`_bg_color` full-rect `fillRect` was added as the first paint operation in both `paintEvent`s (the
+existing 1px cell-gap borders previously relied on the parent's background showing through
+unpainted), wired via a new `set_bg_color` method fed from `on_theme_changed`'s existing `bg_main`
+read (already used for `_spinbox_arrow_color`) and from initial construction
+(`self._spinbox_arrow_color`, already the same value at that point).
+
+**Live-tested — crashed on the very next Stats-panel interaction.** `coredumpctl`/`journalctl`
+confirmed a real `SIGSEGV` (not a Python exception — the redirect log was completely empty, no
+traceback at all): `QAbstractAnimationPrivate::setState` → a Qt signal dispatched into Python
+(`PySide::SignalManager::callPythonMetaMethod` → `PyObject_SetAttr`, i.e. a `@Property` setter) →
+segfault inside `QtWidgets.abi3.so`'s own compiled code (`__dynamic_cast` failing on what is very
+likely a dangling/mismatched C++ pointer). This fired from `QAnimationDriver::advanceAnimation` —
+i.e., genuinely from one of the grids' own `QPropertyAnimation`s (`_reveal_anim`/`_label_anim`)
+ticking, not from anything obviously unrelated. **Root cause of the crash itself is NOT
+diagnosed** — plausible candidates (setting `WA_OpaquePaintEvent` while an animation has cached
+paint-related state from before the flag was set; some interaction between the newly-added
+`_bg_color`/`set_bg_color` machinery and an in-flight property animation's own Qt-side dirty
+tracking) were not investigated further — the fix was reverted (`git checkout --
+src/fabulor/ui/stats_panel.py`) rather than debugged live, given the severity (an actual crash,
+not a visual glitch) and the hour. 716/716 tests still pass on the reverted, clean code (the crash
+was never caught by the test suite — it's a live Qt-animation-timing interaction, not something a
+headless/offscreen test would plausibly reach).
+
+**Standing state**: the root cause (TasselOverlay's non-opaque paint forcing a styled-background
+repaint cascade) is real, confirmed, and well-understood. The specific fix attempted (opaque
+grids + background fill) is NOT safe as implemented and does NOT ship. Whoever picks this up next
+should: (1) re-derive a fix from scratch rather than reusing the reverted diff verbatim, (2) test
+`WA_OpaquePaintEvent` changes in isolation from the `set_bg_color`/`_bg_color` machinery to narrow
+which half is implicated in the crash, (3) consider a structurally different fix instead — e.g.
+throttling/gating the tassel's own repaint rate while Stats' Timeline tab shows an expensive grid,
+rather than trying to make the grids immune to the cascade at the compositor level, (4) test any
+new attempt through MANY more open/close/tab-switch/theme-change cycles before considering it
+safe, given this crash took a full panel interaction cycle to surface, not the first paint.
+
+---
+
 ## 2026-09-25 — StreakGrid's own-slide jank root-caused and FIXED: 20-27ms/paintEvent call, 6-12 calls per Stats slide, real content re-derived every frame for a genuinely static view
 
 Direct continuation of the Book Detail investigation below — after finding the ~15µs/event
