@@ -151,12 +151,22 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
   - **[2026-09-25] One real same-boot hit found (07:19:01, kwin_wayland), but two trace attempts
     (a 60s targeted one, a 15-min opportunistic one 07:26-07:41) both missed overlapping it —
     genuinely a timing/luck problem given the error's irregular recurrence, not a method flaw.**
-    Session ended here for the night. `/tmp/fabulor_correlate_trace.dat` (the 15-min attempt) is
-    preserved but has no matching error inside its window, so it isn't directly usable for the
-    correlation as captured. **Next session's most direct path**: run a longer trace window (15
-    min may simply be too short against gaps that were up to 12+ minutes in the historical data),
-    or piggyback the check on a longer natural-use session rather than a short deliberate capture.
-    Full detail: NOTES.md, "First real same-boot KWin offscreen-framebuffer hit..."
+    `/tmp/fabulor_correlate_trace.dat` (the 15-min attempt) preserved but unused, no matching error
+    inside its window. Full detail: NOTES.md, "First real same-boot KWin offscreen-framebuffer
+    hit..."
+  - **[2026-09-25] CLOSED — overlap finally achieved (4th attempt, a 30-min trace), correlation
+    checked properly, and the result is negative.** 8 KWin errors landed inside a 30-min trace
+    window (14:04-14:34). A naive first pass (error windows vs. whole-trace percentiles) looked
+    suggestive but was a methodological trap — redone against a matched random-window baseline
+    from the SAME trace, KWin-error windows (mean 147.1ms max plane-update gap) are
+    indistinguishable from ordinary moments (baseline mean 150.9ms, median 181.3ms). **The KWin
+    offscreen-framebuffer error does not correlate with compositor-level plane-update stalls.**
+    Combined with the earlier finding that it fires with Fabulor not even running, this rules out
+    the KWin bug as the mechanism behind the Stats > Tags > Library severity ranking. This
+    sub-investigation is closed — no further kernel-trace/KWin-error correlation attempts planned.
+    The severity ranking itself (established via 5 other measurement layers, above) stands
+    unexplained at the mechanism level; whatever causes it is not this. Full detail: NOTES.md,
+    "KWin offscreen-framebuffer / kernel-trace correlation attempt CONCLUDED".
 
 ### Transport-bar blur got visibly stuck in the background — one-off, not reproducible, cause unknown
 - [2026-09-23] Pryme's own report, verbatim: "I was trying to open Settings or the Library, my

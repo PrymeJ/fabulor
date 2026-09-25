@@ -1,3 +1,43 @@
+## 2026-09-25 — KWin offscreen-framebuffer / kernel-trace correlation attempt CONCLUDED: overlap achieved, no correlation found
+
+Direct continuation of the entry below. After three failed attempts (60s targeted, 15-min
+opportunistic, both zero overlap — see below), a fourth 30-minute trace
+(`/tmp/fabulor_correlate_trace2.dat`, 14:04-14:34, current boot) finally captured genuine overlap:
+8 KWin `offscreen framebuffer` errors landed inside the active trace window (14:15:24, 14:15:40 x2,
+14:30:14, 14:30:16 x2, 14:30:17, 14:30:21).
+
+**Correlation result: no relationship found.** `trace-cmd report` extracted 59,819
+`intel_plane_update_arm` events; wall-clock was anchored from the trace file's mtime (14:34:44,
+the moment the 1800s capture completed) against the last event's kernel-uptime timestamp
+(21628.150677s), then sanity-checked against the first event (computed 14:04:44, matching the
+trace's known ~14:04 start — anchor is trustworthy).
+
+A first pass (±2s window around each error, compared against whole-trace percentiles) looked
+suggestive — every error had a nearby gap of 134-216ms, above the trace median of 16.66ms. **This
+was a methodological trap, caught before being reported as a finding**: comparing an error window
+against the WHOLE-TRACE percentile conflates busy and idle periods across 30 minutes. Redone
+properly — max plane-update gap in a tight ±0.3s window around each error, against 199 random
+±0.3s windows sampled from the same trace (excluding windows near any real error, same methodology
+applied symmetrically) — the two distributions are indistinguishable: KWin-error windows mean
+147.1ms max-gap vs. matched-baseline mean 150.9ms (baseline median actually higher, 181.3ms).
+~150-200ms max-gaps in any given 0.6s window are simply common throughout this trace, with or
+without a KWin error nearby.
+
+**Conclusion: the KWin `offscreen framebuffer` compositor error does not correlate with
+compositor-level plane-update stalls, at least not at the granularity this measurement can see.**
+Combined with the earlier finding that the error fires with Fabulor not even running (13
+occurrences before Fabulor was launched this session), the working theory connecting this KWin bug
+to Fabulor's Stats-panel jank specifically is not supported by any evidence gathered across this
+entire multi-session sub-investigation. This does not rule out that the KWin error causes SOME
+user-visible effect — only that it doesn't show up as a widened plane-update gap in the kernel
+trace at the moment it fires. The KWin bug remains real and reproducible (confirmed independently
+many times this session) but is very likely an unrelated, general desktop-compositor issue, not a
+mechanism for the Stats > Tags > Library jank severity ranking established earlier via other
+measurement layers. This sub-investigation (KWin-error/kernel-trace correlation) is now closed —
+no further attempts planned unless new evidence reopens the question.
+
+---
+
 ## 2026-09-25 — First real same-boot KWin offscreen-framebuffer hit, and a 15-minute trace running to try to catch the next one with overlapping data
 
 Direct continuation of the entry below (boot-boundary correction, 115 not 16). Plan was to stay on
