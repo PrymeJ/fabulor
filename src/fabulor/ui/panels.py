@@ -140,6 +140,18 @@ def install_panel_timing_probe(panel_manager: "PanelManager") -> None:
         # ScrollHoverTracker/GridHoverTracker) competing for main-thread time DURING the slide,
         # delaying the animation's own ticks. See NOTES.md, "Severity ranking now measured..."
         _wire_event_filter_cost_probe(panel_manager.book_detail_panel_animation, panel_manager)
+        # 2026-09-25, third pass: paint cost, app-level event-filter dispatch cost, and every
+        # Stats-owned periodic timer have all been checked and ruled out (see NOTES.md). None of
+        # them explain why Stats' underlay produces worse frame-delivery timing than Library's or
+        # Tags'. Next candidate, a different MECHANISM than anything checked so far: does Qt's
+        # own event dispatch — walking a deeper widget tree to deliver ordinary events (resize,
+        # move, polish requests, hover-related events, etc.), independent of what any single
+        # widget's OWN handler code does with them — cost measurably more for Stats' tree than
+        # Library's during the slide? This is about DISPATCH VOLUME/COST, not paint cost or
+        # filter cost, which is why a new probe is needed rather than reusing either existing one.
+        _wire_event_dispatch_probe("book_detail", panel_manager.book_detail_panel_animation,
+                                    panel_manager.book_detail_panel,
+                                    context_fn=lambda pm=panel_manager: pm._book_detail_underlay)
 
 
 def _wire_paint_probe(name: str, anim: QPropertyAnimation, panel: QWidget, context_fn=None) -> None:
@@ -365,6 +377,109 @@ def _wire_event_filter_cost_probe(anim: QPropertyAnimation, panel_manager: "Pane
         state["per_obj_ms"] = None
         state["per_obj_calls"] = None
         state["orig_methods"] = None
+
+    orig_start = anim.start
+
+    def _traced_start(*args, **kwargs):
+        _on_start()
+        return orig_start(*args, **kwargs)
+
+    anim.start = _traced_start
+    anim.finished.connect(_on_finished)
+
+
+class _EventDispatchCounter(QObject):
+    """Counts every event Qt dispatches to a watched widget, by QEvent.Type, and times the
+    total filter-chain overhead of intercepting them. Real installEventFilter usage (unlike
+    _wire_paint_probe, which wraps paintEvent directly and whose own docstring's "installs a
+    QObject event filter" line is a leftover from an earlier draft — not a bug worth a separate
+    fix commit, noted here so the discrepancy isn't mistaken for something broken). A genuine
+    eventFilter is the right tool here because the question is Qt's OWN event-dispatch volume
+    across every event type, not any one widget's paintEvent/eventFilter handler cost — those
+    were already checked and ruled out (see NOTES.md, 2026-09-25 entries) and are a different
+    mechanism than what this class measures."""
+
+    def __init__(self, counts: dict, total_ms_box: list):
+        super().__init__()
+        self._counts = counts
+        self._total_ms_box = total_ms_box
+
+    def eventFilter(self, watched, event):
+        t0 = time.perf_counter()
+        etype = event.type()
+        self._counts[etype] = self._counts.get(etype, 0) + 1
+        result = super().eventFilter(watched, event)
+        self._total_ms_box[0] += (time.perf_counter() - t0) * 1000
+        return result
+
+
+def _wire_event_dispatch_probe(name: str, anim: QPropertyAnimation, panel: QWidget, context_fn=None) -> None:
+    """Total Qt event-dispatch VOLUME and filter-chain overhead across every descendant of
+    `panel`, for every event type, during a single panel animation — added 2026-09-25 as the
+    fourth measurement layer in the Stats > Tags > Library severity-ranking investigation, after
+    paint cost, app-level event-filter dispatch cost, and every Stats-owned periodic timer were
+    all checked and ruled out (see NOTES.md). Tests a different mechanism than any of those:
+    does Qt's own per-event dispatch cost more for a deeper widget tree (Stats) than a shallow
+    one (Library), independent of what any single widget's own handler does with an event once
+    it arrives. `QEvent.Type.Paint` is INCLUDED here (unlike being the sole focus of
+    _wire_paint_probe) since the question this time is total dispatch volume across ALL types,
+    not paint-specifically.
+
+    Scoped narrowly, same shape as _wire_paint_probe: one _EventDispatchCounter installed on the
+    panel and every descendant snapshotted via findChildren() at animation start, removed at
+    finish. Real installEventFilter/removeEventFilter (not a monkeypatch) — the correct mechanism
+    for "how many events of each type does Qt actually deliver here," which a paintEvent/
+    eventFilter wrapper cannot answer since it can only observe the one method/event type it
+    replaces.
+
+    context_fn: same contract as _wire_paint_probe's/_wire_timing_probe's identical parameter —
+    called once at start, result stashed, included in the finish-time log line."""
+    state = {"active": False, "counter": None, "watched": None, "total_ms_box": None,
+             "context": None}
+
+    def _on_start():
+        if not _PANEL_TIMING_ENABLED:
+            return
+        state["context"] = context_fn() if context_fn is not None else None
+        counts = {}
+        total_ms_box = [0.0]
+        counter = _EventDispatchCounter(counts, total_ms_box)
+        watched = [panel] + panel.findChildren(QWidget)
+        for w in watched:
+            w.installEventFilter(counter)
+        state["active"] = True
+        state["counter"] = counter
+        state["watched"] = watched
+        state["counts"] = counts
+        state["total_ms_box"] = total_ms_box
+
+    def _on_finished():
+        if not state["active"]:
+            return
+        state["active"] = False
+        counter = state["counter"]
+        for w in state["watched"]:
+            try:
+                w.removeEventFilter(counter)
+            except RuntimeError:
+                pass  # widget was deleted mid-animation; filter is already gone with it
+
+        counts = state["counts"]
+        total_events = sum(counts.values())
+        total_ms = state["total_ms_box"][0]
+        # Top event types by count, named via QEvent.Type's enum repr for readability.
+        top = sorted(counts.items(), key=lambda kv: kv[1], reverse=True)[:8]
+        top_str = ", ".join(f"{QEvent.Type(etype).name}={n}" for etype, n in top)
+        ctx = f" from={state['context']!r}" if state["context"] is not None else ""
+        logger.warning(
+            f"[PANEL-TIMING] {name} EVENTDISPATCH total_events={total_events} "
+            f"total_dispatch_ms={total_ms:.2f} watched_widgets={len(state['watched'])}{ctx} "
+            f"top={top_str}")
+        state["counter"] = None
+        state["watched"] = None
+        state["counts"] = None
+        state["total_ms_box"] = None
+        state["context"] = None
 
     orig_start = anim.start
 

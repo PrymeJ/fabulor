@@ -1,3 +1,78 @@
+## 2026-09-25 — Qt event-dispatch volume confirms Stats' tree is genuinely larger and costs more to dispatch on OPEN — but does NOT fully explain the ranking (Library/Tags order inverts from frame-gap data)
+
+Direct follow-up to the entries below. With paint cost, event-filter dispatch cost, and every
+Stats-owned periodic timer all checked and ruled out, the next candidate was a DIFFERENT
+mechanism: Qt's own per-event dispatch cost/volume across every event type (not just Paint, not
+just app-level filters) — does walking a deeper widget tree to deliver ordinary events (resize,
+move, polish/layout requests, hover events, destroy/teardown events) cost measurably more for
+Stats than Library/Tags, independent of what any single widget's own handler does with an event
+once it arrives.
+
+**New probe** (`_wire_event_dispatch_probe`/`_EventDispatchCounter`, `panels.py`): a genuine
+`QObject.installEventFilter`/`removeEventFilter` pair (unlike `_wire_paint_probe`, which
+monkeypatches `paintEvent` directly — this is the first probe this session to use Qt's real
+event-filter mechanism, which is the correct tool for counting ALL event types, not one). Wraps
+the panel and every descendant, tallies per-`QEvent.Type` counts and total filter-chain dispatch
+time, same start/finish-scoped install shape as every other probe tonight. Logs
+`[PANEL-TIMING] book_detail EVENTDISPATCH total_events=... total_dispatch_ms=...
+watched_widgets=... from='...' top=...`.
+
+**First pass, raw averages — looked like a real match, but was hiding a confound:**
+
+| Source  | n  | avg events | avg dispatch_ms | avg watched_widgets |
+|---------|----|------------|--------------------|-----------------------|
+| library | 10 | 242.3      | 3.38               | 230.6                 |
+| tags    | 14 | 149.3      | 2.54               | 126.0                 |
+| stats   | 10 | 386.1      | 4.44               | 396.4                 |
+
+Stats clearly worst on all three, consistent with the theory. But the raw per-sample sequences
+showed an unmistakable BIMODAL pattern within every source: alternating high-count samples
+(`PolishRequest`/`Destroy`/`ChildRemoved`-dominated, several hundred events, several ms) and
+low-count samples (`Paint`/`Move`-dominated, ~60-80 events, well under 1ms) — almost certainly
+OPEN vs. CLOSE, not source. Confirmed by pairing each `EVENTDISPATCH` line with its most recent
+preceding `[PANEL-TIMING] book_detail START target=...` line by timestamp (`target.x()==0` =
+open, `target.x()==panel_w` = close, the same convention the A/B test harness already uses).
+
+**Separated by direction — a real, but incomplete, result:**
+
+| Direction | Source  | n | avg events | avg dispatch_ms | avg watched_widgets |
+|-----------|---------|---|------------|--------------------|-----------------------|
+| OPEN      | library | 5 | 415.6      | 5.99               | 282.4                 |
+| OPEN      | tags    | 7 | 235.1      | 4.42               | 161.6                 |
+| OPEN      | stats   | 5 | **696.4**  | **8.07**           | **477.0**              |
+| CLOSE     | library | 5 | 69.0       | 0.77               | 178.8                 |
+| CLOSE     | tags    | 7 | 63.4       | 0.67               | 90.4                   |
+| CLOSE     | stats   | 5 | 75.8       | 0.81               | 315.8                  |
+
+**On OPEN**: Stats is clearly worst on every metric — confirms, for the first time with a real
+measurement, that Stats' widget tree genuinely IS structurally larger (477 watched widgets vs.
+282/162) and genuinely does cost more to dispatch events to (8.07ms vs. 5.99/4.42ms). This is real
+signal, not noise — the magic-number-identical `PolishRequest=399`/`400` seen across sources in
+the unsplit data turned out to be a real, large, roughly-constant-magnitude cost each source pays
+on open, just scaled by tree size.
+
+**But this does NOT fully reproduce the frame-gap ranking**: on OPEN, Library (5.99ms) costs MORE
+than Tags (4.42ms) — the OPPOSITE order from the frame-gap data (where Library was the BEST/least
+janky and Tags was worse than Library). So this metric correctly flags Stats as worst but gets
+Library-vs-Tags backwards. **On CLOSE**, event-dispatch cost is essentially flat and cheap across
+all three (all under 1ms) — dispatch volume/cost isn't a meaningful factor on close at all, even
+though `watched_widgets` still shows Stats structurally larger there too (this is just the
+snapshot-at-start widget count, not something the close itself does more work processing).
+
+**Honest state of the investigation**: four real, distinct measurement layers now checked (paint
+cost, event-filter dispatch cost, Stats-owned timers, and Qt event-dispatch volume/cost). Every
+one of them either fails to explain the ranking at all, or partially matches (correctly flags
+Stats as worst) while getting a piece wrong (Library-vs-Tags ordering, in this case). The severity
+ranking itself remains solid or measured on frame-gap timing specifically — nothing checked so far
+has been shown to BE what frame-gap timing is measuring, only correlated-or-not with it. A
+genuinely different question, not yet asked: whether frame-gap timing's OWN measurement mechanism
+(the `valueChanged` signal's delivery timing) is itself being delayed by something upstream of
+BOTH paint and generic event dispatch — e.g. Qt's internal animation-timer scheduling competing
+with GPU/compositor round-trips specific to Stats' larger backdrop-frost/blur composite area (see
+the transport-bar-blur cost note earlier in this file, `covers_opaquely()`'s docstring, for a
+precedent of a real, measured, panel-specific compositor-cost difference already found once this
+session, just for a different panel/tab).
+
 ## 2026-09-25 — TasselOverlay's ~30fps sway timer ruled out by architecture, before a live test was even needed — it's Timeline-tab-scoped, and Book Detail can only open from Day/Week/Month
 
 Direct follow-up to the entry below. The next named candidate after event-filter dispatch cost was

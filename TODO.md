@@ -94,9 +94,37 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
     this pattern — a different mechanism than anything checked, not yet designed or tested. Also
     still not checked: whether the ranking holds with playback OFF (all samples so far had a book
     playing — would help isolate `transport_bar_blur`'s per-tick re-grab cost as a confound).
-    Full numbers and reasoning across all three checks: NOTES.md, entries titled "Severity ranking
-    now measured, not just felt," "Event-filter dispatch cost ALSO ruled out," and "TasselOverlay's
-    ~30fps sway timer ruled out by architecture."
+  - **[2026-09-25] Fourth measurement layer — Qt's own event-dispatch volume/cost (new
+    `_wire_event_dispatch_probe`, real `installEventFilter`, all event types not just paint):
+    real signal, PARTIAL match, not a full explanation.** On OPEN specifically (had to separate
+    from CLOSE — the two are wildly different in cost and averaging them together was hiding this
+    initially), Stats is confirmed clearly worst on every metric: avg 696 events/8.07ms dispatch
+    cost/477 watched widgets, vs. Library's 416/5.99ms/282 and Tags' 235/4.42ms/162 — the first
+    real, measured confirmation that Stats' widget tree genuinely is larger and genuinely does
+    cost more to dispatch events to. **But Library costs MORE than Tags here (5.99ms vs
+    4.42ms) — the OPPOSITE order from the frame-gap data**, where Library was the BEST/least
+    janky panel. So this metric correctly flags Stats as worst but gets Library-vs-Tags backwards.
+    On CLOSE, dispatch cost is flat/cheap across all three (all under 1ms) — not a factor there at
+    all, though Stats still shows structurally more watched widgets (a snapshot property, not
+    active work).
+  - **Honest state after four measurement layers**: paint cost (ruled out — identical across all
+    three), event-filter dispatch cost (ruled out — inverted from the ranking), Stats-owned timers
+    (ruled out or inapplicable), and Qt event-dispatch volume (partial match — correctly flags
+    Stats, wrong on Library-vs-Tags). None of these four IS the full explanation. The severity
+    ranking itself remains solid on frame-gap timing (`max_frame_gap`/`jank_frame_rate`), but
+    nothing checked so far has been shown to actually BE what that timing measures — only
+    correlated-or-not with it. **A genuinely different angle, not yet tried**: whether the
+    `valueChanged` signal's own delivery timing (what frame-gap timing measures) is itself
+    delayed by something upstream of both paint and generic event dispatch — e.g. GPU/compositor
+    round-trip cost specific to Stats' larger backdrop-frost/blur composite area, which is a
+    precedented mechanism in this codebase (see `covers_opaquely()`'s docstring in `stats_panel.py`
+    — a real, already-measured compositor-cost difference tied to the Timeline tab's own opaque
+    background, just for a different tab/reason than this investigation). Not yet designed or
+    tested for the Book Detail slide specifically.
+    Full numbers and reasoning across all four checks: NOTES.md, entries titled "Severity ranking
+    now measured, not just felt," "Event-filter dispatch cost ALSO ruled out," "TasselOverlay's
+    ~30fps sway timer ruled out by architecture," and "Qt event-dispatch volume confirms Stats'
+    tree is genuinely larger... but does NOT fully explain the ranking."
 
 ### Transport-bar blur got visibly stuck in the background — one-off, not reproducible, cause unknown
 - [2026-09-23] Pryme's own report, verbatim: "I was trying to open Settings or the Library, my
