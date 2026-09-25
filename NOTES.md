@@ -1,3 +1,135 @@
+## 2026-09-25 — Jank characterization from Pryme: sporadic/intermittent (not constant), and a consistent Stats > Tags > Library severity ranking — single-machine/single-DE caveat acknowledged, not actionable
+
+Pryme's own description, worth recording verbatim rather than paraphrased, since the exact shape
+of the intermittency is diagnostic information in itself: "The jankiness is somewhat sporadic.
+Sometimes I get a smooth run for a minute, then it is janky again, or I get mixed result with two
+very smooth slides, then three janky ones. Stats is always the worst, Library the best, Tags
+between them."
+
+Two separate claims here, both worth keeping distinct:
+
+1. **Temporal intermittency** — jank comes and goes in bursts (a smooth minute, then a janky one),
+   and can even vary slide-to-slide on the SAME repeated action (two smooth, then three janky, same
+   panel, same conditions as far as anyone can tell). This is consistent with everything found
+   tonight across three independent measurement layers (screen-recording frame PTS, kernel
+   plane-update tracing, GPU frequency sampling) — none of them found a constant/deterministic
+   cause, and the KWin offscreen-framebuffer failures found via dmesg fire in irregular bursts (16
+   times, non-uniformly spaced) rather than continuously, which is the same "bursty, not constant"
+   shape as the reported symptom. Nothing here proves that lead is THE cause, but the shapes match
+   in a way worth noting rather than coincidence-dismissing.
+
+2. **Severity ranking across panels — Stats worst, Tags middle, Library best.** This is a NEW,
+   specific, comparable data point that fits an already-partially-investigated thread:
+   `StatsPanel` genuinely has the heaviest/most complex child widget tree of the three (the stats
+   grid, `_RecentHistoryWidget`, `HourlyHeatmap`/`StreakGrid`, `TasselOverlay` and its tassel
+   physics, multiple tabs each with their own row lists) — while `LibraryPanel` paints its entire
+   content through ONE delegate-painted `QListView` (`BookDelegate`/`BookModel`), which per this
+   session's own earlier finding (the Book Detail slide-paint-suppression investigation, see the
+   `_wire_paint_probe` finding referenced in the open plan file) is structurally cheaper to
+   repaint on every animation frame than a tree of individually-repainted child widgets. Tags sits
+   architecturally between the two: a real widget tree (tag rows, color swatches, thumbnail grids)
+   but smaller/shallower than Stats'. **A severity ranking that tracks widget-tree complexity this
+   cleanly is a real, checkable clue for a future investigation** — it points at the same repaint-
+   cost mechanism the Book Detail slide-paint-suppression plan already targets, just observed here
+   on panel-open/close slides generally rather than on Book Detail specifically. Not yet
+   cross-checked against the open plan's own diagnostic (`_wire_paint_probe`'s per-widget paint
+   counts) for Stats vs. Library vs. Tags specifically — that would be the natural next step if this
+   thread is picked back up, since the instrumentation to check it already exists and is already
+   wired in.
+
+**Acknowledged constraint, Pryme's own words, not glossed over**: "I am testing the app on one
+machine, one desktop environment. That's a problem but I can't do anything about it." Every finding
+across this entire multi-session investigation — the GPU-offload dead end, the KWin
+offscreen-framebuffer leads, the kernel trace, tonight's severity-ranking observation — is
+single-machine, single-DE (KDE Plasma/Wayland/KWin, Optimus hybrid GPU laptop) evidence only. This
+does not invalidate any of it as real (the jank itself, and everything measured about it, is
+genuinely reproducible on THIS machine), but nothing here should be treated as proven to generalize
+to a different desktop/compositor/GPU combination without independent confirmation there. Recorded
+as a standing caveat on this whole investigation thread, not a new finding to chase.
+
+## 2026-09-25 — Tried forcing Fabulor onto the NVIDIA GPU (PRIME offload) as a jank isolation test — does not work on this Wayland/KWin desktop, not scheduled work
+
+Follow-up to the general jank investigation below: given the GPU-frequency sampling finding (Intel
+iGPU pinned at floor frequency, 99.8% of the time, during active jank — i.e. not GPU-bound), the
+next natural isolation test was "does Fabulor render faster/smoother on the idle NVIDIA GPU
+instead?" This machine's hybrid Optimus setup (Intel HD 630 `card1` driving the display, NVIDIA
+GTX 1060 `card0` idle) made this look like a cheap, non-invasive thing to try.
+
+**Four different approaches, all failed to move any rendering onto the NVIDIA card — confirmed via
+live `nvidia-smi` (0% util, flat 14MB/driver-overhead VRAM) after each, not assumed from env vars
+alone:**
+1. `__NV_PRIME_RENDER_OFFLOAD=1 __GLX_VENDOR_LIBRARY_NAME=nvidia` — the standard X11/GLX PRIME
+   offload incantation. **First-pass mistake, caught by Pryme, not self-caught**: I initially
+   reported this as working, reasoning from `/proc/<pid>/maps` showing `libGLX_nvidia.so` and
+   friends mapped into the process. That is NOT evidence of active rendering — Mesa/GLX can dlopen
+   a vendor library during enumeration/negotiation without ever making it the active driver for any
+   real GL context. Pryme's direct report ("Its use remained 0% while the VRAM used was 14 MB with
+   no change") was the actual ground truth and immediately falsified the claim — retracted per this
+   file's own "never substitute a plausible explanation for a checked one" rule.
+2. `QT_QPA_PLATFORM=wayland-egl` (forcing Qt's Wayland-EGL platform plugin explicitly) — no change.
+3. `__EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/10_nvidia.json` (forcing the EGL
+   vendor ICD directly, bypassing GLX-specific selection entirely) — no change.
+4. Checked whether KWin itself exposes any secondary-GPU render path via D-Bus
+   (`org.kde.KWin /Compositor`) — `supportedOpenGLPlatformInterfaces: egl`, single interface, no
+   multi-GPU selection surfaced there either.
+
+**Root cause (architectural, not a missing flag)**: this is a Wayland session
+(`XDG_SESSION_TYPE=wayland`), and KWin is the DRM master / compositor — it owns actual buffer
+allocation on `card1` (Intel) for the display. A normal windowed Wayland client hands its rendered
+buffers to the compositor via `wl_drm`/`linux-dmabuf`; it doesn't unilaterally pick which physical
+GPU renders its window the way an X11/GLX client can via `__NV_PRIME_RENDER_OFFLOAD`— that
+mechanism is designed for the X11/GLX offload model specifically. A bare-shell `eglinfo` on this
+machine shows NVIDIA as the default EGL vendor (unconstrained context, no compositor buffer-sharing
+involved) — a fundamentally different situation from a real windowed client under KWin, which is
+why that result doesn't transfer.
+
+**Confirmed only `kwin_wayland` (5MiB) and `Xorg.bin` (4MiB, likely XWayland-related) show up as
+NVIDIA-registered processes at all (`nvidia-smi`'s process list) — Fabulor never appears there
+under any of the four attempts.**
+
+**Not pursued further**: the one remaining lever (forcing KWin's own render backend onto the NVIDIA
+GPU, e.g. via `KWIN_DRM_DEVICES` or a logind/systemd override) would move the ENTIRE desktop's
+compositing onto NVIDIA, not just Fabulor — a much bigger, harder-to-reverse change requiring a
+compositor restart/re-login, explicitly out of scope for what was meant to be a cheap isolation
+test. Pryme's own call: stop here, this line is a dead end for now.
+
+**Follow-up under X11 (same night, after logging into Plasma X11 specifically to get a real
+`xrandr --listproviders` offload path)**: confirmed PRIME offload genuinely WORKS on this system
+under X11 — `xrandr --listproviders` lists both `modesetting` (Intel) and `NVIDIA-G0` (offload
+sink) as real providers, and a plain `glxinfo` run with the same env vars correctly picked up the
+NVIDIA renderer. Fabulor's own process, launched the same way, also genuinely loaded
+`libGLX_nvidia.so` and the NVIDIA GL stack (confirmed via `/proc/<pid>/maps`, not just env var
+presence this time — a real signal, unlike the earlier Wayland false-positive below). **Still 0%
+NVIDIA utilization and flat 7MiB VRAM across 30 consecutive 0.3s-interval samples, taken with a
+book actively PLAYING and a panel actively OPEN** (the specific condition needed to trigger
+`transport_bar_blur.py`'s repeating `_grab_and_blur` cycle — confirmed this condition was genuinely
+met before concluding anything, after an earlier sampling pass without playback running was
+correctly caught as inconclusive and redone).
+
+**Root cause, found by reading the code rather than sampling further — this is the real answer,
+not another negative result:** Fabulor has ZERO `QOpenGLWidget`/GPU-accelerated Qt rendering
+anywhere in its codebase (confirmed via `grep -rn QOpenGLWidget` across `ui/` and the package root —
+no hits). It is entirely `QWidget`-based raster painting (Qt's software/CPU rasterization backend).
+The transport-bar blur effect — the single heaviest, most frequent GPU-shaped operation in the
+app — is `QGraphicsBlurEffect` composited through a disposable offscreen `QGraphicsScene`
+(`transport_bar_blur.py:311`, `_blur_pixmap`), which is CPU-side software blur, not a GPU shader
+pass. mpv is configured `vo='null'` (`player.py:208`) — no video output at all, since this is an
+audiobook player with no video track (`vid=False` too) — so there was never anything on the mpv
+side to offload either.
+
+**This closes the GPU-offload line cleanly, with a real mechanism instead of a guess**: Fabulor has
+essentially no GPU-acceleratable rendering work to move to a different GPU, on either the Qt side
+or the mpv side. This is consistent with, not contradicting, the earlier GPU-frequency-floor
+finding (Intel iGPU pinned at idle/floor frequency during jank) — the iGPU isn't idle *despite* the
+jank, it's idle because there's genuinely nothing GPU-bound happening in this app at all. The jank,
+whatever it is, has to be CPU/scheduler/compositor-side — consistent with, and now better
+explaining, tonight's two dmesg-level leads (the i915 kernel timer warning, the KWin
+offscreen-framebuffer failures) as the more promising remaining direction. Chatterbox/Fabulator
+(the separate TTS-generation sibling project) was checked as a contrast case in the same
+investigation — its `torch.cuda.is_available()` correctly reports the NVIDIA GPU and it already
+uses it for real, GPU-heavy generation work with no changes needed; the difference is purely that
+Fabulor's own workload has nothing GPU-shaped to redirect, not any offload-mechanism failure.
+
 ## 2026-09-25 — General jank investigation, continued: confirmed real via kernel-level tracing (independent of Fabulor/KWin/screen-recorder self-reporting); two concrete system-level leads found, neither yet acted on
 
 **Direct continuation of "General app sluggishness investigation" (2026-09-22/23, below)** — Pryme's

@@ -38,6 +38,40 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
     any fix here would not be a Fabulor code change.
   - Also see: `trace-cmd` is now installed on this machine (`sudo zypper install trace-cmd`) —
     available for reuse without a re-install next time this angle is picked up.
+  - **[2026-09-25] GPU-offload angle closed for good, with a real mechanism**: tried forcing
+    Fabulor onto the NVIDIA GPU (both Wayland and, after Pryme logged into an X11 session
+    specifically to get a working offload path, X11 too — `xrandr --listproviders` confirmed a
+    real NVIDIA offload sink, `glxinfo` and Fabulor's own process both genuinely loaded the NVIDIA
+    GLX stack). GPU utilization stayed flat 0%/7MiB across 30 samples at 0.3s intervals with a book
+    playing and a panel open. Root cause: Fabulor has **zero `QOpenGLWidget` usage anywhere** — it's
+    entirely Qt software/CPU raster painting, and the blur effect (`_blur_pixmap`,
+    `transport_bar_blur.py`) is `QGraphicsBlurEffect` via an offscreen `QGraphicsScene`, CPU-side,
+    not a GPU shader. mpv is `vo='null'` (no video output — audiobook player) so there's nothing on
+    that side either. **This was independently found once before, months earlier, in an unrelated
+    Claude 4.6 session investigating Library panel sliding** — same conclusion, same "CPU-only,
+    GPU can't help" answer. Now recorded as a standing CLAUDE.md Debugging-discipline rule so a
+    third GPU-offload investigation doesn't happen. Full trace: NOTES.md, two entries dated
+    2026-09-25 ("Tried forcing Fabulor onto the NVIDIA GPU..." and the follow-up X11/mpv-vo=null
+    correction).
+  - **[2026-09-25] Sharper characterization of the jank itself, from Pryme directly**: "somewhat
+    sporadic... sometimes I get a smooth run for a minute, then it is janky again, or I get mixed
+    result with two very smooth slides, then three janky ones." Confirms a consistent severity
+    ranking across panels: **Stats always worst, Library best, Tags in between** — this matches
+    Stats having the heaviest/most complex child widget tree of the three (grid, history widget,
+    heatmap/streak-grid, tassel overlay, multiple tabbed row lists) vs. Library painting its entire
+    content through one delegate-painted `QListView` (structurally cheap to repaint per animation
+    frame) vs. Tags' own real-but-shallower widget tree. **This is a concrete, checkable next step,
+    not just an observation**: the `_wire_paint_probe` instrumentation from the open Book Detail
+    slide-paint-suppression plan (see that plan file, still not fully landed — see its own
+    "Post-implementation correction"/"Second post-implementation correction" sections) already
+    exists and is already wired to count per-widget paint calls during a panel slide — it has not
+    yet been pointed at Stats vs. Library vs. Tags specifically to see if paint-call counts track
+    the reported severity ranking. That would directly test the widget-tree-complexity theory
+    without needing any new instrumentation. **Caveat, Pryme's own words, not glossed over**: "I am
+    testing the app on one machine, one desktop environment. That's a problem but I can't do
+    anything about it" — every finding in this whole thread (GPU-offload, KWin leads, kernel trace,
+    this severity ranking) is single-machine/single-DE evidence only, real but not confirmed to
+    generalize.
 
 ### Transport-bar blur got visibly stuck in the background — one-off, not reproducible, cause unknown
 - [2026-09-23] Pryme's own report, verbatim: "I was trying to open Settings or the Library, my

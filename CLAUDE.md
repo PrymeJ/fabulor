@@ -101,6 +101,24 @@ The real library used for day-to-day testing has been ~400 books. That is not re
 
 ## Debugging discipline
 
+- **Fabulor does no GPU-accelerated rendering anywhere — don't reach for NVIDIA/GPU offload as a
+  fix or diagnostic for a performance/jank symptom.** No `QOpenGLWidget` exists in this codebase
+  (confirmed via `grep -rn QOpenGLWidget` across `ui/` and the package root, 2026-09-25) — every
+  widget paints through Qt's default software/CPU raster backend. The transport-bar blur effect,
+  the single heaviest GPU-shaped operation in the app, is `QGraphicsBlurEffect` composited through
+  a disposable offscreen `QGraphicsScene` (`transport_bar_blur.py:311`, `_blur_pixmap`) — CPU-side
+  software blur, not a GPU shader pass. mpv is `vo='null', vid=False` (no video output, no video
+  track — this is an audiobook player) so there is nothing on the mpv side either. Verified live,
+  2026-09-25: PRIME render offload genuinely works on this machine under X11 (`xrandr
+  --listproviders` lists a real NVIDIA offload sink; `glxinfo` and Fabulor's own process both
+  correctly loaded the NVIDIA GLX stack when forced) — GPU utilization still stayed flat 0% / 7MiB
+  across 30 samples at 0.3s intervals with a book playing and a panel open (the exact condition that
+  repeatedly re-triggers the blur grab). This was independently found once before, months earlier
+  (an unrelated Claude 4.6 session, investigating Library panel sliding), reached the same
+  conclusion, and was re-investigated from scratch this session before Pryme mentioned the earlier
+  finding — recording it here so a third GPU-offload investigation doesn't repeat the same two
+  sessions of dead-end work. If a future perf investigation is tempted toward "let's test on the
+  other GPU," the answer is already known: there is no GPU-bound code path in this app to move.
 - **Colour widgets first** when a bug is about which widget owns which pixel — faster than positional theories.
 - **Change-only probes can't prove absence.** Log stationary state too, not just transitions.
 - **Verify the app restarted** before trusting a log (`entr` can silently miss edits). Before trusting a capture, confirm
