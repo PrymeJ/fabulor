@@ -1,3 +1,86 @@
+## 2026-09-25 — Book Detail's per-source jank ordering (Tags worst, Stats middle, Library best) quantified and explained at the mechanism level: ~15µs/event marginal cost per app-wide `eventFilter`, structurally irreducible without removing the filter entirely
+
+Direct continuation of the entry below (occlusion guard shipped for `ScrollHoverTracker`/
+`GridHoverTracker`). Pryme pushed back correctly after that fix: "After testing many theories, we
+are not any closer to finding the causes" for Library List jank and Timeline/Streak jank (both
+janky at every historical checkpoint tested tonight, no bisectable before/after — see the entry
+below), but flagged Book Detail's INCONSISTENCY (sometimes smooth, sometimes not, varying by
+source panel) as the one lead with real internal variation worth instrumenting live rather than
+bisecting historically.
+
+**Method**: reused the existing `_wire_timing_probe`/`_wire_paint_probe`/`_wire_event_filter_cost_probe`
+instrumentation already wired to `book_detail_panel_animation` (`install_panel_timing_probe`,
+default-enabled via `FABULOR_PANEL_TIMING=1`, logs to `platformdirs.user_log_dir("fabulor")` —
+**file-only, no console handler**, so `/tmp/*.log` redirects from launch never show it; had to find
+the real log path first). Marked the log's line count, asked Pryme to open/close Book Detail
+repeatedly from Library/Stats/Tags while the fixed build ran, then read forward from the marker.
+
+**Quantified result, 21 real opens, matches Pryme's felt ordering exactly:**
+
+| source | n | avg wall | avg max_frame_gap | avg jank ratio | avg own_cpu% |
+|---|---|---|---|---|---|
+| library | 6 | 360.1ms | 60.2ms | 0.39 | 82.3% |
+| stats | 5 | 404.3ms | 79.3ms | 0.66 | 98.8% |
+| tags | 10 | 367.5ms | 56.4ms | 0.82 | 103.1% |
+
+None of these are actually "smooth" by any strict reading (jank ratio 0.39-0.82, CPU pegged at or
+above 100% on most opens) — this updates the earlier, more optimistic framing from tonight's
+`e55fdb6`/occlusion-guard work. But the ORDERING (Tags worst, Stats close behind, Library clearly
+best) is real, consistent, and matches Pryme's very first report of the whole night almost exactly.
+
+**First hypothesis, checked and found wrong before being reported as a finding**: `EVENTFILTER`
+lines showed `tags_panel._thumb_hover` (the `GridHoverTracker` just patched with an occlusion guard
+this session) still logging 593-1245 calls during a single ~350ms slide — looked at first like the
+guard wasn't taking effect. Checked rather than assumed: confirmed the running process was
+genuinely built from the patched commit (`e450ba1`, `git log -1` + `readlink -f /proc/<pid>/cwd`),
+confirmed the guard code was present in the file, then computed PER-CALL cost (total_ms/calls) —
+~12-22µs/call, consistent with a fast early-return, not with the tracker's real resync/hit-test
+logic (which does `childAt()` walks and geometry checks and would cost more). **The guard IS
+working — the call COUNT staying high is a structurally different problem the guard was never
+positioned to fix.**
+
+**Root cause of the remaining cost, measured directly rather than inferred**: `hover_tracker.py`'s
+own module comment already documents WHY the filter must be `QApplication`-wide rather than scoped
+to the scroll area/viewport — "verified offscreen: zero moves observed for a move sent to a row"
+when tried at viewport scope, because rows are children of the scrolled content and events land on
+THEM, not on any ancestor a narrower filter could watch. This forecloses the naive "install it
+somewhere smaller" fix. A real isolated benchmark (`QApplication.sendEvent` through a bare
+`QObject.eventFilter`, zero probe wrapper, zero guard logic) measured:
+- **~2.3µs/event with ZERO app-wide filters installed** (baseline Qt dispatch cost).
+- **~17.35µs/event with ONE app-wide filter installed** (any filter, even one that does nothing
+  but `return False` immediately) — matches the live-measured ~12-22µs/call almost exactly, and
+  is the actual explanation for the plateau: this is the fixed C++↔Python marshalling cost PySide6
+  pays every time Qt calls into a Python `eventFilter`, paid once per installed filter per event,
+  REGARDLESS of what the filter's Python body does. My guard's own lookup chain
+  (`self.parent().window()`) measured separately at ~0.09µs — negligible, confirming the ~15µs
+  marginal cost per filter is Qt/PySide's dispatch overhead, not anything reducible from inside
+  `hover_tracker.py`.
+
+**This is the actual, now-quantified explanation for the Tags > Stats > Library ordering**: Library
+has ZERO app-wide filters active (`total_filter_calls=0` in every Library-sourced open logged
+tonight). Stats has exactly one (`StatsPanel.eventFilter`, occlusion-guarded via `e55fdb6`). Tags
+has up to two simultaneously (`TagManagerWidget.eventFilter` + whichever of `_row_hover`/
+`_thumb_hover` is active, both occlusion-guarded this session) — each paying the same ~15µs/event
+marginal tax independently, on every one of the hundreds of app-wide events (`Paint`, `Move`,
+`UpdateLater`, `PolishRequest`, etc.) that fire during a single panel slide. More installed
+app-wide filters, more marginal tax per event, compounding linearly — not a bug in any one filter,
+a structural cost of the ARCHITECTURE (how many app-wide filters are live at once), which the
+occlusion guards reduce (each filter is now individually cheap once occluded) but cannot eliminate
+(Qt still dispatches to install, guard or no guard).
+
+**Honestly scoped, not chased further tonight**: closing this gap further would mean either (a)
+finding a way to observe row/cell hover WITHOUT an app-wide filter at all — a genuine
+re-architecture of `hover_tracker.py`'s core mechanism, not a follow-up to tonight's guard, and the
+module's own docstring already records that the obvious narrower alternative was tried and
+confirmed not to work; or (b) reducing how many app-wide filters can be simultaneously live, which
+would need to be checked against every one of the multiple live-reported bugs each filter's
+existence already fixes (Tab/Backtab list-nav interception, click-outside detection, keyboard
+detail-panel handling — see `tag_manager.py`'s own extensive comments on why these exist). Neither
+is scoped or started. Filed as a genuine, understood, but NOT closed architectural cost — see
+TODO.md.
+
+---
+
 ## 2026-09-25 — General app sluggishness: live bisect finds a real, precisely-dated regression (Playback smoothness, `a4e3d65`, 2026-07-31), partially fixed 09-22, and separates several older/structural jank sources from it
 
 Direct continuation of tonight's earlier general-sluggishness thread (see the entry immediately

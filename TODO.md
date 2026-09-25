@@ -317,6 +317,50 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
     slowdown. Live-tested post-fix: "Playback opens normally... possible [improvement]... still
     not perfectly smooth" — the expected, honest result given the confound, not a sign the fix
     failed. No further action planned on this specific thread unless new evidence reopens it.
+  - **[2026-09-25] Tags > Stats > Library Book Detail jank ordering QUANTIFIED and root-caused
+    at the mechanism level — genuinely understood now, but NOT closed.** 21 real, live-logged
+    Book Detail opens (via the existing `_wire_timing_probe`/`_wire_event_filter_cost_probe`
+    instrumentation, reading `platformdirs.user_log_dir("fabulor")`'s `fabulor.log` directly —
+    NOT stdout, which the app never writes to): Library avg jank ratio 0.39/82% CPU, Stats
+    0.66/99% CPU, Tags 0.82/103% CPU. Matches Pryme's very first report of the whole night.
+    Isolated benchmark (`QApplication.sendEvent` through a bare `QObject.eventFilter`, no probe,
+    no guard): **~2.3µs/event with zero app-wide filters installed vs. ~17.35µs/event with one**
+    — a ~15µs marginal cost per installed app-wide filter, PER EVENT, that is fixed PySide6/Qt
+    C++↔Python marshalling overhead, paid regardless of what the filter's Python body does.
+    Library has zero app-wide filters active; Stats has one (occlusion-guarded); Tags has up to
+    TWO simultaneously (`TagManagerWidget.eventFilter` + one hover tracker, both
+    occlusion-guarded this session) — each independently taxing every one of the hundreds of
+    app-wide events that fire during a single panel slide. This is why the occlusion guard above
+    helps (each filter is cheap once occluded) but cannot close the gap to Library (Qt still
+    dispatches to every installed filter at all, guard or no guard). **Not started, and not a
+    small follow-up**: closing this further needs either a hover-tracking mechanism that doesn't
+    require an app-wide filter at all (the module's own `hover_tracker.py` docstring already
+    records that the obvious narrower-scope alternative — viewport/scroll-area level — was tried
+    and confirmed NOT to work, since row/cell events land on the rows themselves, not any
+    ancestor a narrower filter could watch), or reducing how many app-wide filters can be live at
+    once (would need checking against every live-reported bug each filter currently fixes — Tab/
+    Backtab interception, click-outside detection, keyboard handling — before removing any of
+    them). Full measurement detail in NOTES.md.
+
+### Library List mode and Timeline/Streak view are janky at EVERY tested historical checkpoint — no bisectable regression exists
+- [2026-09-25] During the same-session Playback bisect (see the entry above and NOTES.md), both
+  were checked incidentally at nearly every checkpoint tested, back to the earliest practical
+  points: Library List mode janky as far back as `4700b31`/`21ac097`/`0658e58` (all 2026-07-28
+  through 07-31); Timeline/Streak janky as far back as StreakGrid's own FIRST commit (`6002e4d`,
+  2026-06-11 — "still worse [than Heatmap]... could be slightly better than today, but hard to
+  say"). **Neither has a "before" state to bisect against — they read as janky at every point
+  tested, including the very first commit that made the feature exist at all.** This rules out a
+  recent regression as the explanation for either. Two honest possibilities, not distinguished
+  yet: (1) this is simply the inherent/structural cost of what each does (List mode paints many
+  more visible rows without thumbnails competing for a different paint budget than the other
+  Library modes; StreakGrid paints 364 cells vs. HourlyHeatmap's much smaller 14x24 grid — a
+  real, likely unavoidable size difference), or (2) both have carried a real inefficiency since
+  their very first implementation that was simply never fast to begin with, rather than having
+  regressed. **Git bisection cannot distinguish between these two** — the tool only finds
+  boundaries, and there isn't one here. The tractable next step, if this is picked up again, is
+  the same live-instrumentation approach used for Book Detail above (`_wire_paint_probe`-style
+  probes wired to Library's/Stats' own panel-open animations) to get an absolute cost number for
+  each, rather than another round of relative-to-history comparison.
 
 ### Book Detail panel's tab bar — not wired into the shared `_kbdnav_active_panel_key` mechanism
 - [2026-09-15, scope corrected 2026-09-17] Still true and unrelated to the (now implemented, see
