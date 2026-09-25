@@ -284,9 +284,26 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
     similar margin, with no confirmed cause found (thermal/memory/competing-process all ruled
     out) — kept the guard anyway per Pryme's own call, since it can't logically cause a slowdown
     in code it doesn't touch.
-  - **Remaining open question, not started**: `hover_tracker.py`'s `ScrollHoverTracker`/
-    `GridHoverTracker` (used by Tags only, not Stats) still install app-wide with no occlusion
-    guard — same class of fix could apply there too, not yet investigated or measured.
+  - **[2026-09-25] Upgraded from "open question" to confirmed, higher-priority, still-open bug —
+    this is not just a Book-Detail-open-cost theory anymore.** A live bisect (see NOTES.md,
+    "General app sluggishness: live bisect finds a real, precisely-dated regression") pinned
+    `hover_tracker.py`'s `ScrollHoverTracker`/`GridHoverTracker` as the exact cause of a real,
+    felt Playback-smoothness regression — not confined to Tags or Book Detail. Origin commit
+    `a4e3d65` (2026-07-31): both trackers are constructed in `TagManagerWidget._build_ui()`
+    (called once from `__init__`, i.e. app startup) and each installed a PERMANENT app-wide
+    `QApplication.instance().installEventFilter(self)` with no removal, walking every Qt event
+    anywhere in the app — including plain Playback interactions with zero relation to Tags —
+    for the whole session, whether or not Tags was ever opened. `4fecc29` (2026-09-22) paired
+    `install_filter()`/`remove_filter()` to `showEvent`/`hideEvent`, live-confirmed as a real,
+    large improvement ("definitely better than bad 07-31"). **But the fix pairs to
+    show/hide, not occlusion** — same gap `e55fdb6` already fixed for `StatsPanel.eventFilter`
+    specifically, never applied here. Book Detail occludes rather than hides Tags, so with Tags
+    open behind Book Detail, both trackers' filters stay live. This plausibly explains a real,
+    smaller residual Pryme reported at the 09-22 checkpoint ("slightly worse than good 07-31 —
+    subtle"). **Concrete next step, not vague**: apply the same occlusion-guard shape (early
+    return in `eventFilter` when `book_detail_panel.isVisible()`) to
+    `ScrollHoverTracker.eventFilter`/`GridHoverTracker.eventFilter` directly, mirroring `e55fdb6`
+    exactly. Verify with the same before/after A/B methodology already proven for Stats.
 
 ### Book Detail panel's tab bar — not wired into the shared `_kbdnav_active_panel_key` mechanism
 - [2026-09-15, scope corrected 2026-09-17] Still true and unrelated to the (now implemented, see

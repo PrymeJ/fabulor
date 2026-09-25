@@ -1,3 +1,103 @@
+## 2026-09-25 — General app sluggishness: live bisect finds a real, precisely-dated regression (Playback smoothness, `a4e3d65`, 2026-07-31), partially fixed 09-22, and separates several older/structural jank sources from it
+
+Direct continuation of tonight's earlier general-sluggishness thread (see the entry immediately
+below this one, and CLAUDE.md's in-progress Book Detail paint-suppression work). Pryme reported,
+unprompted, that jank isn't confined to Book Detail — it varies by panel and view mode: Library
+smooth in 1/2/3-per-row and Square, janky in List; Settings smooth except Themes (janky open,
+clean close); Tags slow to *start* sliding but smooth once moving (a different symptom shape —
+front-loaded delay, not per-frame jank); Stats Overall/Settings smooth, Timeline janky, Day better
+than Week/Month. Decided to bisect live against Pryme's own real-time judgment rather than guess
+from reading code.
+
+**A real methodological bug invalidated the first ~5 rounds and was caught mid-session, not after.**
+Worktrees were created at historical commits and the existing `fabulorenv` venv was symlinked in for
+speed — but `fabulorenv` is an EDITABLE pip install (`__editable__.fabulor-0.1.0.pth` hardcodes
+`/home/pryme/Coding/Python/fabulor/src` as the import path), so every "bisect" launch silently
+imported the MAIN REPO's live `src/`, not the worktree's own checked-out code, regardless of which
+commit the worktree pointed to. Caught when Pryme reported seeing the EQ feature (added 2026-09-18,
+confirmed via `grep -c equalizer` = 0 in a genuinely-old checkout) in a build supposedly checked out
+at 2026-08-09 — a report of what Pryme actually saw contradicting an inference, handled per this
+file's own "the next action is a lookup, not a restatement" rule: verified via `python -c "import
+fabulor; print(fabulor.__file__)"`, which confirmed the bug immediately. **Every round before this
+point (testing 5d364f9/08-09, dd3b0e6/09-09, e308c47/09-18, and current HEAD, all reported as
+different results) was actually testing the SAME code every time and produced no real signal.**
+Fixed for all subsequent rounds via `PYTHONPATH=<worktree>/src` at launch (confirmed to correctly
+override the `.pth`-injected site-packages path — verified both via `sys.path` ordering and via
+`fabulor.__file__` resolving to the worktree, with the EQ-absence check re-confirmed clean).
+
+**Structural/old findings (present at the oldest tested checkpoints, not recent regressions):**
+- **StreakGrid has always been worse than HourlyHeatmap**, confirmed at StreakGrid's own first
+  commit (`6002e4d`, 2026-06-11) — "still worse... could be slightly better than today, but hard to
+  say." Very likely just the structural cost of painting 364 cells vs. a much smaller 14x24 grid,
+  not a regression. Not pursued further as a bisect target.
+- **Book Detail opened from Stats is worse than from Library/Tags**, confirmed present at least back
+  to 06-11. A real, reproducible asymmetry, plausibly explained by Stats' own app-wide `eventFilter`
+  historically staying live while occluded (see `e55fdb6`, fixed earlier tonight) — but predates that
+  fix's own investigation, so likely a longer-standing version of the same class of problem.
+- **Month's "heavy lifting before the panel opens, then a clean slide" symptom** is old — present
+  at both the 3-months-back (`e6c5f379`, 06-24) and StreakGrid's-first-commit (`6002e4d`, 06-11)
+  checkpoints. Different symptom SHAPE than the wobbly-first-20%-of-the-slide jank reported for
+  today's build — likely two different bugs sharing the same tab, not one.
+- **Library List mode jank** confirmed present as far back as `4700b31` (2026-07-28) and
+  `21ac097`/`0658e58` (2026-07-31) — old, not a recent regression.
+- At `9b6a1ad` (2026-05-05, HourlyHeatmap's very first commit, before StreakGrid existed at all):
+  Library, Month, Settings, and Timeline(-heatmap-only) all read as genuinely CLEAN. This is the
+  earliest tested point and the only one with no reported jank anywhere — establishes that "nothing
+  has ever been smooth" is false; a real clean baseline existed.
+
+**The regression: Playback itself measurably slowed down, pinned to one commit.**
+Bisecting `e6c5f379` (06-24, confirmed smoother than today for Playback specifically) against
+current HEAD, using the corrected `PYTHONPATH`-isolated methodology throughout:
+
+| checkpoint | date | commit | Playback |
+|---|---|---|---|
+| known-good | 06-24 | `e6c5f379` | smooth |
+| known-good | 07-17 | `ebc5a57` | smooth |
+| known-good | 07-28 | `4700b31` | smooth |
+| known-good | 07-31 (early) | `0658e58` | smooth (re-confirmed twice) |
+| **regression lands** | **07-31 (later)** | **`a4e3d65`** | **bad, confirmed exactly at this commit** |
+| still-bad | 07-31 | `59ad261` | bad |
+| still-bad | 08-01 | `b94c28c` | bad |
+| still-bad | 08-02 | `e7e23d8` | bad |
+| partial fix | 09-22 | `4fecc29` | "definitely better than bad 07-31, but slightly worse than good
+07-31 — subtle, could be wrong" |
+| current | 09-25 | HEAD (`918d344`) | bad |
+
+**Root cause of the pinned regression**: `a4e3d65` ("wip: track scroll-area row hover from cursor
+position instead of QSS :hover") introduces `ScrollHoverTracker`/`GridHoverTracker`
+(`hover_tracker.py`), constructed inside `TagManagerWidget._build_ui()` (called from `__init__`,
+i.e. once at app startup) and each installing its OWN permanent `QApplication.instance().
+installEventFilter(self)` with no matching removal — walking every Qt event anywhere in the app,
+including plain Playback interactions with zero relation to Tags, for the entire session regardless
+of whether Tags was ever opened. This matches this file's own prior finding (see "Separately —
+Pryme noticed the whole app felt generally less smooth than a month prior" in an earlier entry) that
+flagged this exact class of leak but hadn't pinned an exact introducing commit or confirmed it
+against Playback specifically until tonight.
+
+**Partially fixed, not fully.** `4fecc29` (2026-09-22, "fix: stop ScrollHoverTracker/GridHoverTracker
+leaking their app-wide filter") paired `install_filter()`/`remove_filter()` to `TagManagerWidget.
+showEvent`/`hideEvent`, closing the PERMANENT leak — confirmed via code read (`tag_manager.py:929-942`)
+and live-tested: clearly better than the broken state, matching Pryme's own report. But a known,
+documented, STILL-OPEN gap remains (TODO.md, "Remaining open question, not started"): the fix pairs
+to show/hide, not to OCCLUSION — if Tags is open behind Book Detail (occluded, not hidden), the
+filter stays live exactly like Stats' own filter did before `e55fdb6`'s occlusion guard (shipped
+earlier tonight) fixed that same class of gap for Stats specifically. Tags never got the equivalent
+fix. This plausibly explains the "slightly worse than good 07-31" residual Pryme reported at the
+09-22 checkpoint — a smaller, still-live version of the same mechanism, not fully closed.
+
+**Also unexplained, flagged honestly, not chased further tonight**: TODO.md's existing record of
+the `e55fdb6` A/B testing (earlier tonight, unrelated context) found Library/Tags-sourced Book
+Detail opens got measurably SLOWER by the same commit that only touches Stats' code path — "no
+confirmed cause found (thermal/memory/competing-process all ruled out)." This may be the same
+family of issue as tonight's Playback finding (both are "something got slower for a reason not
+localized to the panel being tested") but was not cross-checked against it this session.
+
+**Not yet done**: apply the same occlusion-guard shape already proven twice tonight (Tags'
+`eventFilter` itself, then Stats' `eventFilter` via `e55fdb6`) to `ScrollHoverTracker`/
+`GridHoverTracker` directly — this is the concrete, scoped next step, not a vague follow-up.
+
+---
+
 ## 2026-09-25 — KWin offscreen-framebuffer / kernel-trace correlation attempt CONCLUDED: overlap achieved, no correlation found
 
 Direct continuation of the entry below. After three failed attempts (60s targeted, 15-min
