@@ -9,6 +9,45 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
 
 ## Summary index
 
+### Do NOT extend the Library List/Timeline grab-and-proxy paint-suppression pattern to Book Detail or Stats' Week/Month tabs without new, hard evidence — a deliberate non-fix, not an oversight
+- [2026-09-25] After shipping the Library List mode fix (see TODO_ARCHIVE.md) and confirming the
+  Timeline-tab StreakGrid/HourlyHeatmap fix from earlier the same night, Pryme did a ~2-minute
+  live pass and reported the app felt smooth throughout — tassel, Book Detail, and Stats opening
+  on Week/Month all felt good — while running under real background load (Chatterbox, Vivaldi, VS
+  Code all open, only 3GB RAM free). His own framing, worth keeping verbatim: "I know that it will
+  be janky again some other time later... This capricious behavior doesn't allow me to understand
+  where I stand." Library and Timeline were the two panels that were ALWAYS problematic, every
+  single time, independent of system load — that consistency is exactly what made them safe,
+  well-evidenced fixes (`_wire_paint_probe` gave real, repeatable, measured-bad numbers at every
+  sample, not an occasional bad run).
+- **Explicit decision: do not build the same grab-and-proxy mechanism for Book Detail or Week/
+  Month right now.** Two independent reasons, not just caution:
+  1. **No hard evidence of a real, repeatable cost for these three**, unlike Library List/Timeline.
+     The intermittent jank Pryme sometimes sees on them is fully explained by real background
+     system load (confirmed present during tonight's session) — this matches the whole session's
+     earlier, much larger "general app sluggishness" investigation (see TODO.md's own entry above
+     and NOTES.md), which repeatedly found genuine system/KWin-level confounds and could never pin
+     a Fabulor-side cause to this exact class of symptom. Building a fix for an unconfirmed problem
+     risks solving nothing while adding real complexity and risk for its own sake.
+  2. **Book Detail is not opaque the way Library's `QListView`/Stats' `StreakGrid`/`HourlyHeatmap`
+     are — Pryme's own stated reason for reluctance.** Transparent and Frosty backdrop modes mean
+     Book Detail's background genuinely shows whatever is behind it; a naive grab-and-freeze proxy
+     would bake in that backdrop at grab time and go visibly stale the instant anything behind it
+     changes during the slide. This is not a hypothetical risk — it is the EXACT bug class the
+     Book Detail slide-paint-suppression work already shipped into and had to correct twice this
+     same session (see the "Book Detail slide paint-suppression" entry below and NOTES.md): a
+     first attempt composited a wash onto a grabbed backdrop and produced an opaque-looking flash
+     in both Transparent and Frosty modes; the working fix ended up being a SEPARATE, static frost
+     layer triggered earlier, deliberately NOT folded into the sliding proxy pixmap at all. Week/
+     Month tabs (Stats) share this same non-opaque-panel shape. Extending today's simpler
+     Library/Timeline pattern to either would very likely reopen that exact class of bug, not
+     avoid it.
+- **What would change this decision**: a real, repeatable, `_wire_paint_probe`-measured cost for
+  Book Detail or Week/Month specifically — the same standard of evidence Library List/Timeline had
+  before any fix was attempted, not an impression from a single session (good or bad) under
+  whatever system load happened to be present at the time. Until that exists, leave these three
+  alone rather than re-litigating this decision cold in a future session.
+
 ### Continuous ~90% CPU while Stats' Timeline tab is open — real root cause FOUND, fix attempt CRASHED and was reverted, needs a fresh attempt
 - [2026-09-25] **HIGH PRIORITY — root cause confirmed, no safe fix shipped yet.** TasselOverlay's
   30fps sway timer (`self.update()` every 33ms, by design — a continuous idle-sway animation, not
@@ -405,41 +444,6 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
     with confidence; tag size is ruled out as Tags' variance driver.** Not yet identified: the
     actual driver of Tags' open-to-open variance. 707/707 tests pass after the probe extension.
     Full data and analysis in NOTES.md.
-
-### Library List mode is janky at EVERY tested historical checkpoint — no bisectable regression exists; Timeline/Streak's own cause FOUND and FIXED
-- [2026-09-25] During the same-session Playback bisect (see the entry above and NOTES.md), both
-  Library List mode and Timeline/Streak were checked incidentally at nearly every checkpoint
-  tested, back to the earliest practical points — both janky at every point, including each
-  feature's own first commit, ruling out a recent regression as the explanation for either. Git
-  bisection can't distinguish "inherent structural cost" from "always been inefficient" when
-  there's no boundary to find either way.
-- **[2026-09-25] Timeline/Streak: CLOSED, root cause found and fixed, not just characterized.**
-  Extended the Book Detail paint/filter/dispatch probes to Library's and Stats' own slide
-  animations (new, not a repeat of the Book-Detail-content finding) and found the actual cause:
-  `StreakGrid.paintEvent` costs 20-27ms PER CALL (a 364-cell loop redoing `timedelta`/`isoformat`/
-  dict-lookup/`QColor` work unconditionally, every call, none of it cached) and fires 6-12 times
-  during one ~300ms Stats slide — easily enough to blow multiple frame budgets on its own.
-  Checked against Pryme's own memory of `streak_grid_cache` (2026-06-11, confirmed via git log —
-  a real, deliberate design decision) before writing any fix: that cache covers the underlying
-  DATA only: matches Pryme's own four invalidation triggers exactly (book finished/unfinished for
-  the day, session deleted, day-start-hour changed) — it never addressed the PAINT side, because
-  live paint-cost-during-an-unrelated-slide measurement didn't exist as a technique until
-  tonight's Book Detail investigation. **Fixed**: `StatsPanel.suspend_timeline_paint()`/
-  `resume_timeline_paint()` suspend whichever grid is visible for the slide's duration via a
-  pixmap-proxy (same SHAPE as Book Detail's own mechanism, but no position-tracking needed since
-  neither grid moves relative to its parent during Stats' own slide). A first version (bare
-  `setUpdatesEnabled(False)`, no proxy) shipped a real regression — live-reported by Pryme with
-  screenshots, grid slid in blank then popped painted — corrected same session. Live-confirmed
-  fixed: "I confirm that it works as intended with the sluggishness gone." 9 new tests
-  (`tests/test_stats_timeline_paint_suppression.py`), 716/716 full suite passes. Full trace in
-  NOTES.md. **HourlyHeatmap's own paint cost is untested** (Pryme's live rounds targeted Streak
-  specifically) but the fix already covers it structurally if it turns out to need it — no
-  further code change required, just verification.
-- **Library List mode remains genuinely open** — no cause found tonight, still just "janky at
-  every checkpoint, no boundary to bisect." The tractable next step, if picked up again, is the
-  same live-instrumentation approach that found StreakGrid's cause: wire `_wire_paint_probe` to
-  `library_panel_animation` specifically while in List mode and read what's actually expensive,
-  rather than another round of relative-to-history comparison.
 
 ### Book Detail panel's tab bar — not wired into the shared `_kbdnav_active_panel_key` mechanism
 - [2026-09-15, scope corrected 2026-09-17] Still true and unrelated to the (now implemented, see

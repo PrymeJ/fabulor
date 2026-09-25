@@ -1,3 +1,150 @@
+## 2026-09-25 — Library List mode's slide repainted its whole QListView on every frame — root-caused, fixed with an open-start grab-and-proxy, and a real first-open geometry race caught live and fixed too
+
+Closes the TODO item this same night's earlier Library List/Timeline bisect left open: "no cause
+found tonight, still just janky at every checkpoint... the tractable next step is the same
+live-instrumentation approach that found StreakGrid's cause — wire `_wire_paint_probe` to
+`library_panel_animation` specifically while in List mode." That's exactly what this entry does.
+
+**Measurement, all five view modes, live, `_wire_paint_probe` (already wired unconditionally to
+`library_panel_animation` in `panels.py` — no new instrumentation needed):**
+
+| Mode | QListView open | QListView close | Paint calls |
+|---|---|---|---|
+| **List** | 149-187ms | 125-135ms | 7-11 |
+| 1-per-row | 80-90ms | 51-77ms | 11-17 |
+| 2-per-row | 61-69ms | 23-47ms | 13-16 |
+| 3-per-row | 62-75ms | 25-32ms | 11-12 |
+| Square | 51-64ms | 23-31ms | 12-19 |
+
+`QListView` dominates every mode's paint cost, but List mode is 2-3x every grid mode, against a
+~300-355ms nominal slide — meaning List mode spends roughly half its wall-clock slide time
+repainting the list widget alone. Same structural mechanism CLAUDE.md already documents for Book
+Detail's slide (Qt repaints a moving widget's full content on every position tick); here it lands
+on one expensive widget (`QListView`'s dense per-row delegate painting) rather than many cheap
+ones, which is why List mode specifically is the outlier. Grid modes were confirmed cheap enough
+to be out of scope — no fix attempted there.
+
+**Design went through independent review before any code was written, twice, and both rounds
+caught real bugs that would otherwise have shipped:**
+
+*Round 1 rejected the first draft entirely.* Original plan: grab the viewport at CLOSE (deferred
+until any hover-fade trail settles), cache the pixmap, reuse it as a static proxy at the NEXT open,
+matching Pryme's own framing ("it opens however you close it"). Rejected on three grounds: `Off`
+hover-fade mode has no timer/flag to detect a held hover at all (hover in Off mode is answered
+purely at paint time via Qt's native `option.state`, with zero persistent state) — a close-time
+grab there could freeze a highlight with nothing available to wait on. A fingerprint meant to
+detect staleness (row count/view mode/sort key+direction) missed real, common cases: metadata
+edits, exclusion, and theme changes are all reachable via Book Detail while Library is closed, and
+none of them move that tuple. The deferred-grab lifecycle also had an unguarded reopen-during-
+pending-grab race — nothing stopped a second open from firing while an earlier deferred grab was
+still waiting on a fade to settle.
+
+*Revised approach: grab at OPEN-START instead.* Right when the content is already current — nothing
+is stored across a close, so nothing can go stale by construction, and there's no deferral for a
+race to land in. Hover is suppressed unconditionally for the one grab (a `_suppress_hover_for_grab`
+flag on `BookDelegate`, checked in `_paint_list_row`'s hover-fill block — forces BOTH fade-mode
+branches to skip painting any hover-derived alpha at all, not just the currently-hovered row, which
+matters for a row that's mid-fade-OUT with a live but non-hovered `_hover_fade` entry). Cost
+confirmed live before committing to the approach, not assumed: a temporary probe timed
+`viewport().grab()` at the exact call site, List mode — one 225ms cold-start outlier (first call in
+process, not representative per this file's own "report timings chronologically" rule), then
+steady-state 24.86-38.06ms. ~25-38ms paid once, up front, against the 149-187ms this removes from
+the slide — a clear net win, measured rather than assumed.
+
+*Round 2, after the open-start design was written up, caught three more concrete bugs before any
+code existed:* the hover-suppress flag had to be set on the `BookDelegate` INSTANCE
+(`library_panel._delegate`), never the class — `_suppress_hover_for_grab` is initialized in
+`__init__`, making it an instance attribute that silently SHADOWS a class attribute of the same
+name; assigning `BookDelegate._suppress_hover_for_grab = True` on the class would have done
+nothing at all, with no error, and the grab would have shown hover as normal — an easy bug to ship
+undetected. `setUpdatesEnabled(False)` had to target the VIEWPORT specifically
+(`_list_view.viewport()`), not `QListView` itself — disabling on the view would also freeze its
+frame border and scrollbar, neither of which the proxy (sized to the viewport only) covers, risking
+a visible smear/blank strip during the slide. And the proxy's teardown had to be a single,
+idempotent method owned by BOTH the open-finish path and `_close_library_flow` — a close landing in
+the gap between the open animation finishing and its 16ms settle callback, or a stuck `finished`
+connection that never fires `_on_library_shown` at all, would otherwise strand an orphaned proxy
+that then either slides out frozen over the live list or gets a second proxy stacked on top of it
+at the next open.
+
+**A real visual bug survived both review rounds and was only caught live, by Pryme, after
+shipping:** on a process's FIRST-EVER Library open only, the panel visibly shifted ~1-2px
+vertically right at the moment the frozen proxy handed off to the live list — "I see one issue at
+the first open after the app launch. It appears I think 2 px down, it moves up with the hand-off."
+
+Root cause, found by adding a temporary live geometry probe (logging `viewport().geometry()` at
+grab-time and at handoff-time) rather than guessed: List mode's `_apply_view_mode` computes a top
+viewport-margin correction from `viewport().height() % row_h`, and `LibraryPanel.showEvent` already
+carries a PRE-EXISTING, unrelated fix for this exact class of problem — a `QTimer.singleShot(0,
+...)` re-run of `_apply_view_mode`, documented in its own comment, originally written for Square
+mode's identical remainder math, because the FIRST show's viewport height reads wrong before Qt has
+genuinely settled layout, and correcting it needs one deferred event-loop tick. The new open-start
+grab, being synchronous, was racing that exact pre-existing correction — on a process's first open
+only, since every later open already has the correction settled from the first time it ran. Two
+plausible-sounding fixes were tried live and BOTH measured to have zero effect before the real
+cause was found — `library_panel.layout().activate()` (the same idiom already used successfully for
+an outwardly similar Book Detail geometry problem, `panels.py`'s `_open_book_detail`) settles
+`library_panel`'s OWN layout but does not reach `QListView`'s separate, internal
+`QAbstractScrollArea` viewport/scrollbar geometry at all; `QListView.updateGeometries()` (that
+scroll area's own internal recompute method) also produced identical, still-stale numbers.
+Confirmed by direct, repeated measurement across four separate live relaunches before either was
+ruled out — not assumed to have worked, not assumed to have failed.
+
+Fixed with a `LibraryPanel._first_show_geometry_settled` flag (`False` by default, set `True` at
+the end of that same pre-existing deferred callback) and having `_start_library_entry` defer its
+OWN grab-and-proxy setup by the identical one event-loop tick, but ONLY while that flag is still
+`False` — every open after a process's first stays on the synchronous, zero-added-latency fast
+path, confirmed unaffected by direct measurement (grab-time and handoff-time geometry identical
+across five consecutive opens in the same process).
+
+This introduced one more real gap, caught by reasoning through the change before it could ship as
+a live bug: a close issued inside that narrow first-open deferral window would see
+`library_panel_animation.state()` still `Stopped` (nothing had called `.start()` yet) and slip past
+`_close_library_flow`'s existing `Running`-state guard, starting a close-slide from the WRONG
+assumed start position (`(0, sidebar_y)`, the animation's target, while the panel is actually still
+off-screen at `(-panel_w, sidebar_y)`) — a visibly wrong phantom slide. Fixed with a dedicated
+`_library_entry_animation_pending` flag, true only for that narrow gap. Deliberately NOT reused
+from `_is_animating`, which stays `True` for `library_panel`'s ENTIRE open transition — including
+the stuck-`finished`-connection scenario the close-side teardown specifically exists to recover
+from. An earlier draft of this same fix tried exactly that reuse and was caught, before shipping,
+by one of the new regression tests failing for the right reason: it would have permanently blocked
+`_close_library_flow`'s recovery path for the rest of the session whenever a prior open's
+`finished` connection genuinely got stuck, defeating the whole point of the close-side teardown the
+earlier review round had specifically asked for.
+
+**Live-confirmed correctness across the cases most likely to break something this broad** — not
+just assumed from the design's own reasoning: theme changes while Library is closed, scan-location
+removal, and un-excluding a book from the Excluded Books popup, each independently traced through
+the actual code path to confirm the change lands in `LibraryPanel`'s model SYNCHRONOUSLY, never
+deferred to Library's next open — `_on_book_metadata_saved`/`_on_excluded_book_restored` both call
+`library_panel.refresh(force=True)` (or the model directly) immediately when the signal arrives;
+`LibraryController._on_remove_location` calls `self.ui.refresh_panel(force=True)`, a thin forward to
+the same `refresh()`. `LibraryPanel.refresh()` itself runs its `set_books()` call unconditionally,
+with no `isVisible()` guard and no dependency on the `force` parameter for that part. Theme changes
+were separately already covered: `_start_library_entry`'s very first line is
+`self._flush_pending_restyle()`, which runs BEFORE `.show()` and therefore before the grab,
+guaranteeing any deferred library restyle has already landed.
+
+17 new tests (`tests/test_library_list_slide_paint_suppression.py`): hover suppression in both fade
+modes including a mid-fade-out trail on a non-hovered row (not just a held hover, and not just Off
+mode — the actual gap the first design draft would have missed), proxy placement via `mapTo`
+against the viewport (not its raw, locally-scoped `.geometry()` — a wrong mapping would coincide by
+chance in a layout with no frame/offset, so the test fixture deliberately gives the layout a
+nonzero top margin to force genuine divergence), both exception-fallback paths (a `grab()` failure
+caught by an inner `try/finally`, and a failure AFTER the proxy was already created and stored,
+caught by the outer `except` calling the same idempotent teardown — the second case is NOT covered
+by the first, and needed its own test with a monkeypatch scoped to throw only on the specific
+`setUpdatesEnabled(False)` call, not unconditionally, since a blanket throw would also break the
+teardown's own restore-to-`True` call and fail the test for the wrong reason), the first-open
+deferral itself, and the close-during-deferral-window guard. 733/733 full suite passes.
+
+Design and review trail (both rejected drafts, both independent review rounds) folded into this writeup above rather than kept in a separate design doc. Close-
+side cost (125-135ms, currently untouched by this fix) is flagged there as a likely, lower-risk
+follow-up — grab at close-START mirroring this design exactly, reusing the same idempotent
+teardown — not implemented tonight.
+
+---
+
 ## 2026-09-25 — Continuous ~90% CPU while Stats' Timeline tab is open: real root cause found (TasselOverlay's 30fps sway forces a full styled-background repaint cascade), fix attempt CRASHED (real SIGSEGV) and was reverted — root cause stands, fix does NOT ship
 
 Direct continuation of tonight's StreakGrid slide-jank fix (see the entry below). Pryme reported,

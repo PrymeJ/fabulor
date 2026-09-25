@@ -1,3 +1,86 @@
+## Session Summary — 2026-09-25 Session 1 — Continuation of the same-night Playback/StreakGrid investigation: found and fixed Library List mode's slide-paint cost (the TODO item that session left open), caught a real first-open geometry race live after shipping, and separately confirmed the Timeline-tab CPU-storm root cause stands with its crashed fix still reverted, plus a false-alarm theme-rotation check that turned out to be the existing guard working correctly.
+
+**Timeline-tab CPU storm check (no code change).** Pryme asked directly whether turning off the
+tassel decoration should have fixed the bookmark's own click-triggered animation dropping frames —
+it hadn't. Traced this correctly rather than assuming the earlier root-cause writeup covered it:
+`set_show_tassel(False)` genuinely stops the idle 30fps sway timer (confirmed by reading
+`_on_sway_tick`/`showEvent`/`hideEvent`), but the bookmark TAB itself is explicitly documented as
+never affected by that flag (`set_show_tassel`'s own docstring: "the tab itself... is never
+affected"), and `TasselOverlay.play()` — the click-triggered slide-down/hold/retreat animation —
+uses a completely separate `QPropertyAnimation` (`self._slide`) on the SAME non-opaque widget, still
+sitting inside `stats_time_tab`'s `WA_StyledBackground` region. Same structural mechanism as the
+already-documented, already-reverted CPU-storm root cause, just a different trigger (`play()`'s
+slide, not the idle sway) — genuinely unfixed, not contradicted. Folded into the existing TODO.md
+entry's understanding rather than treated as a new bug; no code touched.
+
+**Four "unnecessary" theme-apply calls — investigated and confirmed to be the guard working
+correctly, not a leak.** Pryme flagged four `_on_theme_changed`/`complete_main_fade` log lines
+firing with no obvious trigger and asked specifically whether the rotation timer could fire with
+only one theme in a size-1 pool. Traced `_rotate_theme`/`_do_rotate` directly: the pool-size check
+(`len(candidates) > 1`) gates the ONLY two call sites of `_on_theme_changed` inside `_do_rotate`, so
+a size-1 pool literally cannot produce a spurious apply through that path — it can only no-op
+silently (and, separately, fail to reschedule its own timer in that case, a real but harmless and
+deliberately-left-alone gap, since rotation resuming only requires an unrelated settings change to
+restart the timer). The real source of the four calls was `_on_theme_unhovered()` — called
+unconditionally by every Settings-panel dismiss (`_close_settings_flow`), itself calling
+`_on_theme_changed(current_theme, ...)` as a deliberate safety re-assert (see CLAUDE.md's "DO NOT
+make any panel-dismiss path depend on a stashed snapback" rule) — confirmed via the log's own
+`[GUARD-MASK-TRACE]` lines showing `_apply_stylesheets NEVER CALLED this invocation` on every one
+of the four hits, because the existing no-op guard (matching `_theme_ever_applied`) caught them for
+free. No bug, no code change — reported back plainly rather than left unresolved.
+
+**Library List mode's slide-paint cost — the TODO item this same night's earlier investigation
+left open ("wire `_wire_paint_probe` to `library_panel_animation` while in List mode and read
+what's actually expensive") — found, designed through two independent review rounds, implemented,
+and live-verified, including a real bug caught live after shipping.** Measured all five view modes
+live: `QListView`'s paint cost dominates every slide, but List mode is 2-3x every grid mode
+(149-187ms of a ~300-355ms slide, vs. 51-90ms for the grid modes) — the same "Qt repaints a moving
+widget's full content on every tick" mechanism CLAUDE.md already documents for Book Detail, landing
+here on one expensive widget instead of many cheap ones.
+
+Design went through genuine back-and-forth review before any code was written. First draft
+(grab-at-close, cache, reuse at next open — matching Pryme's own framing, "it opens however you
+close it") was rejected on three concrete grounds an independent review found: `Off` hover-fade
+mode has no state to detect a held hover at all; a staleness fingerprint missed real cases (Pryme's
+own correction, mid-review: metadata edits, exclusion, and theme CAN change while Library is
+closed, via Book Detail); the deferred-grab lifecycle had an unguarded reopen race. Revised to grab
+at OPEN-START instead (content already current, nothing to go stale) with hover suppressed for the
+one grab — cost measured live before committing (~25-38ms steady-state) rather than assumed. A
+SECOND review round, after the revised design was written up, caught three more concrete bugs
+before any code existed: the hover-suppress flag needed to live on the delegate INSTANCE, never
+the class (an instance attribute silently shadows a same-named class attribute — the wrong
+assignment would have done nothing, with no error); `setUpdatesEnabled(False)` needed to target the
+viewport specifically, not the whole `QListView` (would also freeze the frame/scrollbar the proxy
+doesn't cover); and the proxy's teardown needed to be idempotent and owned by both the open-finish
+path and `_close_library_flow`, so neither a close landing in the open-to-settle gap nor a stuck
+`finished` connection could strand an orphaned proxy.
+
+**A real visual bug survived both review rounds and was only caught live, by Pryme, after
+shipping**: "I see one issue at the first open after the app launch. It appears I think 2 px down,
+it moves up with the hand-off." Root-caused with a temporary live geometry probe rather than
+guessed — a pre-existing, unrelated `QTimer.singleShot(0, ...)` fix already in `LibraryPanel.
+showEvent` (for List/Square mode's top-margin remainder math needing settled layout) hadn't landed
+yet when the new synchronous open-start grab fired, on a process's FIRST Library open only. Two
+plausible-sounding fixes (`layout().activate()`, `QListView.updateGeometries()`) were each tried
+live and confirmed, by direct measurement, to have zero effect before the real cause was found —
+neither assumed to have worked. Fixed by deferring the grab by the same one event-loop tick, but
+only on that first-open case (every later open confirmed to stay on the synchronous fast path).
+That fix then surfaced one more gap, caught by reasoning through it before it could ship as a live
+bug: a close issued inside the new deferral window would slip past `_close_library_flow`'s existing
+guard and start a close-slide from the wrong position — fixed with a dedicated, narrowly-scoped
+flag, deliberately NOT reusing `_is_animating` (which needed to stay available for the stuck-
+connection recovery case the earlier review round had specifically asked for).
+
+Live-confirmed by Pryme, not just assumed from the design's own reasoning: theme changes, scan-
+location removal, and un-excluding a book all correctly show current content on the next open —
+each traced through its actual code path to confirm it updates `LibraryPanel`'s model synchronously,
+never deferred. 17 new tests (`tests/test_library_list_slide_paint_suppression.py`), 733/733 full
+suite passes. Full design and review trail preserved in NOTES.md; TODO.md's now-closed entry moved
+to TODO_ARCHIVE.md. Close-side cost (125-135ms, untouched by this fix) flagged as a likely,
+lower-risk follow-up, not implemented tonight.
+
+---
+
 ## Session Summary — 2026-09-22 Session 2 — Two small confirmed fixes (a stale Undo anchor surviving a book switch/removal, a tag-completer double-add on Enter+arrow-selection), two small EQ-slider features (right-click reset, Shift+arrow jump-to-extreme), and a performance investigation that started from a single stale TODO item and ended somewhere much larger: a real bug in the theme stylesheet catch-up mechanism, a 10,000-row synthetic-data cleanup, and a systemic event-filter-overhead lead handed off for a future session.
 
 **Undo anchor surviving a book switch (`d07a559`) and book removal (`cdedb0e`).** Live report:
