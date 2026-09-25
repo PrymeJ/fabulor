@@ -2115,3 +2115,51 @@ order these entries had in TODO.md before the split (2026-07-30).
   paths (a `grab()` failure and a failure after the proxy was already created and stored), the
   first-open deferral itself, and the close-during-deferral-window guard. 733/733 full suite passes.
   Full design and review trail (both rejected drafts, both review rounds, the exact hover-suppression/geometry-race reasoning) is captured in this NOTES.md entry above — no separate design doc persists outside the session that produced it.
+
+- **[2026-09-25, CLOSED — commit `5b5995b`] Continuous ~90% CPU while Stats' Timeline tab is open.**
+  Root cause (found earlier the same night): `TasselOverlay`'s idle sway timer called
+  `self.update()` unconditionally every 33ms, and because the widget is non-opaque inside
+  `stats_time_tab`'s `WA_StyledBackground` region, EVERY tick forced Qt to repaint the whole
+  region — including `HourlyHeatmap`/`StreakGrid`'s own expensive `paintEvent`, even when neither
+  actually changed. A first fix attempt gave the grids `WA_OpaquePaintEvent` and CRASHED with a
+  real SIGSEGV, tied via `coredumpctl` to one of the grids' own in-flight `QPropertyAnimation`s
+  ticking — reverted, root cause of the crash itself never diagnosed. Deliberately not
+  re-attempted this time; chose a structurally different, lower-risk fix instead per Pryme's own
+  call, avoiding `WA_OpaquePaintEvent` entirely: **throttle the tassel's own repaint rate rather
+  than touching the grids' paint contract.**
+
+  Idle sway's entire motion range is `IDLE_AMP = 1.0px` — most individual 33ms ticks were already
+  moving the sway by a sub-pixel amount, paying the full expensive cascade for a visually
+  imperceptible change. Fix: a new `_IDLE_TICK_MS` (150ms) interval used while idle, with the
+  SAME `_sway_timer` switching to the original fast `_TICK_MS` (33ms) for as long as a kick (the
+  real, visible ~6px click-triggered swing) is actively decaying, then dropping back to
+  idle-slow once its envelope clears. `_idle_phase`'s per-tick step is scaled by the interval
+  ratio so the sway's real-world period (~3.5s/cycle) stays correct regardless of which rate is
+  currently ticking. Three more call sites had to agree on which interval is current: the
+  constructor (starts idle-slow), `showEvent`'s resume (must honor `_kick_active`, which
+  deliberately survives the transport-bar blur grab's ~64ms hide/show churn — see that method's
+  own docstring), and `set_show_tassel`'s re-enable (always resumes idle-slow, since it
+  unconditionally clears kick state first). 10 new tests
+  (`tests/test_tassel_overlay_sway_rate.py`).
+
+  **Measurement discipline note, worth keeping for future perf work on this codebase**: the FIRST
+  live comparison (Streak ~1.0% at a since-abandoned 180ms candidate, vs. the documented ~90%
+  baseline) looked like a dramatic, clean win and was nearly written up as such — it was a bad
+  sample. Two separate measurement problems compounded: (1) `ps`'s `%CPU` column is a CUMULATIVE
+  average since the process started, not an instantaneous rate — every reading taken with it
+  (including the original ~90% baseline claim) was distorted, worse for longer-running processes;
+  switched to a correct instantaneous sampler (`/proc/[pid]/stat` deltas over a short window,
+  matching `top`'s own method) partway through. (2) Even with the correct method, a single ~1%
+  Streak sample at 180ms turned out to be a genuine outlier — a controlled, same-process A/B
+  (150ms vs. 180ms, Streak and Heatmap, freshly relaunched process for each condition) instead
+  found **BOTH intervals land in the same ~18-31% band for both grids** (Streak ~29-31%, Heatmap
+  ~18-22%, at both 150ms and 180ms) — the earlier ~1% was noise, not a real effect of the
+  interval. A third data point at an extreme `_IDLE_TICK_MS=2000` (near-off) measured ~15% for
+  Streak — confirming the throttle genuinely helps (roughly half of the 150ms figure) but also
+  surfacing a real, separate ~15% floor the tassel fix cannot touch, most likely
+  `StatsPanel.eventFilter`'s own already-documented app-wide event-filter cost (see the "Book
+  Detail slide paint-suppression" TODO.md thread) — a different, already-tracked issue, not a
+  residual of this one. **150ms shipped** (equivalent to 180ms, and far smoother visually than
+  2000ms's near-static sway) — Pryme's own call, confirmed by the numbers rather than assumed.
+  Net result: ~90% sustained CPU while Stats' Timeline tab is open, before → ~18-31% after,
+  correctly and repeatably measured.

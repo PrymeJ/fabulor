@@ -1,3 +1,45 @@
+## Session Summary — 2026-09-25 Session 2 — Closed the Timeline-tab CPU-storm saga: throttled TasselOverlay's idle sway tick rate instead of retrying the crashed WA_OpaquePaintEvent fix, then caught and corrected two real measurement mistakes of my own (a cumulative-average `ps` misread, and a single anomalous sample nearly written up as a clean result) before landing on honest, controlled numbers.
+
+**The fix.** Root cause (found earlier the same night, see Session 1 below): `TasselOverlay`'s
+idle sway timer called `self.update()` every 33ms unconditionally, forcing a full
+`WA_StyledBackground`-region repaint — including `HourlyHeatmap`/`StreakGrid`'s own expensive
+`paintEvent` — regardless of whether anything actually changed. The first fix attempt
+(`WA_OpaquePaintEvent` on the grids) crashed with a real SIGSEGV tied to one of the grids' own
+in-flight `QPropertyAnimation`s. Deliberately avoided retrying that same mechanism this time —
+throttled the tassel's OWN repaint rate instead, since `IDLE_AMP` (the idle sway's entire motion
+range) is only ±1px and most 33ms ticks were already moving it by an imperceptible sub-pixel
+amount. New `_IDLE_TICK_MS` (150ms) used while idle, with the same timer switching to the
+original fast rate for as long as a kick (the real ~6px click-triggered swing) is actively
+decaying. Pryme's own live catch, before any code was written: making the tassel itself opaque
+wasn't viable either, since its bounding rect deliberately extends past the tab to give the
+swinging tassel room, and it visibly overlaps the bookmark during a kick — the same class of
+problem `WA_OpaquePaintEvent` hit on the grids, just relocated. Shipped as `5b5995b`.
+
+**Two real measurement mistakes, both caught and corrected before the write-up, not glossed
+over.** First: `ps`'s `%CPU` column is a cumulative average since process start, not an
+instantaneous rate — distorted every reading taken with it tonight, including the original ~90%
+baseline claim. Switched to a correct instantaneous `/proc/[pid]/stat`-delta sampler. Second, and
+more consequential: even with the correct method, a single Streak-at-180ms reading came back
+~1.0% CPU against the ~90% baseline — a strikingly clean-looking result that was nearly accepted
+and written up as the fix's true effect. Pryme's own skepticism ("Most probably I'll leave it at
+150... Revert to 150ms and measure again") is what caught it: the 150ms re-measurement came back
+~29-31%, not the near-zero the 180ms reading implied for the same grid. A fully controlled
+re-test (fresh relaunch per condition, never reusing a longer-lived process) showed both 150ms
+and 180ms land in the SAME ~18-31% band — the ~1.0% reading was pure noise. A third measurement
+at an extreme `_IDLE_TICK_MS=2000` ("pretty much not swaying anymore," Pryme's own framing, used
+specifically to isolate whether the tassel was even the dominant remaining cost) measured Streak
+at ~15% — confirming the throttle genuinely helps, proportionally, while also surfacing a real,
+separate ~15% floor this fix was never meant to touch (most likely `StatsPanel.eventFilter`'s
+own already-documented app-wide cost, a different tracked issue).
+
+**150ms shipped** — Pryme's original instinct, confirmed equivalent to 180ms by the corrected
+numbers rather than assumed. Net, honestly measured: ~90% sustained CPU with Stats' Timeline tab
+open, before → ~18-31% after. 10 new tests (`tests/test_tassel_overlay_sway_rate.py`). Full trail,
+including both measurement corrections in detail, in NOTES.md; TODO.md's now-closed CPU-storm
+entry moved to TODO_ARCHIVE.md.
+
+---
+
 ## Session Summary — 2026-09-25 Session 1 — Continuation of the same-night Playback/StreakGrid investigation: found and fixed Library List mode's slide-paint cost (the TODO item that session left open), caught a real first-open geometry race live after shipping, and separately confirmed the Timeline-tab CPU-storm root cause stands with its crashed fix still reverted, plus a false-alarm theme-rotation check that turned out to be the existing guard working correctly.
 
 **Timeline-tab CPU storm check (no code change).** Pryme asked directly whether turning off the

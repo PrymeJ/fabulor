@@ -48,41 +48,6 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
   whatever system load happened to be present at the time. Until that exists, leave these three
   alone rather than re-litigating this decision cold in a future session.
 
-### Continuous ~90% CPU while Stats' Timeline tab is open — real root cause FOUND, fix attempt CRASHED and was reverted, needs a fresh attempt
-- [2026-09-25] **HIGH PRIORITY — root cause confirmed, no safe fix shipped yet.** TasselOverlay's
-  30fps sway timer (`self.update()` every 33ms, by design — a continuous idle-sway animation, not
-  gateable) has no `WA_OpaquePaintEvent`/opacity effect of its own, so it sits as a non-opaque
-  widget inside `stats_time_tab`'s `WA_StyledBackground` region. Confirmed via
-  `QT_LOGGING_RULES="qt.widgets.painting=true"` (Qt's own native paint-diagnostic category — the
-  only technique that could see past Python's inability to trace the actual C++-level trigger,
-  after `py-spy` profiling and several other Python-level hypotheses were directly ruled out, see
-  NOTES.md for the full elimination trail): every tassel tick forces Qt to repaint the WHOLE
-  styled-background region, sweeping in the full-size `HourlyHeatmap` (visible) AND `StreakGrid`
-  (hidden, but its `paintEvent` still runs) — both of which cost 20-27ms/call (measured earlier
-  the same night, the StreakGrid slide-jank fix entry). Net effect: ~90% sustained CPU the entire
-  time Stats' Timeline tab is open, confirmed by `top` dropping to ~5% the instant Stats closes.
-  This directly explains a live report that broke the pattern of everything else found tonight:
-  "I clicked on the tassel... even in a short distance... it drops frames" — a trivial,
-  previously-unproblematic animation degraded once this self-inflicted repaint storm was active
-  alongside it.
-  - **Fix attempted (WA_OpaquePaintEvent + a full-rect `_bg_color` fill as the first paint op in
-    both grids) CRASHED with a real SIGSEGV on the very next Stats-panel interaction** —
-    confirmed via `coredumpctl`: `QAbstractAnimationPrivate::setState` → a Qt signal dispatched
-    into Python (`PyObject_SetAttr`, a `@Property` setter) → segfault inside `QtWidgets.abi3.so`
-    (`__dynamic_cast` failing). Root cause of the CRASH ITSELF was not diagnosed — reverted
-    (`git checkout -- src/fabulor/ui/stats_panel.py`) rather than debugged live, given the
-    severity and the hour. 716/716 tests still pass on the reverted code; the crash is a live
-    Qt-animation-timing interaction a headless test would not plausibly reach.
-  - **Not yet done, concrete next steps**: (1) re-derive a fix from scratch, don't reuse the
-    reverted diff verbatim; (2) test `WA_OpaquePaintEvent` in isolation from the
-    `set_bg_color`/`_bg_color` machinery to narrow which half caused the crash; (3) consider a
-    structurally different fix — e.g. throttling/gating the tassel's OWN repaint rate while an
-    expensive grid is the active Timeline view, rather than trying to make the grids immune to
-    the cascade at the compositor level; (4) test any new attempt through many more open/close/
-    tab-switch/theme-change cycles before trusting it, since this crash took a full interaction
-    cycle to surface, not the first paint. Full investigation trail (including every ruled-out
-    hypothesis and the exact Qt paint-log evidence) in NOTES.md.
-
 ### General app jank — traced to system/KWin level, NOT Fabulor's own code; two concrete leads, neither pursued yet
 - [2026-09-25] Continuation of the "General app sluggishness investigation" (below) and the
   two-month bisect that found the same jank at a commit predating any of this session's own
