@@ -79,6 +79,39 @@ detail-panel handling — see `tag_manager.py`'s own extensive comments on why t
 is scoped or started. Filed as a genuine, understood, but NOT closed architectural cost — see
 TODO.md.
 
+**Correction, same night, caught by Pryme directly: the above explains only PART of the ordering,
+and I initially wrote it up as if it explained all of it — it doesn't.** Pryme pointed out
+correctly: "we had these issues, especially the book details slowness, before these filters were
+implemented though." Checked against this session's own earlier bisect data rather than
+defended: at the `6002e4d` checkpoint (2026-06-11, StreakGrid's first commit — `a4e3d65`, which
+introduces `ScrollHoverTracker`/`GridHoverTracker`, does not exist until 2026-07-31, seven weeks
+LATER), Pryme directly reported "book details just as bad as today when opened from the Stats,
+but better from the Library and the Tags." **Tags was BETTER than Stats at that point** — the
+opposite of tonight's live-logged ordering (Tags worst) — and the hover trackers this entry's
+whole mechanism explanation rests on did not exist yet. So the Stats-worse-than-Library asymmetry
+predates `a4e3d65` by seven weeks and cannot be explained by it.
+
+What DOES fit, checked directly rather than assumed: `StatsPanel.eventFilter` itself (a
+DIFFERENT, Stats-specific app-wide filter, unrelated to the two hover trackers) was introduced by
+`8257546` ("feat: dismiss 'Reset all stats' confirmation on click outside") at 01:41 on
+2026-06-11 — confirmed via `git merge-base --is-ancestor 8257546 6002e4d` to be an ancestor of,
+and therefore already present in, the 17:00-same-day `6002e4d` build that was tested. **This is a
+much better fit for the ORIGINAL Stats-vs-Library gap**: it's a real app-wide filter, it existed
+at the exact checkpoint where the asymmetry was first confirmed present, and it predates the
+hover trackers entirely. The corrected picture, not yet re-verified with fresh live numbers: (1)
+`StatsPanel.eventFilter` alone plausibly explains Stats being worse than Library, consistently,
+since 06-11 — independent of anything shipped tonight; (2) `a4e3d65`'s hover trackers, introduced
+much later (07-31), are what pushed TAGS specifically from "better than Stats" (06-11) to "worse
+than both" (tonight's logged data) — a separate, later-arriving effect layered on top of the
+older Stats-specific one, not the same cause restated. Both mechanisms are real and both are
+occlusion-guarded now (`e55fdb6` for Stats, tonight's fix for Tags' trackers) — but the ~15µs/event
+marginal-filter-cost explanation above should be read as explaining the TAGS-specific escalation,
+not the whole ordering's origin. The original Stats-vs-Library gap's own root cause (why
+`StatsPanel.eventFilter`'s cost specifically, rather than just "an app-wide filter exists") has
+not been separately measured — flagged here rather than left implied as already covered by the
+generic marginal-cost number above, which was measured against a synthetic bare filter, not
+`StatsPanel.eventFilter`'s own real body.
+
 ---
 
 ## 2026-09-25 — General app sluggishness: live bisect finds a real, precisely-dated regression (Playback smoothness, `a4e3d65`, 2026-07-31), partially fixed 09-22, and separates several older/structural jank sources from it

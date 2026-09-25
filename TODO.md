@@ -341,6 +341,22 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
     once (would need checking against every live-reported bug each filter currently fixes — Tab/
     Backtab interception, click-outside detection, keyboard handling — before removing any of
     them). Full measurement detail in NOTES.md.
+  - **[2026-09-25] Correction, same night, caught by Pryme directly: the mechanism above explains
+    only the TAGS-specific escalation, not the original Stats-vs-Library gap.** Pryme: "we had
+    these issues, especially the book details slowness, before these filters were implemented
+    though" — correct. This session's own earlier bisect data (`6002e4d`, 2026-06-11, seven
+    weeks before `a4e3d65`/the hover trackers existed) already had Pryme reporting Book Detail
+    "just as bad as today when opened from the Stats, but better from the Library and the Tags"
+    — Tags was BETTER than Stats at that point, the opposite of tonight's ordering. The real
+    fit for the ORIGINAL gap: `StatsPanel.eventFilter` (a separate, Stats-specific app-wide
+    filter, unrelated to the hover trackers) was introduced by `8257546` at 01:41 on the SAME
+    day as the `6002e4d` build tested (confirmed via `git merge-base --is-ancestor`, i.e.
+    already present in that build) — plausibly the real, seven-week-older cause of Stats being
+    worse than Library, independent of anything shipped tonight. The hover trackers (07-31) are
+    a separate, later effect that pushed TAGS specifically from better-than-Stats to worse than
+    both — not a restatement of the same cause. `StatsPanel.eventFilter`'s own real per-call cost
+    (as opposed to the generic ~15µs synthetic-filter benchmark above) has not been separately
+    measured. Full correction in NOTES.md.
 
 ### Library List mode and Timeline/Streak view are janky at EVERY tested historical checkpoint — no bisectable regression exists
 - [2026-09-25] During the same-session Playback bisect (see the entry above and NOTES.md), both
