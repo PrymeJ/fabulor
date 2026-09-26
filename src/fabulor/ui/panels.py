@@ -48,6 +48,15 @@ _GRAB_TRACE_ENABLED = os.environ.get("FABULOR_GRAB_TRACE") == "1"
 # no per-panel edits were needed. Remove once the investigation is resolved.
 _PANEL_TIMING_ENABLED = os.environ.get("FABULOR_PANEL_TIMING", "1") != "0"
 
+# Moved up from its original position further down this file (immediately after
+# _wire_timing_probe) on 2026-09-26 so _wire_text_stall_probe — defined earlier in this file —
+# can reference it directly instead of duplicating the literal. A plain module-level assignment
+# referencing a name defined LATER in the same file raises NameError at import time, not just at
+# call time, since Python evaluates top-level statements in order — this was caught by the full
+# test suite failing collection on every test file that imports panels.py at all, not just ones
+# exercising the new probe.
+_JANK_FRAME_BUDGET_MS = 16.7  # one 60fps frame; a gap wider than this is a dropped/late frame
+
 
 def _book_detail_probe_context(panel_manager: "PanelManager") -> str:
     """Richer replacement for the bare `panel_manager._book_detail_underlay` string every
@@ -219,6 +228,13 @@ def install_panel_timing_probe(panel_manager: "PanelManager") -> None:
         _wire_event_dispatch_probe("book_detail", panel_manager.book_detail_panel_animation,
                                     panel_manager.book_detail_panel,
                                     context_fn=lambda pm=panel_manager: _book_detail_probe_context(pm))
+        # 2026-09-26: Pryme described a symptom none of the above can see — "text briefly stuck
+        # in places" specifically on CLOSE, which read as clean on _wire_paint_probe's per-widget
+        # TOTALS (a widget that stalls then catches up produces the same total as one that
+        # painted evenly). See _wire_text_stall_probe's own docstring.
+        _wire_text_stall_probe("book_detail", panel_manager.book_detail_panel_animation,
+                                panel_manager.book_detail_panel,
+                                context_fn=lambda pm=panel_manager: _book_detail_probe_context(pm))
 
     # Library's/Stats' OWN slide, added 2026-09-25 — a genuinely new question, not a repeat of
     # the "paint cost identical across all three" finding above. That finding was about Book
@@ -338,6 +354,119 @@ def _wire_paint_probe(name: str, anim: QPropertyAnimation, panel: QWidget, conte
         state["per_widget_calls"] = None
         state["orig_paint_events"] = None
         state["context"] = None
+
+    orig_start = anim.start
+
+    def _traced_start(*args, **kwargs):
+        _on_start()
+        return orig_start(*args, **kwargs)
+
+    anim.start = _traced_start
+    anim.finished.connect(_on_finished)
+
+
+# Widget-type prefixes this probe watches per-tick, added 2026-09-26 after Pryme described a
+# symptom _wire_paint_probe's totals-only PAINT line cannot show: "text briefly stuck in places"
+# during a Book Detail CLOSE that otherwise measured clean on wall/max_frame_gap. A per-widget
+# TOTAL across the whole animation cannot distinguish "painted evenly throughout" from "painted
+# nothing for 100ms then caught up" — both produce the same total. This probe logs every
+# individual paintEvent call's timestamp (ms since animation start) and the gap since THAT SAME
+# widget's own previous paint, so a stall specific to one widget — while its siblings and the
+# panel's own position keep moving — becomes visible in the data instead of averaged away.
+# Scoped to text-bearing widgets specifically (matched by class-name prefix, not exact
+# objectName, so it survives an object being unnamed or renamed) since "text stuck" names the
+# content class, not a specific instance.
+_TEXT_STALL_WIDGET_PREFIXES = ("_ElidingLineEdit", "QLabel", "ScrollingLabel", "FreezableLabel")
+# A gap this wide between a widget's own consecutive paints, DURING an otherwise-active
+# animation, is what "stuck" would actually look like — matches _JANK_FRAME_BUDGET_MS's own
+# one-frame-at-60fps standard, since a single missed frame for one widget is already the
+# visible unit Pryme is describing (not a multi-frame freeze).
+_TEXT_STALL_GAP_MS = _JANK_FRAME_BUDGET_MS
+
+
+def _wire_text_stall_probe(name: str, anim: QPropertyAnimation, panel: QWidget, context_fn=None) -> None:
+    """Per-tick paint timeline for text-bearing widgets during a single panel animation — see
+    the module-level comment above _TEXT_STALL_WIDGET_PREFIXES for why this exists and what gap
+    _wire_paint_probe's totals-only PAINT line cannot show.
+
+    Same install/teardown shape as _wire_paint_probe (monkeypatched paintEvent per widget,
+    wrapped/restored around anim.start()/finished, never left installed) — deliberately a
+    SEPARATE probe rather than folded into _wire_paint_probe, so this stays optional/removable
+    without touching the already-relied-on totals probe, and so its extra per-call bookkeeping
+    (a timestamp list per widget, not just a running sum) doesn't add overhead to every panel
+    _wire_paint_probe already covers when this diagnostic isn't the question being asked.
+
+    Logs ONE line per animation: which watched widgets had a stall (a gap between two of their
+    own consecutive paints wider than _TEXT_STALL_GAP_MS), when in the slide it happened (ms
+    since anim start), and how wide. A clean run (no widget ever stalled) logs a single
+    confirming line rather than nothing, so a quiet log can be read as "checked, found nothing"
+    rather than mistaken for "never ran"."""
+    state = {"active": False, "per_widget_ticks": None, "orig_paint_events": None,
+             "context": None, "t0": None}
+
+    def _on_start():
+        if not _PANEL_TIMING_ENABLED:
+            return
+        state["context"] = context_fn() if context_fn is not None else None
+        state["t0"] = time.perf_counter()
+        widgets = [panel] + panel.findChildren(QWidget)
+        per_widget_ticks = {}
+        orig_paint_events = {}
+        for w in widgets:
+            cls_name = type(w).__name__
+            if not any(cls_name.startswith(p) for p in _TEXT_STALL_WIDGET_PREFIXES):
+                continue
+            key = f"{cls_name}#{w.objectName() or id(w)}"
+            per_widget_ticks[key] = []
+            orig = w.paintEvent
+            orig_paint_events[w] = orig
+
+            def _make_wrapper(orig_fn, k):
+                def _wrapped(event, _orig=orig_fn, _k=k):
+                    result = _orig(event)
+                    if state["active"]:
+                        per_widget_ticks[_k].append((time.perf_counter() - state["t0"]) * 1000)
+                    return result
+                return _wrapped
+
+            w.paintEvent = _make_wrapper(orig, key)
+
+        state["active"] = True
+        state["per_widget_ticks"] = per_widget_ticks
+        state["orig_paint_events"] = orig_paint_events
+
+    def _on_finished():
+        if not state["active"]:
+            return
+        state["active"] = False
+        for w, orig in state["orig_paint_events"].items():
+            try:
+                w.paintEvent = orig
+            except RuntimeError:
+                pass  # widget was deleted mid-animation; nothing to restore
+
+        stalls = []
+        for key, ticks in state["per_widget_ticks"].items():
+            for prev, cur in zip(ticks, ticks[1:]):
+                gap = cur - prev
+                if gap > _TEXT_STALL_GAP_MS:
+                    stalls.append((key, prev, gap))
+
+        ctx = f" from={state['context']!r}" if state["context"] is not None else ""
+        if stalls:
+            stalls.sort(key=lambda s: -s[2])
+            stalls_str = ", ".join(f"{k}@{t:.0f}ms+{g:.0f}ms" for k, t, g in stalls[:8])
+            logger.warning(
+                f"[PANEL-TIMING] {name} TEXTSTALL n={len(stalls)}{ctx} "
+                f"watched={len(state['per_widget_ticks'])} stalls={stalls_str}")
+        else:
+            logger.warning(
+                f"[PANEL-TIMING] {name} TEXTSTALL n=0{ctx} "
+                f"watched={len(state['per_widget_ticks'])} (no stall > {_TEXT_STALL_GAP_MS}ms found)")
+        state["per_widget_ticks"] = None
+        state["orig_paint_events"] = None
+        state["context"] = None
+        state["t0"] = None
 
     orig_start = anim.start
 
@@ -595,9 +724,6 @@ def _wire_event_dispatch_probe(name: str, anim: QPropertyAnimation, panel: QWidg
 
     anim.start = _traced_start
     anim.finished.connect(_on_finished)
-
-
-_JANK_FRAME_BUDGET_MS = 16.7  # one 60fps frame; a gap wider than this is a dropped/late frame
 
 
 def _system_load_snapshot() -> str:
