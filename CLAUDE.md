@@ -260,6 +260,24 @@ The real library used for day-to-day testing has been ~400 books. That is not re
   at the specific claim motivating it ("a blur tween can't hitch a restyle," "a hover restyle is
   cheaper," "the hitch would be hidden") rather than trusting the claim and building the fix first.
   All three would otherwise have shipped.
+- **`mutagen.File()`'s return value must be checked with `is not None`, never bare `if m:`** —
+  `mutagen.FileType` subclasses `dict` (it IS the file's tag mapping), so a real, fully-parsed,
+  PERFECTLY VALID audio file with zero ID3/tag data evaluates as an empty dict and `bool(m)` is
+  `False`, even though `m.info` (a genuine, populated `MPEGInfo`/etc. with a real `.length`) is
+  sitting right there. `scanner.py`'s `_extract_metadata` used `if m and m.info:` for its whole
+  history, silently dropping duration (and, for a multi-file book, the whole file from
+  `book_files`) for any track with no tags at all — confirmed live 2026-09-26 on a real, playable,
+  untagged single-MP3 book (duration silently 0.0) and, independently in the very same rescan, on
+  4 of 5 parts of an unrelated multi-file book (Shadow Country — only the one part that happened
+  to carry a tag survived, leaving `book_files` with 1 row instead of 5 and breaking VT stitching
+  for the whole book with no error anywhere). Fixed to `if m is not None and m.info:` — `None` is
+  mutagen's actual "could not identify/open this file" signal; a falsy-but-non-None `m` is a
+  normal, common case (any untagged file) and must not be treated as a parse failure. Generalizes
+  beyond this one call site: any `if <library object>:` guard against an unfamiliar third-party
+  type's return value should be checked for a customized `__bool__`/`__len__` before trusting
+  truthiness as a success signal — `is not None` is the only check that's unambiguous regardless.
+  See NOTES.md, 2026-09-26, for the full investigation and the two Book Detail layout bugs found
+  in the same session.
 
 ---
 

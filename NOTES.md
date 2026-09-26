@@ -1,3 +1,151 @@
+## 2026-09-26 — `mutagen.FileType`'s dict-subclass truthiness silently dropped duration for real, valid, untagged audio files — one book's duration lost, another book's VT stitching broken (4 of 5 parts missing from `book_files`)
+
+**The bug.** `ScannerWorker._extract_metadata` (`scanner.py`) decided whether `mutagen.File(af)`
+successfully parsed an audio file with `if m and m.info:`. This looks like a reasonable
+"did mutagen give us something usable" check, and for years it silently wasn't one:
+`mutagen.FileType` (what `mutagen.File()` returns) subclasses `dict` — it literally IS the file's
+tag mapping — so a real, fully-parsed, PERFECTLY VALID audio file with zero ID3/tag data
+evaluates as an empty dict, and `bool(m)` is `False`, even though `m.info` (a genuine
+`mutagen.mp3.MPEGInfo` object with a real, correct `.length`) is sitting right there, fully
+populated. The guard short-circuited on `m`'s truthiness alone and never even reached `.info`.
+Confirmed directly, live, against the real file that surfaced this:
+
+```python
+>>> m = mutagen.File(path)
+>>> bool(m)                          # OLD guard's first operand
+False
+>>> m.tags
+None
+>>> m.info.length
+14030.210612244899                   # a completely real, correct duration — silently discarded
+```
+
+**How this was found.** Pryme reported a Book Detail bleed bug (a deleted book's blank duration
+briefly showing the PREVIOUS book's stale value on close — a separate, already-fixed bug, see
+below) and, investigating it, noticed the deleted book's OWN duration was `0.0` in the DB with no
+narrator/year either — genuinely missing, not a display bug. His own hunch, stated plainly before
+any code was read: "I suspected that it was not an M4B — indeed, single MP3 file." That was the
+right instinct; `scanner.py` had **zero logging anywhere in the whole file** at the time, so there
+was no trail to consult — the failure had always been completely silent by construction. Added a
+`logger` to the module and two new log lines (the `if`'s `else` branch, and the surrounding
+`except Exception` block, which ALSO silently swallowed failures with no trail) before asking
+Pryme to force-rescan, specifically so the scan's own log would either confirm or rule out the
+mechanism rather than trusting a fix built on inference alone.
+
+**The rescan surfaced something bigger than the one book.** The very first run with logging in
+place caught the Carver file (`m={}, m_is_none=False` — exactly the dict-truthiness case) AND,
+completely independently, **four MP3 files from an unrelated book — Shadow Country — with the
+identical failure signature.** Pryme caught the real-world consequence of that second case live,
+before the connection to this investigation had even been made explicit: Book Detail showed
+"8h 18m" for Shadow Country against his own spreadsheet's "40h 24m," and Player wasn't stitching
+the book's 5 parts into one continuous virtual timeline at all. The DB confirmed it directly:
+`book_files` had exactly ONE row (Part 1 — the only part that happened to carry an ID3 tag, which
+made it survive the old truthy check) instead of five. Per this file's own documented VT
+architecture, a `book_files` result this sparse means `Player` never builds a real VT for the
+book — every duration/chapter/seek computation downstream only ever saw Part 1's ~8h18m. This had
+apparently been silently wrong for as long as the book had been in the library, with nothing
+anywhere pointing at it.
+
+**The fix.** `if m and m.info:` → `if m is not None and m.info:`. `mutagen.File()` returning
+`None` is the library's actual "could not identify/open this file" signal; a falsy-but-non-None
+`m` (a real file with no tags) is a completely normal case and must not be treated as a failure.
+`m.info` is still checked separately afterward (a real, recognized format that genuinely has no
+parseable stream info is a distinct, rarer case the same branch still correctly catches). Verified
+directly against the real files before and after:
+
+```python
+>>> bool(m and m.info)                    # OLD
+False
+>>> bool(m is not None and m.info)        # NEW
+True
+```
+
+Re-running the SAME force rescan after the fix landed corrected both books in one pass — no
+special-casing either one, confirming the fix is general, not a patch for the specific file that
+surfaced it: Carver's `duration` became `14030.21s` (its real, correct value), and Shadow
+Country's `book_files` gained all 5 rows, totaling `145462.25s` ≈ 40h24m22s — matching Pryme's
+spreadsheet exactly.
+
+**Regression coverage.** `tests/test_scanner_untagged_mp3_duration.py` builds a real,
+mutagen-parseable, genuinely tag-free MP3 from raw MPEG-1 Layer III frame bytes (a single correct
+128kbps/44100Hz/stereo frame header repeated — enough consecutive synced frames for
+`mutagen.mp3.MPEGInfo` to compute a real duration) — no `ffmpeg` dependency, no checked-in binary
+fixture. Four tests: the fixture itself genuinely reproduces the bug condition (`bool(m) is
+False`, `m.info` real); a single-file book's duration is correctly captured; the folder-name
+fallback still works correctly for a book with literally no tags at all; and — the one that
+directly pins the Shadow Country shape — a 5-part multi-file book where only Part 1 carries a tag
+keeps ALL 5 parts in `book_files`, not just the tagged one. Every test confirmed to fail against
+the pre-fix code first, with the multi-file test reproducing the exact live failure shape
+(`1 == 5`, the other 4 parts logged as dropped) before confirming the fix resolves it.
+
+**Generalizable lesson, worth keeping separate from this specific bug**: a bare `if some_object:`
+truthiness check is not a safe stand-in for `if some_object is not None:` whenever the object's
+type might override `__bool__`/`__len__` in a way that's unrelated to whether it successfully
+represents "the thing we wanted." `mutagen.FileType` overriding truthiness via its `dict` base
+class is exactly this shape — the override exists for a completely different, legitimate reason
+(so a `FileType` can be used like the tag dict it wraps), and nothing about that API contract
+signals "and also, don't rely on `bool()` to mean success." Any future `if <library object>:`
+guard written against an unfamiliar third-party type's return value is worth a moment's check of
+whether that type has a customized `__bool__`/`__len__`/`__eq__` before trusting truthiness as a
+success signal — `is not None` is the only check that's unambiguous regardless.
+
+## 2026-09-26 — Book Detail duration-label bleed and header-row layout race, two real bugs caught live in the same investigation as the scanner truthiness bug above
+
+**Bug A — stale duration text reappearing on close.** `_on_close_clicked` unconditionally calls
+`_cancel_remove()` on every close, not just after an actual remove-confirm was armed.
+`_cancel_remove` used to unconditionally do `self._duration_label.setVisible(True)` regardless of
+whether the CURRENT book has a duration. `setVisible(False)` never clears a label's text — so a
+book with a genuinely missing duration (correctly hidden on load via `_update_duration_label`)
+was still holding whatever the PREVIOUS book's duration text had been, and re-showing it on every
+close surfaced that stale text for the length of the close slide, then correctly hid it again on
+the book's next open. Pryme caught this live, precisely: "Blank when it is opened. Appears when I
+hit close. Shown during close. Open again, blank." Fixed by having `_cancel_remove` delegate to
+`_update_duration_label()` — the one method that already owns this visibility/text decision
+correctly — instead of re-deriving (and getting wrong) the same logic inline. New
+`tests/test_book_detail_duration_label_cancel_remove.py` (4 tests), confirmed to fail against the
+pre-fix code.
+
+**Bug B — two separate layout defects, found via live geometry logging after an initial wrong
+theory was disproven, not guessed at.** Pryme reported the cover thumbnail sitting "6px down"
+after close. My first theory — that this tracked `_duration_label`'s visibility — was wrong, and
+Pryme's own screenshot-overlay math showed why: comparing the SAME book's cover position across
+states (not different books, which is what I'd initially misread the comparison as), the observed
+6px shift was correct, expected vertical centering of a cover shorter than the max 120px box, not
+a bug. A `[COVER-DRIFT]` geometry probe placed at `_on_close_clicked` confirmed this directly —
+the cover's `QRect` never changed at all through that entire handler. But Pryme's follow-up
+correction reframed the actual defect correctly: whether the duration field is empty or not
+should have NO bearing on the cover's position at all, full stop — and asked for the probe to be
+moved to where it could actually see one changing the other. Re-instrumented inside `load_book`
+itself, across the very next event-loop tick, and found it: the cover moved from `(10,10)` to
+`(10,16)` on the tick AFTER `load_book` returned — a real, user-visible pop, not a rendering
+artifact — caused by `_cover_label` having no explicit cross-axis alignment in `header_layout`,
+so Qt's own layout redistribution of leftover row height differed between the synchronous layout
+pass inside `load_book` and Qt's own later deferred pass. Fixed with `Qt.AlignmentFlag.AlignTop`.
+
+**Bug B, part 2 — the tab row itself moved.** After the AlignTop fix, Pryme reported the tab row
+still starting 12px higher for the durationless book than for every other book — and asked to
+insert a temporary fake duration into the DB to isolate it before fixing anything further
+(`UPDATE books SET duration = 3600.0 WHERE ...`, reverted after). That immediately restored the
+tab row to its correct position, isolating the cause precisely: `dur_save_row` (a `QHBoxLayout`
+holding `_duration_label` and `_confirm_remove_label`, both normally hidden for an ordinary,
+non-remove-confirming, durationless book) has no `setRetainSizeWhenHidden` on either child, so
+with BOTH hidden the row collapses to zero height — shrinking `meta_block`'s total height and
+pulling every row below the header, including the tab bar, up with it. Fixed by giving
+`_duration_label` the same `setRetainSizeWhenHidden(True)` policy `_narrator_label`/`_year_label`
+already carry for the identical reason (visible a few lines above it in the same constructor).
+New `tests/test_book_detail_header_row_height.py` (2 tests, built against a REAL `BookDetailPanel`
+widget tree via a direct `_build_ui()` call — this needed real `QHBoxLayout`/`QVBoxLayout`
+geometry behavior a lighter fake couldn't answer), confirmed to fail (147px measured height →
+124px) against the pre-fix code.
+
+**Debugging-discipline note, worth keeping separate from the mechanism above**: the first
+`[COVER-DRIFT]` probe (at `_on_close_clicked`) was built against a WRONG theory and correctly
+showed nothing moved there — that's not a wasted step. Testing the wrong theory and getting a
+clean, honest "no" from it is what made the CORRECT re-instrumentation (inside `load_book`, across
+the deferred tick) targeted rather than another guess. Pryme's correction wasn't just "no, that's
+not it" — it was a specific, checkable claim ("if duration had no effect, position would be
+identical") that named exactly where to look next.
+
 ## 2026-09-25 — Library List mode's slide repainted its whole QListView on every frame — root-caused, fixed with an open-start grab-and-proxy, and a real first-open geometry race caught live and fixed too
 
 Closes the TODO item this same night's earlier Library List/Timeline bisect left open: "no cause

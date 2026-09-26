@@ -81,6 +81,22 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
     `_wire_paint_probe("stats", ...)` call site. This is a real, permanent capability addition
     (not a one-off script) — every future Stats measurement session gets tab attribution for
     free.
+- **[2026-09-26] A Stats Month-tab grid scrolled itself while Book Detail was open over it
+  (Transparent backdrop mode), with no user input at the moment it happened — a single,
+  unreproduced sighting, no repro steps.** Pryme's own framing: "Another rare occurrence that I
+  expect to be able to reproduce since there was no steps involved. Just a random thing." Not
+  investigated — nothing to investigate yet without a repro. If this recurs: note the exact
+  panel/tab/backdrop-mode combination again, and whether anything else was running or any input
+  device was touched in the moments immediately before, before assuming a specific mechanism.
+- **[2026-09-26] A new `_wire_text_stall_probe` (`panels.py`) was built and wired onto
+  `book_detail`'s slide, but no live data was gathered against it yet.** Added after Pryme
+  described a symptom `_wire_paint_probe`'s existing totals-only PAINT line cannot show — "text
+  briefly stuck in places," specifically on Book Detail's CLOSE — logs a per-tick paint timeline
+  per text-bearing widget and flags any gap between a widget's own consecutive paints wider than
+  one 60fps frame. The session moved to the duration/scanner bug reports before this was ever
+  actually run against a live "text stuck" repro. Next step, whenever this is picked back up: open
+  Book Detail, watch for the specific stuck-text symptom live, close, and check the
+  `[PANEL-TIMING] book_detail TEXTSTALL` log line for that exact close.
 
 ### Do NOT extend the Library List/Timeline grab-and-proxy paint-suppression pattern to Book Detail or Stats' Week/Month tabs without new, hard evidence — a deliberate non-fix, not an oversight
 - [2026-09-25] After shipping the Library List mode fix (see TODO_ARCHIVE.md) and confirming the

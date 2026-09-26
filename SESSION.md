@@ -1,3 +1,93 @@
+## Session Summary — 2026-09-26 Session 1 — Extended `_wire_paint_probe` with per-tab/underlay context for Book Detail/Stats measurements, then chased three live-reported Book Detail bugs to real fixes: a duration-bleed across books, a cover/tab-row layout race, and — the big one — a silent scanner truthiness bug that had been dropping duration data (and, for one book, 4 of 5 VT parts) for real, valid, untagged audio files.
+
+**Measurement work first, at Pryme's request** ("We'll get the measurements for opening the book
+details, month tab, week tab and themes tab"): confirmed a panel reopens on whichever tab it was
+last closed on, so "measure Month/Week/Themes" means measuring the PANEL's own slide-open with
+that tab already active, not the tab-switch itself. Added `_stats_probe_context` (`panels.py`,
+mirrors the existing `_book_detail_probe_context`) so `_wire_timing_probe`/`_wire_paint_probe`'s
+`stats` wiring finally carries per-tab attribution — a run with several Stats open/closes had
+no way to attribute any pair back to a specific tab without an exact click-order transcript,
+which isn't reasonable to ask for. First real numbers, captured under real background load
+(Chatterbox running a TTS conversion "full blast"): Book Detail's own open scales sharply by
+underlay (Library 330ms/43ms max frame gap avg, Tags 391ms/102ms, Stats 530ms/239ms, worst
+sample 478ms gap — a genuinely dropped frame), while close is uniform (~307ms/~20ms) across all
+three; Stats'/Settings' own panel-slide showed no such problem regardless of active tab. Logged
+as a worst-case-under-load data point in the existing "smoother under load than idle" TODO
+item — it's real and large, but there's still no idle baseline to compare it against, so it
+doesn't resolve that open question either way. Also built a new `_wire_text_stall_probe`
+(per-tick paint timeline for text-bearing widgets) after Pryme described a symptom the existing
+totals-only PAINT probe genuinely cannot show ("text briefly stuck in places," specifically on
+close) — this is wired but not yet acted on; no live data was gathered against it tonight before
+the session moved to the book-detail bug reports below.
+
+**Bug 1 — duration bleed across books, real and fixed.** Pryme caught this live: a deleted book
+with a genuinely missing duration correctly showed blank on open, but the PREVIOUS book's stale
+duration reappeared the instant Close was clicked, then correctly hid again on the next open.
+Root cause: `_on_close_clicked` unconditionally calls `_cancel_remove()` on every close (not just
+after an actual remove-confirm), and `_cancel_remove` unconditionally did
+`self._duration_label.setVisible(True)` regardless of whether the CURRENT book has a duration —
+`setVisible(False)` never clears text, so the label was still holding whatever the previous book
+had set. Fixed by delegating to `_update_duration_label()`, the one method that already owns this
+decision correctly. New `tests/test_book_detail_duration_label_cancel_remove.py` (4 tests),
+confirmed to fail against the pre-fix code before trusting it.
+
+**Bug 2 — cover pop + tab-row height, two separate defects found via live geometry logging, not
+guessed.** Pryme reported a 6px cover shift and, after a wrong first theory from me (blamed it on
+duration-label visibility; his own screenshot-overlay math correctly showed the "shift" was just
+proper vertical centering of a shorter thumbnail, not a bug) and a genuinely useful correction
+("I am comparing it to itself... if duration field had no affect on it, it would have appeared on
+the [same] coordinates"), a `[COVER-DRIFT]` geometry probe traced through `load_book` found the
+REAL mechanism: the cover moved from `(10,10)` to `(10,16)` on the event-loop tick AFTER
+`load_book` returned — a genuine, user-visible pop, caused by `_cover_label` having no explicit
+cross-axis alignment in `header_layout`, so Qt's own layout redistribution differed between the
+synchronous pass inside `load_book` and its later deferred pass. Fixed with `Qt.AlignTop`. A
+SECOND, separate defect surfaced once Pryme asked to test with a temporary DB-inserted fake
+duration: the tab row sat 12px higher for a durationless book than for every other book — adding
+the fake duration immediately restored the correct position. Root cause: `dur_save_row` (a
+`QHBoxLayout` with no `setRetainSizeWhenHidden`) collapses to zero height when both
+`_duration_label` and `_confirm_remove_label` are hidden, shrinking `meta_block` and pulling the
+tab bar up with it. Fixed by giving `_duration_label` the same `setRetainSizeWhenHidden(True)`
+policy `_narrator_label`/`_year_label` already use for the identical reason. New
+`tests/test_book_detail_header_row_height.py` (2 tests, real `BookDetailPanel` widget tree via
+`_build_ui()`), confirmed to fail (147px → 124px) against the pre-fix code.
+
+**Bug 3 — the real one: a silent scanner truthiness bug losing duration data for valid, untagged
+audio files, confirmed to have ALSO broken a completely different book's VT stitching.** Pryme's
+own hunch ("I suspected it was not an M4B — indeed, single MP3 file") pointed the investigation
+the right direction. `_extract_metadata`'s per-file loop used `if m and m.info:` to decide whether
+`mutagen.File()` successfully parsed a file — but `mutagen.FileType` subclasses `dict` (it IS the
+tag mapping), so a real, fully-parsed, PERFECTLY VALID file with zero ID3/tag data evaluates as an
+empty dict and `bool(m)` is `False`, even though `m.info` (a genuine `MPEGInfo` with a real
+`.length`) is sitting right there. Confirmed directly against the restored real file:
+`bool(m and m.info)` → `False`, `bool(m is not None and m.info)` → `True`, `m.info.length` →
+`14030.21s`. Added logging first (scanner.py previously had NONE at all — every failure here was
+silent by construction) and had Pryme force-rescan before the fix landed, specifically so the
+scan's own trail would confirm the mechanism rather than trusting the fix blind. That rescan
+surfaced something bigger than the one book: **the identical failure hit 4 of 5 MP3 parts in a
+totally unrelated book (Shadow Country)** — only Part1 (which happened to carry a tag) survived
+the old guard. Pryme caught the consequence live, independently, before I'd even connected it:
+Shadow Country's Book Detail showed "8h 18m" against his own spreadsheet's "40h 24m," and Player
+wasn't stitching the parts into one VT at all — `book_files` had only 1 of 5 rows, silently, for
+who knows how long. Fixed the guard to `if m is not None and m.info:`. Force-rescanning again
+after the fix restored both books correctly: Carver's real duration (`14030.21s`), and Shadow
+Country's full 5-row `book_files` (`145462.25s` total ≈ 40h24m, matching Pryme's spreadsheet
+exactly). New `tests/test_scanner_untagged_mp3_duration.py` (4 tests, including one that
+constructs a real 5-part multi-file book from raw MPEG frame bytes — no ffmpeg dependency, no
+checked-in binary fixture — and asserts all 5 parts survive into `book_files`), each confirmed to
+fail against the pre-fix code with the EXACT failure shape from the live report (`1 == 5`,
+4 parts logged as dropped). Commits pending.
+
+**One correction to the debugging-discipline record, worth keeping**: my first theory for the
+cover-pop symptom (duration-label visibility) was wrong, and Pryme's correction wasn't just "no" —
+it was a specific, checkable claim ("if it had no effect, it would appear at the same
+coordinates") that turned out to name the exact right test. The geometry log that actually
+resolved it only existed because the WRONG theory got tested and disproven first (a `[COVER-DRIFT]`
+probe at `_on_close_clicked` showed the cover never moves there at all) — retracting cleanly and
+re-instrumenting at the right point (inside `load_book`, across the deferred tick) is what
+surfaced the real mechanism, not a second guess.
+
+---
+
 ## Session Summary — 2026-09-25 Session 2 — Closed the Timeline-tab CPU-storm saga: throttled TasselOverlay's idle sway tick rate instead of retrying the crashed WA_OpaquePaintEvent fix, then caught and corrected two real measurement mistakes of my own (a cumulative-average `ps` misread, and a single anomalous sample nearly written up as a clean result) before landing on honest, controlled numbers.
 
 **The fix.** Root cause (found earlier the same night, see Session 1 below): `TasselOverlay`'s
