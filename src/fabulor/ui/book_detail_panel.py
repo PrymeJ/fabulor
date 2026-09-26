@@ -234,7 +234,23 @@ class BookDetailPanel(QWidget):
         self._cover_label.setFixedWidth(80)
         self._cover_label.setMaximumHeight(120)
         self._cover_label.setScaledContents(False)
-        header_layout.addWidget(self._cover_label)
+        # AlignTop is load-bearing, not cosmetic (added 2026-09-26). _apply_cover sets a NEW
+        # setFixedHeight(scaled.height()) every load_book, per-book, based on that book's own
+        # cover's real aspect ratio — a cover shorter than 120px pins the label to a shorter
+        # height than the header row's other content may require. Without an explicit alignment,
+        # QHBoxLayout distributes any leftover cross-axis space itself, and WHICH way it
+        # distributes it can differ between the layout pass that runs synchronously inside
+        # _apply_cover/load_book and Qt's own later deferred layout pass (confirmed live: a
+        # geometry probe showed the cover at (10,10) through the end of load_book, then moving to
+        # (10,16) on the very next event-loop tick, for a book with a 108px-tall cover — a real,
+        # user-visible pop right after open, not a rendering artifact). Root-caused live
+        # 2026-09-26 after Pryme reported "6px down" and correctly rejected an initial dead-end
+        # theory blaming the duration label's visibility (that label was confirmed hidden at
+        # EVERY sample in the geometry trace — the correlation with duration state was
+        # coincidental, not causal; see NOTES.md). AlignTop pins the cover to the row's top
+        # unconditionally, removing the redistribution Qt would otherwise do on ANY later pass —
+        # this is the general fix, not a one-off nudge for this specific book's aspect ratio.
+        header_layout.addWidget(self._cover_label, 0, Qt.AlignmentFlag.AlignTop)
 
         meta_block = QVBoxLayout()
         meta_block.setSpacing(2)
@@ -285,6 +301,21 @@ class BookDetailPanel(QWidget):
         self._duration_label.setCursor(Qt.CursorShape.PointingHandCursor)
         self._duration_label.clicked.connect(self._toggle_duration)
         self._duration_label.setContentsMargins(3, 0, 0, 0)
+        # Same fix, same reason, as _narrator_label/_year_label just above (see that block's own
+        # setRetainSizeWhenHidden comment): a book with a genuinely missing duration hides this
+        # label via _update_duration_label, and without this policy the whole dur_save_row
+        # (a QHBoxLayout with no visible children in that case — _confirm_remove_label is ALSO
+        # normally hidden) collapses to zero height, shrinking meta_block's total height and
+        # pulling every row below the header (the tab bar) up with it. Confirmed live 2026-09-26:
+        # Pryme reported the tab row sitting 12px higher for a durationless book than for every
+        # other book, and inserting a fake non-zero duration for the SAME book (temporarily, via
+        # direct DB edit, reverted after) immediately restored the tabs to their correct position
+        # — isolating the cause to this label's hidden-vs-shown height, not anything cover- or
+        # duration-content-related. See NOTES.md for the full trace, including the AlignTop cover
+        # fix this was found alongside (a separate defect, same investigation).
+        _dur_sp = self._duration_label.sizePolicy()
+        _dur_sp.setRetainSizeWhenHidden(True)
+        self._duration_label.setSizePolicy(_dur_sp)
 
         self._confirm_remove_label = _ClickableLabel("Confirm to exclude from the library")
         self._confirm_remove_label.setObjectName("book_detail_confirm_remove")
@@ -2637,7 +2668,19 @@ class BookDetailPanel(QWidget):
     def _cancel_remove(self) -> None:
         self._confirming_remove = False
         self._confirm_remove_label.setVisible(False)
-        self._duration_label.setVisible(True)
+        # Unconditional setVisible(True) here (pre-2026-09-26) re-showed the label whenever
+        # remove-confirm was dismissed, regardless of whether the CURRENT book actually has a
+        # duration. setVisible(False) never clears text, so a book with a genuinely missing
+        # duration (blank on load, via _update_duration_label) would still be holding the
+        # PREVIOUS book's duration text underneath — and every close routes through here (see
+        # _on_close_clicked, which calls this unconditionally, not just when a remove was
+        # actually in progress), so the stale text reappeared on every close for such a book,
+        # then correctly hid again on the next open. Root-caused live 2026-09-26 (Pryme: blank on
+        # open, previous book's duration appears on close, blank again on reopen — see NOTES.md).
+        # _update_duration_label is the one place that owns this decision correctly (hidden with
+        # cursor reset when duration is falsy, else fresh text/cursor for the CURRENT book/speed)
+        # — call it instead of re-deriving the same logic here.
+        self._update_duration_label()
         self._remove_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         if self._remove_cancel_timer:
             self._remove_cancel_timer.stop()
