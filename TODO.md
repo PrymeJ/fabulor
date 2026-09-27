@@ -43,11 +43,8 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
   fresh process per condition, `_wire_paint_probe` or an equivalent live sampler, system load
   toggled between runs (a synthetic load generator, not another app, to keep the comparison
   clean) — not another round of live impressions.
-  - **[2026-09-26] First real `_wire_paint_probe` numbers exist now, under LOAD only — still no
-    idle baseline to compare against, so this does NOT yet resolve the open question.** Fabulor
-    was running Chatterbox's text-to-speech conversion "full blast" at the time (Pryme's own
-    words) — i.e. the condition this same entry's live reports called the SMOOTHER one, not the
-    janky one. Under that load, Book Detail's own slide-open, split by underlay (`_stats_probe_context`/
+  - **[2026-09-26] First real `_wire_paint_probe` numbers, under LOAD only (Chatterbox "full
+    blast").** Book Detail's own slide-open, split by underlay (`_stats_probe_context`/
     `_book_detail_probe_context`, n=8-13 pairs each, nominal 300ms):
     | Underlay (open) | Wall avg | Max frame gap avg | Worst sample |
     |---|---|---|---|
@@ -57,18 +54,57 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
 
     Close direction is uniform and clean across all three underlays (~307-309ms wall, ~20-23ms
     gap) — the cost is entirely on OPEN, and scales with underlay exactly matching the
-    already-documented Stats > Tags > Library severity ranking, but harder than any prior number:
-    a 478ms max frame gap on a 300ms-nominal animation is a genuinely dropped frame, not sampling
-    noise. Stats' and Settings' OWN panel-slide (independent of Book Detail, now split by active
-    tab via the same `_stats_probe_context`) showed NO such problem under the same load — tight,
-    near-nominal timing (17-30ms max gap) regardless of Month/Week/Day/Overall/Themes. So this is
-    specifically "Book Detail is expensive to open when Stats is the underlay," not "Stats itself
-    is slow." **This is a WORST-CASE-UNDER-LOAD data point, not a worse-than-idle one** — no idle
-    measurement of Book-Detail-over-Stats exists yet to compare against; that comparison is
-    deferred to a follow-up session (relaunch fresh with Chatterbox stopped, repeat the identical
-    sequence). Until that idle run exists, this neither confirms nor refutes the "smoother under
-    load" pattern — it only proves the Stats-underlay cost is real and large under at least one
-    condition.
+    already-documented Stats > Tags > Library severity ranking. Stats'/Settings' OWN panel-slide
+    (independent of Book Detail) showed no such problem under the same load — tight, near-nominal
+    timing regardless of active tab. So this is specifically "Book Detail is expensive to open
+    when Stats is the underlay," not "Stats itself is slow."
+
+  - **[2026-09-27] Idle-vs-load comparison completed — three controlled runs, same machine, same
+    sequence, genuinely quiet idle baseline (system freshly booted, settled to loadavg ~0.2-0.4,
+    confirmed via `uptime`/`ps` before measuring — see the two idle rounds below). Result:
+    NOT a clean "load is smoother" story. It's underlay-dependent and, for the underlay Pryme
+    actually complained about, genuinely bimodal — most opens fast and clean, a few severely bad,
+    in the SAME run.**
+
+    Book Detail's open, by underlay, all three conditions (wall / max-frame-gap averages):
+    | Underlay | Idle run 1 | Idle run 2 | Load run (tonight) | Load run (2026-09-26) |
+    |---|---|---|---|---|
+    | Library | 376ms / 85ms | 373ms / 88ms | 350ms / 63ms | 330ms / 43ms |
+    | Tags | 381ms / 89ms | 399ms / 98ms | 334ms / 45ms | 391ms / 102ms |
+    | Stats | 481ms / 180ms | 476ms / 173ms | 433ms / 140ms | 530ms / 239ms |
+
+    Both idle runs (n=9-15 pairs each) landed within a few ms/% of each other on every metric —
+    a real, repeatable idle signal, not noise. **Library is clearly WORSE idle than under load**
+    (max-gap-avg roughly doubles, 43-63ms under load vs. 85-88ms idle, consistent across both
+    idle runs and both load runs) — the opposite of the "smoother under load" framing for this
+    specific underlay. Stats and Tags are closer to a wash — Stats trends somewhat better under
+    load, Tags is mixed between the two load runs.
+
+    **Live report from tonight's load run, checked against the actual per-sample sequence, not
+    just the average — this is the important part.** Pryme's own words: "much better [under
+    load]... the numbers won't back it up." Both halves of that turned out true, for different
+    reasons: CLOSE direction genuinely was better under load (22-25ms gap vs. idle's 33-43ms) —
+    matches the live impression cleanly. OPEN direction is where the average and the felt
+    experience diverge, and printing the CHRONOLOGICAL sequence (not sorting it — see this
+    project's own "report timings in chronological order" rule) shows why: most individual Stats/
+    Tags opens tonight were genuinely fast and clean (327-343ms wall, 32-55ms gap — smoother than
+    either idle run's typical sample), but a handful of severe outliers landed in the SAME run
+    (Stats: 650ms wall/358ms gap and 590ms/293ms gap; Library: 547ms/262ms gap) and pulled the
+    averages back up close to idle's. So "much better" was correct as a description of most
+    individual opens; "the numbers won't back it up" was correct as a description of the
+    AVERAGE, because a plain mean can't distinguish "consistently OK" from "usually great, rarely
+    terrible" — and this run was the latter. **This is now the leading candidate explanation for
+    why the load-vs-idle pattern has read as ambiguous/contradictory across multiple live
+    sessions**: if "smoother under load" is actually "less prone to severe periodic jank spikes,
+    with underlying baseline cost roughly similar or worse," a short live impression would
+    correctly notice the ABSENCE of spikes and call it smoother, while any full-session average
+    would show something closer to a wash or even worse, exactly what's been measured here.
+    **Not yet investigated further**: what causes the spike pattern itself (a scheduler/compositor
+    effect that's somehow LESS likely to land mid-open when the CPU is busier is a plausible but
+    entirely unconfirmed guess — do not treat it as established). A next step, if pursued: capture
+    enough load-condition opens to get a real spike RATE (not just "some runs have one or two"),
+    and try to correlate a spike's timing against anything else logged in the same window
+    (`loadavg1`/`proc_cpu_s` are already in every `[PANEL-TIMING]` line).
   - **Probe capability gap closed the same night, while chasing the above**: `_wire_timing_probe`/
     `_wire_paint_probe`'s `stats` wiring previously carried no per-tab context (unlike
     `book_detail`, which already had `_book_detail_probe_context` for its underlay) — a run with
