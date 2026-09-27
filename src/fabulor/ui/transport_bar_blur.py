@@ -979,9 +979,29 @@ class TransportBarBlurOverlay:
             f"total_ms={(t_blit_done - t_entry) * 1000:.2f}"
         )
 
-    def frost_panel_backdrop(self, panel, rect_in_main_window: QRect):
+    def frost_panel_backdrop(self, panel, rect_in_main_window: QRect, blur: bool = True,
+                              extra_mouse_blocked_widgets=None):
         """Frost the backdrop of a panel that covers the whole content area, by
         giving THAT PANEL its own blurred-pixmap child. For Book Detail.
+
+        `extra_mouse_blocked_widgets` (added 2026-09-24, hover-bleed fix): widgets from the
+        UNDERLYING panel (e.g. Stats' own tab bar) that must get the same
+        WA_TransparentForMouseEvents protection `_grab_and_blur` already gives its own
+        `_all_tracked_widgets()` during `panel.hide()`. See `_grab_and_blur`'s own docstring for
+        why this is needed — this parameter just widens WHICH widgets get it, threaded through
+        untouched.
+
+        `blur=False` (added 2026-09-24, for Book Detail's Transparent backdrop mode): grabs
+        the same underlay region and composites the same translucent wash, but skips the
+        Gaussian blur pass — passed straight through to `_grab_and_blur`. Everything else
+        about this method (the hide/show grab safety, the wash compositing, the `frost` child
+        widget's Z-order/geometry) is IDENTICAL regardless of `blur`; only what's inside the
+        grabbed pixmap differs. See `PanelManager._arm_book_detail_frost_refresh`'s own
+        docstring for why Transparent mode needs this at all: it previously had NO backdrop
+        compositing whatsoever (this whole method is gated on `get_blur_enabled()` at its
+        caller, which is False for Transparent mode) — it relied entirely on the real panel's
+        own live paint blending against the underlay each frame, which the paint-suppression
+        proxy (`_wire_slide_paint_suppression`) cannot replicate with a single static grab.
 
         WHY NOT show_for_panel / self._overlay (found live 2026-08-01, with a
         pixmap dump + a Z-order probe, after a first attempt shipped invisible):
@@ -1048,7 +1068,9 @@ class TransportBarBlurOverlay:
         # below. Passed explicitly (not the default self._active_panel) — the
         # panel THIS call must hide is not the panel driving the transport-bar
         # overlay.
-        blurred = self._grab_and_blur(rect_common, panel)
+        blurred = self._grab_and_blur(
+            rect_common, panel, blur=blur,
+            extra_mouse_blocked_widgets=extra_mouse_blocked_widgets)
 
         # Paint the panel's OWN translucent wash on top of the blurred snapshot,
         # into the pixmap itself.
@@ -1081,7 +1103,34 @@ class TransportBarBlurOverlay:
         frost.setPixmap(blurred)
         # Panel-LOCAL geometry: the frost is a child of the panel, so it is
         # positioned relative to the panel's own top-left, not the window's.
-        panel_top_left = panel.mapFrom(self.main_window, rect_in_main_window.topLeft())
+        #
+        # DO NOT use panel.mapFrom(main_window, ...) here (found live 2026-09-23, via
+        # [FROST-DEBUG] geometry logging — the frost rendered at panel-local x=-300 instead
+        # of 0, invisible until a later call corrected it, reading as an abrupt pop). mapFrom
+        # derives the offset from the panel's CURRENT on-screen position — correct for every
+        # pre-existing call site (always fired at slide-FINISH, once the panel has already
+        # reached its rest position), but wrong for the NEW open-start call
+        # (_start_book_detail_entry, added the same session for the sliding-proxy static-
+        # backdrop fix): at that moment the panel is still off-screen (x=panel_w, not its
+        # rest x=0), so mapFrom computed the offset against the WRONG position and the frost
+        # landed off to the side. Book Detail's rest position is always
+        # main-window-space (0, book_detail_panel_y=32) — hardcoded here, matching
+        # _start_book_detail_entry's own hardcoded book_detail_panel_y — so the LOCAL offset
+        # is computed directly against that fixed rest position instead of the panel's
+        # current (possibly off-screen) one. This makes the frost correct regardless of
+        # whether the panel has actually arrived yet.
+        # Book Detail's rest position is always main-window-space (0, 32) — 32 is
+        # _start_book_detail_entry's own hardcoded book_detail_panel_y (position under the
+        # title bar), duplicated here since panels.py doesn't currently expose it as a named
+        # constant either. Verified against real logged geometry before shipping: settle-time
+        # frost_geom read (0, 24, 300, 508) for a frost rect of (0, 56, 300, 508) — 56 - 32 =
+        # 24, confirming this formula reproduces the pre-existing, already-correct settle-time
+        # result exactly, not just a plausible-looking guess.
+        _BOOK_DETAIL_REST_X = 0
+        _BOOK_DETAIL_REST_Y = 32
+        panel_top_left = QPoint(
+            rect_in_main_window.x() - _BOOK_DETAIL_REST_X,
+            rect_in_main_window.y() - _BOOK_DETAIL_REST_Y)
         frost.setGeometry(QRect(panel_top_left, rect_in_main_window.size()))
         # Bottom of the child stack: under all real content, over the (now
         # redundant, still-painted) wash it already includes.
@@ -2150,11 +2199,41 @@ class TransportBarBlurOverlay:
         painter.end()
         self._overlay.setPixmap(pixmap)
 
-    def _grab_and_blur(self, rect: QRect, panel=None) -> QPixmap:
+    def _grab_and_blur(self, rect: QRect, panel=None, blur: bool = True,
+                        extra_mouse_blocked_widgets=None) -> QPixmap:
         """Grabs main_window with `panel` hidden. `panel` defaults to
         self._active_panel (the transport-bar path's every call site); the
         frost path (frost_panel_backdrop) passes Book Detail explicitly, since
         the panel it must hide is not the one driving this overlay.
+
+        `extra_mouse_blocked_widgets` (added 2026-09-24, hover-bleed fix): additional widgets to
+        give the SAME WA_TransparentForMouseEvents treatment as `_all_tracked_widgets()` gets
+        below, for the duration of `panel.hide()`. Needed because `_all_tracked_widgets()` is
+        scoped to the transport-bar's own widgets (play/prev/next, vol stack) — it has no reason
+        to know about a caller-specific underlay like Stats' tab bar. Without this, hiding Book
+        Detail to photograph its backdrop (frost_panel_backdrop's whole reason for calling this)
+        briefly un-covers whatever real widget sits underneath at the grab instant, and Qt
+        hit-tests against what's ACTUALLY visible — a QTabBar with WA_Hover set (see
+        MainWindow._resync_tab_bar_hover's docstring for the same underlying Qt fact) gets a
+        genuine HoverEnter if the cursor happens to rest over a tab during one of these
+        hide/show ticks (they run repeatedly: open-start, slide-finish, and every 10s via
+        `_arm_book_detail_frost_refresh`'s refresh timer) — and since the NEXT thing to cover it
+        is Book Detail again (occlusion, not a real Leave), State_MouseOver stays stuck True
+        until Book Detail's actual close, at which point native `:hover` just resumes painting
+        that now-genuinely-stale answer, however far the cursor has since moved. Live-reported
+        2026-09-24: "hover where the tabs are, move mouse away, close the panel — that tab still
+        lights up." Confirmed scoped to Frosty/blur mode specifically (Transparent, having no
+        grab at all as of the same session's A/B-plan revert, cannot share this mechanism and
+        needs its own, separate investigation — see TODO.md).
+
+        `blur=False` (added 2026-09-24, for Book Detail's Transparent backdrop mode — see
+        frost_panel_backdrop's own docstring) skips the padding/blur/crop tail entirely and
+        returns a plain crop of the grab at `rect`. The padding (`pad = int(_BLUR_RADIUS * 4)`,
+        below) exists ONLY to survive QGraphicsBlurEffect's edge-transparency artifact — with no
+        blur pass, there's nothing to compensate for, so padding would be pure wasted grab area
+        for no benefit. Every hide/show/cursor/focus/mouse-transparency safety mechanism in this
+        method runs identically regardless of `blur` — Transparent mode still needs the SAME
+        safe grab of what's behind the panel, it just doesn't need that grab blurred afterward.
 
         COLLAPSED BACK 2026-08-15 from a content_container/main_window split
         that lived here 2026-08-14–15. That split's premise — grab
@@ -2215,7 +2294,7 @@ class TransportBarBlurOverlay:
             self.main_window.mapFromGlobal(self._common_ancestor.mapToGlobal(rect.topLeft())),
             rect.size(),
         )
-        pad = int(_BLUR_RADIUS * 4)
+        pad = int(_BLUR_RADIUS * 4) if blur else 0
         padded_rect = main_window_rect.adjusted(-pad, -pad, pad, pad)
 
         t0 = time.perf_counter()
@@ -2276,8 +2355,11 @@ class TransportBarBlurOverlay:
                 # only stops them being hit-test targets while the panel that
                 # should be covering them is temporarily away.
                 _mouse_blocked = []
-                for _w in self._all_tracked_widgets():
-                    if not _w.testAttribute(Qt.WA_TransparentForMouseEvents):
+                _widgets_to_block = list(self._all_tracked_widgets())
+                if extra_mouse_blocked_widgets:
+                    _widgets_to_block.extend(extra_mouse_blocked_widgets)
+                for _w in _widgets_to_block:
+                    if _w is not None and not _w.testAttribute(Qt.WA_TransparentForMouseEvents):
                         _w.setAttribute(Qt.WA_TransparentForMouseEvents, True)
                         _mouse_blocked.append(_w)
                 # FOCUS-STRAND FIX (2026-09-09). Same shape as the cursor/mouse-transparency
@@ -2318,6 +2400,20 @@ class TransportBarBlurOverlay:
                 QApplication.restoreOverrideCursor()
             self._grab_suppress_until = time.perf_counter() + _GRAB_FEEDBACK_SUPPRESS_S
         t1 = time.perf_counter()
+
+        if not blur:
+            # pad=0 above means padded_rect == main_window_rect, so `src` is already
+            # exactly the requested (unpadded, unblurred) region — nothing left to do.
+            # Deliberately does NOT call _blur_pad_crop: that function unconditionally
+            # calls _blur_pixmap, and threading a blur=False branch through its own
+            # padding-artifact-compensation logic (built and tuned specifically for the
+            # blur case) would touch more of that fragile, measurement-tuned code than
+            # this short-circuit needs to.
+            if _GRAB_TRACE_ENABLED:
+                logger.warning(
+                    f"[PERF] _grab_and_blur tag=transport rect={rect} blur=False "
+                    f"grab_ms={(t1 - t0) * 1000:.2f}")
+            return src
 
         return self._blur_pad_crop(src, rect, pad, t0=t0, t1=t1,
                                    padded_rect=padded_rect, tag="transport")

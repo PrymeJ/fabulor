@@ -225,3 +225,7 @@ __marimo__/
 
 # Claude Code local settings
 .claude/settings.local.json
+
+# Raw A/B test run data (tools/book_detail_backdrop_ab_test.py) — reproducible from a live run,
+# not something that belongs versioned; findings derived from it live in NOTES.md/TODO.md instead.
+tools/ab_results/

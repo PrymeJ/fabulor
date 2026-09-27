@@ -5,10 +5,10 @@ import os
 import pstats
 import time
 from typing import TYPE_CHECKING
-from PySide6.QtWidgets import QWidget, QHBoxLayout, QGridLayout
+from PySide6.QtWidgets import QWidget, QHBoxLayout, QGridLayout, QLabel
 from PySide6.QtWidgets import QApplication, QListWidget, QAbstractSpinBox, QScrollArea
 from PySide6.QtCore import QPoint, QRect, QPropertyAnimation, QAbstractAnimation, QTimer, Qt, QObject, QEvent
-from PySide6.QtGui import QCursor
+from PySide6.QtGui import QCursor, QPixmap, QPainter, QColor
 from .title_bar import ThemeItem
 from .transport_bar_blur import TransportBarBlurOverlay, panel_rect_in_common_space
 from .stats_panel import StatsRowListView
@@ -47,6 +47,73 @@ _GRAB_TRACE_ENABLED = os.environ.get("FABULOR_GRAB_TRACE") == "1"
 # called once from app.py after PanelManager + book_detail_panel are both built) so
 # no per-panel edits were needed. Remove once the investigation is resolved.
 _PANEL_TIMING_ENABLED = os.environ.get("FABULOR_PANEL_TIMING", "1") != "0"
+
+# Moved up from its original position further down this file (immediately after
+# _wire_timing_probe) on 2026-09-26 so _wire_text_stall_probe — defined earlier in this file —
+# can reference it directly instead of duplicating the literal. A plain module-level assignment
+# referencing a name defined LATER in the same file raises NameError at import time, not just at
+# call time, since Python evaluates top-level statements in order — this was caught by the full
+# test suite failing collection on every test file that imports panels.py at all, not just ones
+# exercising the new probe.
+_JANK_FRAME_BUDGET_MS = 16.7  # one 60fps frame; a gap wider than this is a dropped/late frame
+
+
+def _book_detail_probe_context(panel_manager: "PanelManager") -> str:
+    """Richer replacement for the bare `panel_manager._book_detail_underlay` string every
+    probe log line used to read directly, added 2026-09-25 after a live test round couldn't be
+    reconciled against Pryme's own lived experience ("Tags with a few thumbnails opens Book
+    Detail less jankily than Stats") — the existing log lines recorded WHICH underlay but
+    neither OPEN-vs-CLOSE direction nor, for Tags specifically, how many thumbnails were
+    actually loaded at the time. Both turned out to matter: re-analysis of that round found
+    OPEN is ~3.7x more filter-dispatch-expensive than CLOSE regardless of source (real, not
+    noise — see NOTES.md), and Tags' book count was never recorded at all, so "was this a
+    heavily-loaded tag or a small one" could not be answered after the fact. Returns a single
+    formatted string (not a tuple/dict) so every existing `from={ctx!r}` call site needs no
+    structural change — only this function's own body needs to grow if a future investigation
+    needs another dimension recorded.
+
+    Direction is read from the animation's OWN end value, not inferred from before/after state,
+    per this file's established preference for reading intent from where it's actually decided
+    (`_open_book_detail`/`_close_book_detail_flow` each call `setEndValue` before `start()` —
+    see those methods) rather than guessing from a snapshot taken after the fact."""
+    underlay = panel_manager._book_detail_underlay
+    anim = panel_manager.book_detail_panel_animation
+    direction = "?"
+    if anim is not None:
+        try:
+            direction = "open" if anim.endValue().x() == 0 else "close"
+        except (RuntimeError, AttributeError):
+            direction = "?"
+    detail = ""
+    if underlay == "tags":
+        tags_panel = getattr(panel_manager, "tags_panel", None)
+        book_grid = getattr(tags_panel, "_book_grid", None) if tags_panel is not None else None
+        thumbs = getattr(book_grid, "_thumbs", None) if book_grid is not None else None
+        current_tag = getattr(tags_panel, "_current_tag", None) if tags_panel is not None else None
+        if thumbs is not None:
+            detail = f", tag={current_tag!r}, books={len(thumbs)}"
+    return f"{underlay}({direction}{detail})"
+
+
+def _stats_probe_context(panel_manager: "PanelManager") -> str:
+    """Which Stats tab is active at the moment the stats panel's own slide starts, added
+    2026-09-26 to close a real measurement gap: Pryme asked to measure the panel opening with
+    Month/Week/Themes as the active tab (a panel reopens on whichever tab it was last closed on
+    — this is about the SLIDE cost with that tab loaded, not the tab-switch itself), but the
+    stats `[PANEL-TIMING]`/`[PAINT]` lines carried no tab label, so a run with several stats
+    open/closes couldn't be split back into "which pair was Month, which was Week" after the
+    fact — confirmed live the same night: a run logged 12 stats open/close pairs with no way to
+    attribute any of them to a specific tab without an exact click-order transcript, which
+    Pryme correctly declined to reconstruct from memory. Read the SAME way
+    _book_detail_probe_context reads direction — off real Qt state at start time, not inferred
+    from history — via `stats_panel.tabs.tabText(currentIndex())`."""
+    tabs = getattr(panel_manager.stats_panel, "tabs", None)
+    if tabs is None:
+        return "?"
+    try:
+        return tabs.tabText(tabs.currentIndex())
+    except (RuntimeError, AttributeError):
+        return "?"
 
 
 def install_panel_timing_probe(panel_manager: "PanelManager") -> None:
@@ -100,20 +167,102 @@ def install_panel_timing_probe(panel_manager: "PanelManager") -> None:
             continue
         # book_detail is the one panel openable from two different underlays
         # (Library or Stats/Tags) — this is exactly what the investigation this
-        # probe was built for needs to distinguish, so it alone gets a context
-        # callback read at start time rather than a static name.
-        context_fn = (
-            (lambda pm=panel_manager: pm._book_detail_underlay)
-            if name == "book_detail" else None
-        )
+        # probe was built for needs to distinguish, so it gets a context
+        # callback read at start time rather than a static name. stats gets the
+        # same treatment as of 2026-09-26 (see _stats_probe_context) — a panel
+        # reopens on whichever tab it was last closed on, and a run with several
+        # stats open/closes had no way to attribute any single pair to a specific
+        # tab (Month/Week/Day/...) after the fact without an exact click-order
+        # transcript, which isn't a reasonable thing to ask Pryme to reconstruct
+        # from memory.
+        if name == "book_detail":
+            context_fn = lambda pm=panel_manager: _book_detail_probe_context(pm)
+        elif name == "stats":
+            context_fn = lambda pm=panel_manager: _stats_probe_context(pm)
+        else:
+            context_fn = None
         _wire_timing_probe(name, anim, context_fn)
 
+    # INSTALL-ORDER NOTE: both diagnostic probes below wrap book_detail_panel_animation.start()
+    # AFTER _wire_slide_paint_suppression already has (that production hook is wired in
+    # main_window_builders.build_book_detail_panel, which runs before this function is ever
+    # called — see that call site's own comment). This is required, not incidental: each
+    # wrapper's orig_start closure captures whatever anim.start currently IS at install time, so
+    # installing suppression first means a probe's own timing correctly includes the
+    # suppression's setup cost (the grab + proxy positioning is real work that belongs in the
+    # measured wall-clock number). Installing a probe BEFORE suppression would have the
+    # suppression's grab/proxy-setup run AFTER the probe's own START log line, making the
+    # logged context appear to fire before the panel is actually ready to slide. Do not reorder
+    # main_window_builders.py's call relative to this function without re-checking this.
+    # 2026-09-25 correction: an earlier version of this wiring pointed _wire_paint_probe at
+    # Library/Stats/Tags' OWN open/close slides, on the assumption that was what Pryme's
+    # "Stats worst, Library best, Tags between" report meant. Pryme corrected this directly:
+    # "It's not these panel openings, but the book details opening over these panels." The
+    # thing to measure is Book Detail's OWN slide, split out by which panel it opened over —
+    # which this probe already runs (it's the one panel _wire_paint_probe covered from the
+    # start), just without the underlay recorded in its log line. Fixed below by passing a
+    # context_fn through, same mechanism _wire_timing_probe already uses for this exact panel
+    # (pm._book_detail_underlay) — see install_panel_timing_probe's book_detail wiring above.
     if panel_manager.book_detail_panel_animation is not None:
         _wire_paint_probe("book_detail", panel_manager.book_detail_panel_animation,
-                           panel_manager.book_detail_panel)
+                           panel_manager.book_detail_panel,
+                           context_fn=lambda pm=panel_manager: _book_detail_probe_context(pm))
+        # 2026-09-25: paint cost was checked (above) and ruled out — identical across
+        # Library/Stats/Tags. The real signal is in _wire_timing_probe's max_frame_gap/
+        # jank_frame_rate, which DOES track the reported Stats > Tags > Library ranking. This
+        # probe tests the next candidate: are Stats'/Tags' app-wide QApplication event filters
+        # (StatsPanel.eventFilter, TagManagerWidget.eventFilter, hover_tracker.py's
+        # ScrollHoverTracker/GridHoverTracker) competing for main-thread time DURING the slide,
+        # delaying the animation's own ticks. See NOTES.md, "Severity ranking now measured..."
+        _wire_event_filter_cost_probe(panel_manager.book_detail_panel_animation, panel_manager,
+                                       name="book_detail")
+        # 2026-09-25, third pass: paint cost, app-level event-filter dispatch cost, and every
+        # Stats-owned periodic timer have all been checked and ruled out (see NOTES.md). None of
+        # them explain why Stats' underlay produces worse frame-delivery timing than Library's or
+        # Tags'. Next candidate, a different MECHANISM than anything checked so far: does Qt's
+        # own event dispatch — walking a deeper widget tree to deliver ordinary events (resize,
+        # move, polish requests, hover-related events, etc.), independent of what any single
+        # widget's OWN handler code does with them — cost measurably more for Stats' tree than
+        # Library's during the slide? This is about DISPATCH VOLUME/COST, not paint cost or
+        # filter cost, which is why a new probe is needed rather than reusing either existing one.
+        _wire_event_dispatch_probe("book_detail", panel_manager.book_detail_panel_animation,
+                                    panel_manager.book_detail_panel,
+                                    context_fn=lambda pm=panel_manager: _book_detail_probe_context(pm))
+        # 2026-09-26: Pryme described a symptom none of the above can see — "text briefly stuck
+        # in places" specifically on CLOSE, which read as clean on _wire_paint_probe's per-widget
+        # TOTALS (a widget that stalls then catches up produces the same total as one that
+        # painted evenly). See _wire_text_stall_probe's own docstring.
+        _wire_text_stall_probe("book_detail", panel_manager.book_detail_panel_animation,
+                                panel_manager.book_detail_panel,
+                                context_fn=lambda pm=panel_manager: _book_detail_probe_context(pm))
+
+    # Library's/Stats' OWN slide, added 2026-09-25 — a genuinely new question, not a repeat of
+    # the "paint cost identical across all three" finding above. That finding was about Book
+    # Detail's OWN widget tree painting the same regardless of which panel it opened over; it
+    # never measured Library's or Stats' own panel-open animation directly, because the whole
+    # investigation up to this point was specifically about Book Detail's slide (Pryme's own
+    # correction, 2026-09-25: "It's not these panel openings, but the book details opening over
+    # these panels" — see the comment block above). Tonight's Library-List/Timeline-Streak
+    # thread is different: those ARE about the panel's own open/close, with no Book Detail
+    # involved, and have never been measured past the wall-clock/frame-gap numbers
+    # _wire_timing_probe already gives every panel above. Reuses the exact same three probes,
+    # unmodified — all three already take `anim`/`panel` generically, none of their internals
+    # assume book_detail specifically.
+    if panel_manager.library_panel_animation is not None and panel_manager.library_panel is not None:
+        _wire_paint_probe("library", panel_manager.library_panel_animation, panel_manager.library_panel)
+        _wire_event_filter_cost_probe(panel_manager.library_panel_animation, panel_manager,
+                                       name="library")
+        _wire_event_dispatch_probe("library", panel_manager.library_panel_animation, panel_manager.library_panel)
+    if panel_manager.stats_panel_animation is not None and panel_manager.stats_panel is not None:
+        _wire_paint_probe("stats", panel_manager.stats_panel_animation, panel_manager.stats_panel,
+                           context_fn=lambda pm=panel_manager: _stats_probe_context(pm))
+        _wire_event_filter_cost_probe(panel_manager.stats_panel_animation, panel_manager,
+                                       name="stats")
+        _wire_event_dispatch_probe("stats", panel_manager.stats_panel_animation, panel_manager.stats_panel,
+                                    context_fn=lambda pm=panel_manager: _stats_probe_context(pm))
 
 
-def _wire_paint_probe(name: str, anim: QPropertyAnimation, panel: QWidget) -> None:
+def _wire_paint_probe(name: str, anim: QPropertyAnimation, panel: QWidget, context_fn=None) -> None:
     """Per-widget Paint-event cost during a single panel animation, added
     2026-09-23 after four other measurement layers (wall-clock duration,
     valueChanged frame-gap, own-process CPU%, external compositor-load
@@ -133,17 +282,24 @@ def _wire_paint_probe(name: str, anim: QPropertyAnimation, panel: QWidget) -> No
     already-built panel, but not assumed impossible) will not be tracked —
     acceptable for this diagnostic, not correctness-critical.
 
+    context_fn (added 2026-09-25, mirrors _wire_timing_probe's identical parameter): called
+    once at start and its result stashed, so the finish-time PAINT log line can report WHICH
+    underlay this Book Detail slide opened over (Library/Stats/Tags) — captured at start, not
+    finish, same reasoning as _wire_timing_probe: the underlay is the thing that was true when
+    the slide began, not whatever might be true by the time it settles.
+
     Times the widget's real paintEvent via a monkey-patched wrapper (same
     start/finished shape as _wire_timing_probe's QPropertyAnimation.start
     hook) rather than the event filter alone — the filter tells us Paint
     events ARRIVED and roughly when, but not how long the widget's own
     paintEvent took to run, which is the actual cost being hunted."""
     state = {"active": False, "per_widget_ms": None, "per_widget_calls": None,
-             "orig_paint_events": None}
+             "orig_paint_events": None, "context": None}
 
     def _on_start():
         if not _PANEL_TIMING_ENABLED:
             return
+        state["context"] = context_fn() if context_fn is not None else None
         widgets = [panel] + panel.findChildren(QWidget)
         per_widget_ms = {}
         per_widget_calls = {}
@@ -190,12 +346,14 @@ def _wire_paint_probe(name: str, anim: QPropertyAnimation, panel: QWidget) -> No
         total_calls = sum(per_calls.values())
         top = sorted(per_ms.items(), key=lambda kv: kv[1], reverse=True)[:8]
         top_str = ", ".join(f"{k}={v:.1f}ms/{per_calls[k]}x" for k, v in top if v > 0)
+        ctx = f" from={state['context']!r}" if state["context"] is not None else ""
         logger.warning(
             f"[PANEL-TIMING] {name} PAINT total_paint_ms={total_ms:.1f} "
-            f"total_paint_calls={total_calls} top={top_str}")
+            f"total_paint_calls={total_calls}{ctx} top={top_str}")
         state["per_widget_ms"] = None
         state["per_widget_calls"] = None
         state["orig_paint_events"] = None
+        state["context"] = None
 
     orig_start = anim.start
 
@@ -207,7 +365,365 @@ def _wire_paint_probe(name: str, anim: QPropertyAnimation, panel: QWidget) -> No
     anim.finished.connect(_on_finished)
 
 
-_JANK_FRAME_BUDGET_MS = 16.7  # one 60fps frame; a gap wider than this is a dropped/late frame
+# Widget-type prefixes this probe watches per-tick, added 2026-09-26 after Pryme described a
+# symptom _wire_paint_probe's totals-only PAINT line cannot show: "text briefly stuck in places"
+# during a Book Detail CLOSE that otherwise measured clean on wall/max_frame_gap. A per-widget
+# TOTAL across the whole animation cannot distinguish "painted evenly throughout" from "painted
+# nothing for 100ms then caught up" — both produce the same total. This probe logs every
+# individual paintEvent call's timestamp (ms since animation start) and the gap since THAT SAME
+# widget's own previous paint, so a stall specific to one widget — while its siblings and the
+# panel's own position keep moving — becomes visible in the data instead of averaged away.
+# Scoped to text-bearing widgets specifically (matched by class-name prefix, not exact
+# objectName, so it survives an object being unnamed or renamed) since "text stuck" names the
+# content class, not a specific instance.
+_TEXT_STALL_WIDGET_PREFIXES = ("_ElidingLineEdit", "QLabel", "ScrollingLabel", "FreezableLabel")
+# A gap this wide between a widget's own consecutive paints, DURING an otherwise-active
+# animation, is what "stuck" would actually look like — matches _JANK_FRAME_BUDGET_MS's own
+# one-frame-at-60fps standard, since a single missed frame for one widget is already the
+# visible unit Pryme is describing (not a multi-frame freeze).
+_TEXT_STALL_GAP_MS = _JANK_FRAME_BUDGET_MS
+
+
+def _wire_text_stall_probe(name: str, anim: QPropertyAnimation, panel: QWidget, context_fn=None) -> None:
+    """Per-tick paint timeline for text-bearing widgets during a single panel animation — see
+    the module-level comment above _TEXT_STALL_WIDGET_PREFIXES for why this exists and what gap
+    _wire_paint_probe's totals-only PAINT line cannot show.
+
+    Same install/teardown shape as _wire_paint_probe (monkeypatched paintEvent per widget,
+    wrapped/restored around anim.start()/finished, never left installed) — deliberately a
+    SEPARATE probe rather than folded into _wire_paint_probe, so this stays optional/removable
+    without touching the already-relied-on totals probe, and so its extra per-call bookkeeping
+    (a timestamp list per widget, not just a running sum) doesn't add overhead to every panel
+    _wire_paint_probe already covers when this diagnostic isn't the question being asked.
+
+    Logs ONE line per animation: which watched widgets had a stall (a gap between two of their
+    own consecutive paints wider than _TEXT_STALL_GAP_MS), when in the slide it happened (ms
+    since anim start), and how wide. A clean run (no widget ever stalled) logs a single
+    confirming line rather than nothing, so a quiet log can be read as "checked, found nothing"
+    rather than mistaken for "never ran"."""
+    state = {"active": False, "per_widget_ticks": None, "orig_paint_events": None,
+             "context": None, "t0": None}
+
+    def _on_start():
+        if not _PANEL_TIMING_ENABLED:
+            return
+        state["context"] = context_fn() if context_fn is not None else None
+        state["t0"] = time.perf_counter()
+        widgets = [panel] + panel.findChildren(QWidget)
+        per_widget_ticks = {}
+        orig_paint_events = {}
+        for w in widgets:
+            cls_name = type(w).__name__
+            if not any(cls_name.startswith(p) for p in _TEXT_STALL_WIDGET_PREFIXES):
+                continue
+            key = f"{cls_name}#{w.objectName() or id(w)}"
+            per_widget_ticks[key] = []
+            orig = w.paintEvent
+            orig_paint_events[w] = orig
+
+            def _make_wrapper(orig_fn, k):
+                def _wrapped(event, _orig=orig_fn, _k=k):
+                    result = _orig(event)
+                    if state["active"]:
+                        per_widget_ticks[_k].append((time.perf_counter() - state["t0"]) * 1000)
+                    return result
+                return _wrapped
+
+            w.paintEvent = _make_wrapper(orig, key)
+
+        state["active"] = True
+        state["per_widget_ticks"] = per_widget_ticks
+        state["orig_paint_events"] = orig_paint_events
+
+    def _on_finished():
+        if not state["active"]:
+            return
+        state["active"] = False
+        for w, orig in state["orig_paint_events"].items():
+            try:
+                w.paintEvent = orig
+            except RuntimeError:
+                pass  # widget was deleted mid-animation; nothing to restore
+
+        stalls = []
+        for key, ticks in state["per_widget_ticks"].items():
+            for prev, cur in zip(ticks, ticks[1:]):
+                gap = cur - prev
+                if gap > _TEXT_STALL_GAP_MS:
+                    stalls.append((key, prev, gap))
+
+        ctx = f" from={state['context']!r}" if state["context"] is not None else ""
+        if stalls:
+            stalls.sort(key=lambda s: -s[2])
+            stalls_str = ", ".join(f"{k}@{t:.0f}ms+{g:.0f}ms" for k, t, g in stalls[:8])
+            logger.warning(
+                f"[PANEL-TIMING] {name} TEXTSTALL n={len(stalls)}{ctx} "
+                f"watched={len(state['per_widget_ticks'])} stalls={stalls_str}")
+        else:
+            logger.warning(
+                f"[PANEL-TIMING] {name} TEXTSTALL n=0{ctx} "
+                f"watched={len(state['per_widget_ticks'])} (no stall > {_TEXT_STALL_GAP_MS}ms found)")
+        state["per_widget_ticks"] = None
+        state["orig_paint_events"] = None
+        state["context"] = None
+        state["t0"] = None
+
+    orig_start = anim.start
+
+    def _traced_start(*args, **kwargs):
+        _on_start()
+        return orig_start(*args, **kwargs)
+
+    anim.start = _traced_start
+    anim.finished.connect(_on_finished)
+
+
+def _wire_event_filter_cost_probe(anim: QPropertyAnimation, panel_manager: "PanelManager",
+                                   name: str = "book_detail") -> None:
+    """Measures app-wide QApplication event filter dispatch cost DURING a single panel-slide
+    animation — originally Book Detail-only (added 2026-09-25, see below), generalized the same
+    day to also cover Library's/Stats' OWN slide (`name` parameter, default `"book_detail"` for
+    backward compatibility with the original call site) once the Book-Detail-specific
+    investigation this was built for gave way to a broader question: is the SAME app-wide filter
+    cost also present during Library's/Stats' own open/close, not just while Book Detail slides
+    over them? `name` controls both the log line's prefix and whether Book-Detail-specific
+    context (`_book_detail_probe_context`, meaningless for a non-Book-Detail slide) is read.
+
+    Original motivation (2026-09-25, Book-Detail-specific): added after _wire_paint_probe ruled
+    out paint cost as the explanation for Pryme's reported Stats > Tags > Library jank severity
+    ranking (paint cost was identical across all three; _wire_timing_probe's max_frame_gap/
+    jank_frame_rate tracked the ranking instead — see NOTES.md, "Severity ranking now measured,
+    not just felt"). This probe tests the next candidate directly: do StatsPanel.eventFilter /
+    TagManagerWidget.eventFilter / hover_tracker.py's ScrollHoverTracker/GridHoverTracker — all
+    installed via QApplication.instance().installEventFilter(self), confirmed app-wide, confirmed
+    still live during a Book Detail slide (Book Detail occludes rather than hides its underlay,
+    so hideEvent never fires — see StatsPanel's own OCCLUSION GUARD comment) — actually cost
+    measurable main-thread time WHILE the slide's own animation ticks are trying to run.
+
+    Wraps each candidate's live INSTANCE eventFilter method (never the class — see this
+    session's own earlier finding: class-level monkeypatching of an already-installed
+    eventFilter is silently invisible to Qt's C++ dispatch, which binds to the method resolved
+    at installEventFilter() call time) with a timing wrapper, ONLY between this animation's
+    start and finish — same scoped-install/scoped-remove shape as _wire_paint_probe, so nothing
+    is left wrapped outside the measurement window.
+
+    Candidates: StatsPanel.eventFilter (panel_manager.stats_panel), TagManagerWidget.eventFilter
+    (panel_manager.tags_panel), Tags' own two hover trackers (_row_hover, _thumb_hover — both
+    ScrollHoverTracker/GridHoverTracker instances, also app-wide, per this file's TODO.md
+    "Remaining open question" note on hover_tracker.py never having gotten an occlusion guard),
+    and (added same day, second pass) StatsPanel._tassel._on_sway_tick — a ~30fps QTimer tick
+    unique to Stats, checked after the eventFilter-only version of this probe ruled out filter
+    cost as the severity-ranking explanation. Stats has no hover_tracker instance of its own
+    (confirmed by grep, 2026-09-25 — see NOTES.md's "RETRACTED... Stats installs TWO app-wide
+    filters" correction).
+    """
+    candidates = []  # (key, obj, attr_name) — attr_name lets the wrapper generalize past eventFilter
+    stats_panel = getattr(panel_manager, "stats_panel", None)
+    if stats_panel is not None and hasattr(stats_panel, "eventFilter"):
+        candidates.append(("stats_panel", stats_panel, "eventFilter"))
+    tags_panel = getattr(panel_manager, "tags_panel", None)
+    if tags_panel is not None and hasattr(tags_panel, "eventFilter"):
+        candidates.append(("tags_panel", tags_panel, "eventFilter"))
+        for tracker_attr in ("_row_hover", "_thumb_hover"):
+            tracker = getattr(tags_panel, tracker_attr, None)
+            if tracker is not None and hasattr(tracker, "eventFilter"):
+                candidates.append((f"tags_panel.{tracker_attr}", tracker, "eventFilter"))
+    # 2026-09-25, added after the eventFilter-only version of this probe ruled out filter cost
+    # as the explanation (Tags' filter cost is 7x Stats' yet Tags is LESS janky — see NOTES.md).
+    # Next candidate: TasselOverlay._sway_timer, a ~30fps (33ms) QTimer independent of the
+    # shared 200ms ui_timer, unique to Stats (Library/Tags have no equivalent). Its own
+    # _on_sway_tick has an isVisible() safety net, but that checks the TasselOverlay WIDGET's
+    # own Qt visibility flag, not whether Book Detail is occluding it — and per this session's
+    # established finding, occlusion never fires hideEvent, so this timer may keep ticking (and
+    # calling self.update(), a real repaint request) the entire time Book Detail is open on top
+    # of Stats. Checking whether it actually does, not assuming.
+    tassel = getattr(stats_panel, "_tassel", None) if stats_panel is not None else None
+    if tassel is not None and hasattr(tassel, "_on_sway_tick"):
+        candidates.append(("stats_panel._tassel._on_sway_tick", tassel, "_on_sway_tick"))
+
+    state = {"active": False, "per_obj_ms": None, "per_obj_calls": None, "orig_methods": None}
+
+    def _on_start():
+        if not _PANEL_TIMING_ENABLED:
+            return
+        per_obj_ms = {}
+        per_obj_calls = {}
+        orig_methods = {}
+        for key, obj, attr_name in candidates:
+            per_obj_ms[key] = 0.0
+            per_obj_calls[key] = 0
+            orig = getattr(obj, attr_name)
+            orig_methods[(obj, attr_name)] = orig
+
+            if attr_name == "eventFilter":
+                def _make_wrapper(orig_fn, k):
+                    def _wrapped(watched, event, _orig=orig_fn, _k=k):
+                        t0 = time.perf_counter()
+                        result = _orig(watched, event)
+                        dt_ms = (time.perf_counter() - t0) * 1000
+                        per_obj_ms[_k] += dt_ms
+                        per_obj_calls[_k] += 1
+                        return result
+                    return _wrapped
+            else:
+                # A timer-tick callback (e.g. TasselOverlay._on_sway_tick) — no args, no
+                # QObject.eventFilter signature to preserve.
+                def _make_wrapper(orig_fn, k):
+                    def _wrapped(_orig=orig_fn, _k=k):
+                        t0 = time.perf_counter()
+                        result = _orig()
+                        dt_ms = (time.perf_counter() - t0) * 1000
+                        per_obj_ms[_k] += dt_ms
+                        per_obj_calls[_k] += 1
+                        return result
+                    return _wrapped
+
+            setattr(obj, attr_name, _make_wrapper(orig, key))
+
+        state["active"] = True
+        state["per_obj_ms"] = per_obj_ms
+        state["per_obj_calls"] = per_obj_calls
+        state["orig_methods"] = orig_methods
+
+    def _on_finished():
+        if not state["active"]:
+            return
+        state["active"] = False
+        for (obj, attr_name), orig in state["orig_methods"].items():
+            try:
+                setattr(obj, attr_name, orig)
+            except RuntimeError:
+                pass  # object was deleted mid-animation; nothing to restore
+
+        per_ms = state["per_obj_ms"]
+        per_calls = state["per_obj_calls"]
+        total_ms = sum(per_ms.values())
+        total_calls = sum(per_calls.values())
+        # ctx is only meaningful for book_detail (which underlay, open/close, tag/book-count —
+        # see _book_detail_probe_context's own docstring); for library/stats measuring their
+        # OWN slide there is no "underlay" concept, so ctx stays empty rather than misleadingly
+        # calling into book-detail-specific state that has nothing to do with this animation.
+        ctx = _book_detail_probe_context(panel_manager) if name == "book_detail" else None
+        ctx_str = f" from={ctx!r}" if ctx is not None else ""
+        detail = ", ".join(f"{k}={per_ms[k]:.2f}ms/{per_calls[k]}x" for k in per_ms if per_calls[k] > 0)
+        logger.warning(
+            f"[PANEL-TIMING] {name} EVENTFILTER total_filter_ms={total_ms:.2f} "
+            f"total_filter_calls={total_calls}{ctx_str} detail={detail}")
+        state["per_obj_ms"] = None
+        state["per_obj_calls"] = None
+        state["orig_methods"] = None
+
+    orig_start = anim.start
+
+    def _traced_start(*args, **kwargs):
+        _on_start()
+        return orig_start(*args, **kwargs)
+
+    anim.start = _traced_start
+    anim.finished.connect(_on_finished)
+
+
+class _EventDispatchCounter(QObject):
+    """Counts every event Qt dispatches to a watched widget, by QEvent.Type, and times the
+    total filter-chain overhead of intercepting them. Real installEventFilter usage (unlike
+    _wire_paint_probe, which wraps paintEvent directly and whose own docstring's "installs a
+    QObject event filter" line is a leftover from an earlier draft — not a bug worth a separate
+    fix commit, noted here so the discrepancy isn't mistaken for something broken). A genuine
+    eventFilter is the right tool here because the question is Qt's OWN event-dispatch volume
+    across every event type, not any one widget's paintEvent/eventFilter handler cost — those
+    were already checked and ruled out (see NOTES.md, 2026-09-25 entries) and are a different
+    mechanism than what this class measures."""
+
+    def __init__(self, counts: dict, total_ms_box: list):
+        super().__init__()
+        self._counts = counts
+        self._total_ms_box = total_ms_box
+
+    def eventFilter(self, watched, event):
+        t0 = time.perf_counter()
+        etype = event.type()
+        self._counts[etype] = self._counts.get(etype, 0) + 1
+        result = super().eventFilter(watched, event)
+        self._total_ms_box[0] += (time.perf_counter() - t0) * 1000
+        return result
+
+
+def _wire_event_dispatch_probe(name: str, anim: QPropertyAnimation, panel: QWidget, context_fn=None) -> None:
+    """Total Qt event-dispatch VOLUME and filter-chain overhead across every descendant of
+    `panel`, for every event type, during a single panel animation — added 2026-09-25 as the
+    fourth measurement layer in the Stats > Tags > Library severity-ranking investigation, after
+    paint cost, app-level event-filter dispatch cost, and every Stats-owned periodic timer were
+    all checked and ruled out (see NOTES.md). Tests a different mechanism than any of those:
+    does Qt's own per-event dispatch cost more for a deeper widget tree (Stats) than a shallow
+    one (Library), independent of what any single widget's own handler does with an event once
+    it arrives. `QEvent.Type.Paint` is INCLUDED here (unlike being the sole focus of
+    _wire_paint_probe) since the question this time is total dispatch volume across ALL types,
+    not paint-specifically.
+
+    Scoped narrowly, same shape as _wire_paint_probe: one _EventDispatchCounter installed on the
+    panel and every descendant snapshotted via findChildren() at animation start, removed at
+    finish. Real installEventFilter/removeEventFilter (not a monkeypatch) — the correct mechanism
+    for "how many events of each type does Qt actually deliver here," which a paintEvent/
+    eventFilter wrapper cannot answer since it can only observe the one method/event type it
+    replaces.
+
+    context_fn: same contract as _wire_paint_probe's/_wire_timing_probe's identical parameter —
+    called once at start, result stashed, included in the finish-time log line."""
+    state = {"active": False, "counter": None, "watched": None, "total_ms_box": None,
+             "context": None}
+
+    def _on_start():
+        if not _PANEL_TIMING_ENABLED:
+            return
+        state["context"] = context_fn() if context_fn is not None else None
+        counts = {}
+        total_ms_box = [0.0]
+        counter = _EventDispatchCounter(counts, total_ms_box)
+        watched = [panel] + panel.findChildren(QWidget)
+        for w in watched:
+            w.installEventFilter(counter)
+        state["active"] = True
+        state["counter"] = counter
+        state["watched"] = watched
+        state["counts"] = counts
+        state["total_ms_box"] = total_ms_box
+
+    def _on_finished():
+        if not state["active"]:
+            return
+        state["active"] = False
+        counter = state["counter"]
+        for w in state["watched"]:
+            try:
+                w.removeEventFilter(counter)
+            except RuntimeError:
+                pass  # widget was deleted mid-animation; filter is already gone with it
+
+        counts = state["counts"]
+        total_events = sum(counts.values())
+        total_ms = state["total_ms_box"][0]
+        # Top event types by count, named via QEvent.Type's enum repr for readability.
+        top = sorted(counts.items(), key=lambda kv: kv[1], reverse=True)[:8]
+        top_str = ", ".join(f"{QEvent.Type(etype).name}={n}" for etype, n in top)
+        ctx = f" from={state['context']!r}" if state["context"] is not None else ""
+        logger.warning(
+            f"[PANEL-TIMING] {name} EVENTDISPATCH total_events={total_events} "
+            f"total_dispatch_ms={total_ms:.2f} watched_widgets={len(state['watched'])}{ctx} "
+            f"top={top_str}")
+        state["counter"] = None
+        state["watched"] = None
+        state["counts"] = None
+        state["total_ms_box"] = None
+        state["context"] = None
+
+    orig_start = anim.start
+
+    def _traced_start(*args, **kwargs):
+        _on_start()
+        return orig_start(*args, **kwargs)
+
+    anim.start = _traced_start
+    anim.finished.connect(_on_finished)
 
 
 def _system_load_snapshot() -> str:
@@ -508,6 +1024,13 @@ class PanelManager:
         self.sidebar_expanded = False
         self._pending_panel_open = None
         self._sidebar_panel_signal_connected = False
+        # List-mode-only slide-paint-suppression proxy — see _start_library_entry,
+        # _on_library_shown, _close_library_flow, and _teardown_library_list_proxy.
+        self._library_list_proxy: "QLabel | None" = None
+        # True only during the first-open deferral gap between _start_library_entry
+        # scheduling _finish_library_entry_animation and that call actually running —
+        # see both methods and _close_library_flow's own guard.
+        self._library_entry_animation_pending = False
         
         # Widgets (references passed from MainWindow)
         self.sidebar = main_window.sidebar
@@ -538,6 +1061,14 @@ class PanelManager:
         # no-underlay cases stay explicit rather than silently falling through
         # generic panel handling.
         self._book_detail_underlay: str | None = None
+        # Periodic re-frost while Book Detail stays open with Frosty backdrop mode on — see
+        # _arm_book_detail_frost_refresh's own docstring for why this exists (the progress-bar
+        # strip is now included in the frost rect, and a ONE-SHOT static frost would freeze its
+        # fill for the panel's whole open duration otherwise). Armed at open-start, disarmed on
+        # close — never left running with no panel open.
+        self._book_detail_frost_refresh_timer = QTimer(main_window)
+        self._book_detail_frost_refresh_timer.timeout.connect(
+            self._on_book_detail_frost_refresh_tick)
         # The widget that held real Qt focus at the moment Book Detail opened, so closing it
         # (Esc/close button) can hand focus back to the EXACT control the user was on — added
         # 2026-09-09 for Stats' Day/Week/Month row lists (live report: Esc from Book Detail
@@ -721,13 +1252,14 @@ class PanelManager:
         if self.config.get_blur_enabled():
             self._transport_bar_blur.show_for_panel(panel)
 
-    # Book Detail sits at y=32; the progress slider occupies y=32..56 and the
-    # window is 300x564. See _book_detail_frost_rect. Both underlay cases now
-    # start below the progress bar — the former _BOOK_DETAIL_FROST_TOP_UNDER_
-    # TITLEBAR (32) was removed 2026-08-14 when the library case stopped
-    # frosting the animating bar.
-    _BOOK_DETAIL_FROST_TOP_UNDER_PROGRESS = 56
+    # Book Detail sits at y=32; the window is 300x564. See _book_detail_frost_rect.
+    _BOOK_DETAIL_FROST_TOP_UNDER_TITLEBAR = 32
     _BOOK_DETAIL_FROST_BOTTOM_INSET = 10
+    # 10s: cheap enough to be a non-concern at this cadence (one panel.grab() + one blur
+    # pass every 10s, not per-frame), generous enough that the progress bar's fill is never
+    # visibly stale for more than a few seconds — Pryme's own call, 2026-09-24 ("it doesn't
+    # even need to be fast... 10 second refresh is more than plenty").
+    _BOOK_DETAIL_FROST_REFRESH_MS = 10_000
 
     def _book_detail_frost_rect(self) -> QRect:
         """The region Book Detail's frost should cover, in MAIN_WINDOW coords.
@@ -738,65 +1270,251 @@ class PanelManager:
         - Over STATS (or any 90%-width panel): the player screen behind is
           already blurred by that panel's own visual_area blur, but the Stats
           panel ITSELF is sharp — and Stats is most of what is behind Book
-          Detail. So the frost must start under the PROGRESS BAR (y=56) and run
-          to 10px off the bottom, capturing Stats as content to be blurred. The
-          progress bar is excluded because it animates; the bottom 10px is the
-          panel's own padding.
-        - Over LIBRARY: the library is full-width and opaque, so everything from
-          under the PROGRESS BAR down is real content that must be frosted. The
-          library starts at y=32 like the progress bar itself, but the bar is
-          drawn OVER it and keeps animating while Book Detail is open — a static
-          grab of a moving widget is a frozen frame of it, which showed up as a
-          blurred smear across the bar in a screen recording (2026-08-14; the
-          real bar animates too subtly to catch by eye, which is why this went
-          unnoticed since the frost shipped). Same reason the Stats case
-          excludes it — the exclusion just was not applied here.
+          Detail. So the frost must run down to 10px off the bottom, capturing
+          Stats as content to be blurred; the bottom 10px is the panel's own
+          padding.
+        - Over LIBRARY: the library is full-width and opaque, so everything is
+          real content that must be frosted.
 
-        WIDTH also differs, and this rect is deliberately NARROWER than the panel
-        it frosts in the non-library case (fixed 2026-08-14). Book Detail is
-        itself full window width, so it has no dismiss sliver of its own — but it
-        is TRANSLUCENT, and over a 90%-width panel the right-hand gutter
-        (x=270..300) shows the main window through both panels. Frosting the full
-        300px blurred that gutter and froze the carousel's right edge behind a
-        static grab, while every 90%-width panel keeps it live and sharp
-        (show_for_panel intersects its rect with the panel's own geometry —
-        measured: Stats grabs QRect(10, 300, 260, 198), ending exactly at x=270).
-        Over LIBRARY there is no gutter to preserve — the library is full-width
-        and opaque — so that case keeps the full 300.
+        WIDTH previously differed here (narrower over a 90%-width underlay, to keep its
+        right-hand gutter live and sharp rather than frozen — see git history, fixed
+        2026-08-14, superseded 2026-09-24). **Superseded 2026-09-24**: with Book Detail's slide
+        now driven by a static-pixmap proxy (`PanelManager._wire_slide_paint_suppression`), the
+        frost only firing once the panel was fully on-screen (settle-time) used to mask this
+        gutter never getting a live, sharp look until then anyway — moving the frost to
+        open-START (same session, for the sliding-proxy fix) made the gutter's absence visible
+        for the WHOLE slide, reading as an abrupt late pop rather than the brief flash it used
+        to be. Pryme's own call: blur the gutter immediately, matching everywhere else. Full
+        width now, in both branches — no more gutter exclusion.
 
-        The 0.9 factor is the same one _start_settings_entry and friends use for
-        `panel_w = int(main_window.width() * 0.9)`; deriving it here rather than
-        hardcoding 270 keeps the frost edge tracking the panels that define the
-        sliver in the first place.
-
-        Bare geometry otherwise, rather than reading widget rects: these are
-        fixed-size chrome (window 300x564 via setFixedSize, title bar 32,
-        progress slider 24), and the panel-rect helpers map SETTLED positions,
-        which is not what is wanted for a region defined against the window
-        itself.
+        TOP previously excluded the progress-bar strip (y=32..56) entirely, in both branches —
+        the bar genuinely animates while Book Detail is open, and a ONE-SHOT static frost
+        covering it would freeze its fill for the panel's whole open duration, visibly JUMPING
+        to the real position on close if playback moved during that window (found and fixed
+        2026-08-14, "blurred smear across the bar in a screen recording"). **Superseded
+        2026-09-24, second correction**: Pryme reported this exclusion ITSELF as a bug — the
+        strip should be blurred like everywhere else, not left showing live-but-unblurred
+        content while the rest of the backdrop is frosted. A true one-shot static frost can't
+        satisfy both "blurred" and "never visibly stale on close" at the same time — the fix
+        is `_arm_book_detail_frost_refresh` (below): the WHOLE frost (this strip included) now
+        re-grabs and re-composites on a periodic timer while Book Detail stays open, so it's
+        blurred from the first frame AND never goes more than one refresh interval stale. `top`
+        is now always `_BOOK_DETAIL_FROST_TOP_UNDER_TITLEBAR` (32) in both branches — the
+        progress bar is included, not excluded.
         """
         mw = self.main_window
-        if self._book_detail_underlay == 'library':
-            top = self._BOOK_DETAIL_FROST_TOP_UNDER_PROGRESS
-            bottom_inset = 0
-            width = mw.width()
-        else:
-            top = self._BOOK_DETAIL_FROST_TOP_UNDER_PROGRESS
-            bottom_inset = self._BOOK_DETAIL_FROST_BOTTOM_INSET
-            width = int(mw.width() * 0.9)
-        return QRect(0, top, width, mw.height() - top - bottom_inset)
+        top = self._BOOK_DETAIL_FROST_TOP_UNDER_TITLEBAR
+        bottom_inset = 0 if self._book_detail_underlay == 'library' else self._BOOK_DETAIL_FROST_BOTTOM_INSET
+        return QRect(0, top, mw.width(), mw.height() - top - bottom_inset)
 
     def _apply_transport_bar_blur_full(self, panel):
-        """Frost Book Detail's own backdrop. See
+        """Frost/wash Book Detail's own backdrop. See
         TransportBarBlurOverlay.frost_panel_backdrop for why this cannot reuse the
         shared overlay (Z-order: that overlay is a child of content_container and
         can never rise above a panel parented to main_window).
 
-        Gated here rather than inside the overlay, matching _apply_transport_bar_blur
-        — one get_blur_enabled() convention across every call site."""
-        if self.config.get_blur_enabled():
-            self._transport_bar_blur.frost_panel_backdrop(
-                panel, self._book_detail_frost_rect())
+        Gate CHANGED 2026-09-24, SECOND TIME (was `get_blur_enabled()` alone; briefly widened
+        same-session to run for Frosty+Transparent, excluding only Opaque — see git history on
+        this branch for that version's own reasoning). REVERTED to Frosty-only per the A/B plan
+        settled with Pryme: Transparent mode's brief excursion onto this grab mechanism
+        introduced two confirmed regressions — a moving backdrop (this compositing bakes a
+        STATIC frost, which reads as visibly wrong once Transparent's whole design premise is a
+        backdrop that tracks the live window, not a frozen snapshot) and it did not reduce, by
+        any measurement Pryme trusted, the felt jank the paint-suppression proxy was meant to
+        fix. Transparent goes back to relying entirely on the panel's own live paint — i.e. no
+        static backdrop compositing at all — which is honest to what "Transparent" has always
+        meant in this app. Opaque now ALSO runs this (newly added, cleaner A/B benchmark per
+        Pryme: "Opaque definitely could use grab rather than native paint. Nothing to lose there"
+        — an opaque panel has no translucent wash, so this call degrades to a plain unblurred
+        grab of the underlay, harmless and skippable in effect but kept symmetric with Frosty's
+        code path rather than special-cased out).
+
+        `extra_mouse_blocked_widgets`: protects the underlay's own hoverable widgets (currently
+        just Stats' tab bar — Library has no tab bar, see `_resume_blur_after_book_detail`'s own
+        note) from a real hit-testing leak during this call's hide/show grab. See
+        `TransportBarBlurOverlay._grab_and_blur`'s docstring for the full mechanism this closes:
+        a brief `panel.hide()` (this runs at open-start, slide-finish, and every 10s via the
+        refresh timer) un-covers the underlay for the grab instant, and a cursor resting over a
+        tab during one of those ticks gets a genuine, un-Leave'd hover that then reads as a
+        highlight "appearing from nothing" once Book Detail actually closes (live-reported
+        2026-09-24)."""
+        backdrop = self.config.get_panel_backdrop()
+        if backdrop == "transparent":
+            return
+        stats_panel = getattr(self.main_window, 'stats_panel', None)
+        extra_widgets = None
+        if stats_panel is not None and stats_panel.isVisible():
+            extra_widgets = [stats_panel.tabs.tabBar()]
+        self._transport_bar_blur.frost_panel_backdrop(
+            panel, self._book_detail_frost_rect(), blur=(backdrop == "frosty"),
+            extra_mouse_blocked_widgets=extra_widgets)
+
+    def _arm_book_detail_frost_refresh(self) -> None:
+        """Start periodic re-frosting while Book Detail is open, added 2026-09-24 alongside
+        widening `_book_detail_frost_rect` to include the progress-bar strip. That strip
+        genuinely animates during playback — a ONE-SHOT static frost covering it (taken once
+        at open-start, refreshed once more at slide-finish, per the existing calls in
+        `_start_book_detail_entry`/`_on_book_detail_slide_finished`) would freeze its fill for
+        the panel's entire open duration, visibly jumping to the real position on close if
+        playback moved meanwhile — this is the EXACT bug `_book_detail_frost_rect`'s old
+        progress-bar exclusion existed to prevent (found and fixed 2026-08-14), reintroduced
+        the moment the strip was folded into the frost rect.
+
+        Fixed not by excluding the strip again (Pryme's own bug report: it should be blurred
+        like everywhere else, not left live-but-unblurred) but by periodically RE-frosting the
+        whole rect while the panel stays open — `_BOOK_DETAIL_FROST_REFRESH_MS` (10s) is cheap
+        at this cadence (one `panel.grab()` + one blur pass every 10s, not per-frame) and
+        generous enough that the fill is never visibly stale for more than a few seconds
+        (Pryme's own call: "it doesn't even need to be fast... 10 second refresh is more than
+        plenty").
+
+        GATE CHANGED 2026-09-24, SECOND TIME (was `get_blur_enabled()` alone, briefly widened
+        same-session to exclude only Opaque — see git history on this branch). REVERTED to
+        excluding TRANSPARENT instead, matching `_apply_transport_bar_blur_full`'s own reverted
+        gate — see that method's docstring for the full A/B-plan reasoning. Transparent mode
+        relies entirely on the panel's own live paint again, so there is no static frost for
+        this timer to keep fresh. Opaque now runs it (harmless — see
+        `_apply_transport_bar_blur_full`'s reasoning for why an opaque panel tolerates a frost
+        child it never shows).
+
+        Called from `_start_book_detail_entry`, once, at open-start — paired with
+        `_disarm_book_detail_frost_refresh` in both close paths
+        (`_close_book_detail_flow`/`_on_book_detail_hidden`), so the timer is NEVER left
+        running once Book Detail is closed."""
+        if self.config.get_panel_backdrop() == "transparent":
+            return
+        self._book_detail_frost_refresh_timer.start(self._BOOK_DETAIL_FROST_REFRESH_MS)
+
+    def _disarm_book_detail_frost_refresh(self) -> None:
+        """Stop the periodic re-frost armed by _arm_book_detail_frost_refresh. Safe to call
+        unconditionally (QTimer.stop() on an already-stopped timer is a harmless no-op) — every
+        close path calls this regardless of whether blur was ever on, so there's no risk of a
+        stray running timer surviving a backdrop-mode change mid-session."""
+        self._book_detail_frost_refresh_timer.stop()
+
+    def _on_book_detail_frost_refresh_tick(self) -> None:
+        """QTimer.timeout handler for the periodic re-frost. Guards against a stray tick
+        landing after Book Detail has already closed (e.g. a tick queued just before close,
+        delivered after) — re-frosting a hidden/gone panel would be wasted work at best, so
+        this bails out via the same isVisible() check every other book_detail-open predicate
+        in this class already uses."""
+        if not (self.book_detail_panel and self.book_detail_panel.isVisible()):
+            self._disarm_book_detail_frost_refresh()
+            return
+        self._apply_transport_bar_blur_full(self.book_detail_panel)
+
+    def _wire_slide_paint_suppression(self, panel: QWidget, anim: QPropertyAnimation,
+                                       proxy: QLabel) -> None:
+        """Suppresses `panel`'s own per-frame repaint cost during `anim` by showing a static
+        pixmap proxy on top of it instead. Added 2026-09-23 after `_wire_paint_probe` found
+        Book Detail's slide repainting individual child widgets dozens to ~200 times in one
+        ~300ms slide — see NOTES.md, "General app sluggishness investigation" (2026-09-22/23).
+
+        A REJECTED first design (hide the real panel, swap to the proxy) would have broken
+        active_full_panel()/is_any_full_panel_visible() (both read panel.isVisible() directly,
+        relied on app-wide for shortcut/overlay gating). This version keeps `panel` visible and
+        moving EXACTLY as before this method existed — `anim` still targets `panel`'s own `pos`;
+        `panel.isVisible()`/`.pos()` are never touched here. `panel.setUpdatesEnabled(False)`
+        stops IT from processing paint events (it still moves; Qt just doesn't repaint its
+        contents) while `proxy` — a plain QLabel, raised above `panel`, followed via
+        `valueChanged` — is the only thing that visibly repaints each tick.
+
+        NAMED, UNRESOLVED RISK: whether the panel's own vacated backing-store position can
+        produce a one-frame trail before the proxy's valueChanged-driven move catches up (Qt's
+        exact internal ordering here was not verified from documentation). Live-check this
+        explicitly (frame-stepped screen recording) — do not assume it's clean.
+
+        OPEN vs. CLOSE need different pixmap sources (found live, corrected same session):
+        Book Detail's `rgba(bg_main, panel_opacity_hover)` background (WA_StyledBackground) is
+        genuinely translucent — it blends against whatever's already in the window's backing
+        store behind it. A plain `panel.grab()` renders the panel in ISOLATION, with nothing to
+        blend against, so the wash reads flatly opaque until the panel's own live paint (or the
+        settle-time `frost_panel_backdrop`, Frosty-mode only) resumes. On CLOSE this is a
+        non-issue — the panel has already been open/settled with a correct blend baked into its
+        live paint, so `panel.grab()` there is already correct. On OPEN, nothing has been
+        blended yet for this open cycle, so this method instead grabs the UNDERLAY at the
+        panel's destination rect (no hide/show needed — confirmed the real panel sits off-screen
+        at `x=panel_w` at this exact moment, per `_start_book_detail_entry`'s
+        `.move(panel_w, ...)` before `.show()`) and composites Book Detail's own wash onto it —
+        blurred first if Frosty mode (via `_blur_pixmap`, the STANDALONE function, deliberately
+        NOT `_grab_and_blur`'s hide/show-coupled wrapper — that primitive carries dated fixes
+        for cursor/focus/hit-testing side effects of hiding an ALREADY-OPEN, interactive panel,
+        none of which apply or have been verified at this new, off-screen, pre-slide moment).
+        Opaque mode skips the wash compositing entirely (a plain grab is already correct — an
+        opaque panel has no translucency to lose).
+
+        THIRD CORRECTION (2026-09-24, live-reported): Transparent mode is the deliberate control
+        group for the A/B this whole mechanism exists to run (see _apply_transport_bar_blur_full's
+        own docstring) — it must NOT get a static backdrop at all, blurred or not, or it stops
+        being a clean "does paint suppression help" control and starts testing something else.
+        But `panel.grab()`'s isolation problem (documented above: a translucent wash has nothing
+        to blend against in an isolated grab) doesn't go away just because Transparent has no
+        static backdrop layer to fix it with — the proxy would read flatly opaque for the whole
+        slide, then visibly pop transparent once live paint resumed at finish. Rather than solve
+        that with more compositing (which is exactly the static-backdrop machinery Transparent is
+        supposed to be free of), this method now skips the whole proxy/suppression mechanism for
+        Transparent mode: `panel` keeps live-painting through the slide, unmodified, exactly as it
+        did before this feature existed. This is what makes Transparent a genuine control — its
+        child-repaint cost is real and unsuppressed, which is the whole point of comparing it
+        against Frosty/Opaque."""
+        state = {"active": False}
+
+        def _on_start():
+            if self.config.get_panel_backdrop() == "transparent":
+                return
+            # Opening iff the animation's END value's x is 0 (the panel's on-screen rest
+            # position) — closing targets x=panel_w (off-screen), per _start_book_detail_entry/
+            # _close_book_detail_flow's own setEndValue calls.
+            #
+            # SECOND CORRECTION (2026-09-23, live-reported with screenshots): a prior version
+            # of this branch grabbed the underlay and composited the panel's translucent wash
+            # onto it for the OPEN case specifically, to fix an opaque-then-pop regression the
+            # FIRST correction introduced. That produced a WORSE bug — the composited pixmap
+            # never had the panel's own real CONTENT (cover/title/stats/tags) painted into it,
+            # so the proxy showed a tinted, empty backdrop for the whole slide. Pryme's own
+            # correction: the backdrop was never supposed to slide at all — it's meant to be
+            # STATIC (matching frost_panel_backdrop's own established behavior: "STATIC while
+            # the panel is open, an accepted tradeoff"). The fix is NOT in this pixmap — it's
+            # that the EXISTING frost/wash backdrop (self._apply_transport_bar_blur_full) must
+            # now fire at slide-START too (see _start_book_detail_entry's own open-start
+            # call, added alongside this fix), not only at slide-finish. Once that static
+            # backdrop exists as its own layer (a child of `panel`, unaffected by
+            # setUpdatesEnabled(False) below since it's a sibling in panel's child stack, not
+            # something panel.paintEvent itself draws), this proxy needs nothing more than the
+            # panel's own real content — a plain panel.grab() is correct for BOTH directions,
+            # same as before either correction. Do not re-introduce underlay compositing here.
+            # (Transparent mode never reaches this point — see THIRD CORRECTION above.)
+            pixmap = panel.grab()
+            proxy.setPixmap(pixmap)
+            proxy.setFixedSize(panel.size())
+            proxy.move(panel.pos())
+            proxy.raise_()
+            proxy.show()
+            panel.setUpdatesEnabled(False)
+            state["active"] = True
+
+        def _on_value_changed(value):
+            if not state["active"]:
+                return
+            proxy.move(value)
+
+        def _on_finished():
+            if not state["active"]:
+                return
+            state["active"] = False
+            panel.setUpdatesEnabled(True)
+            panel.update()
+            proxy.hide()
+
+        orig_start = anim.start
+
+        def _traced_start(*args, **kwargs):
+            _on_start()
+            return orig_start(*args, **kwargs)
+
+        anim.start = _traced_start
+        anim.valueChanged.connect(_on_value_changed)
+        anim.finished.connect(_on_finished)
 
     def _clear_transport_bar_blur(self):
         self._transport_bar_blur.hide_for_panel()
@@ -1368,6 +2086,73 @@ class PanelManager:
         self.library_panel.show()
         self.library_panel.raise_()
 
+        # On a process's FIRST-EVER Library show, LibraryPanel.showEvent defers a
+        # geometry-correcting re-run of _apply_view_mode by one event-loop tick (see
+        # that method's own comment — a pre-existing, unrelated fix for List/Square
+        # mode's top-margin remainder math needing real, settled layout to compute
+        # correctly). Grabbing the viewport for the slide-paint-suppression proxy
+        # BEFORE that correction lands captures a viewport 1px short — confirmed live,
+        # 2026-09-25: only reproduces on a process's first Library open, and produces a
+        # visible ~1-2px vertical pop at handoff once the corrected viewport takes
+        # over. So: defer the grab (and the animation start with it) by that same one
+        # tick, but ONLY on this first-open case — every subsequent open already reads
+        # correct geometry synchronously (confirmed live) and stays on the fast,
+        # zero-added-latency path.
+        if self.library_panel._first_show_geometry_settled:
+            self._finish_library_entry_animation(panel_w, sidebar_y)
+        else:
+            # A DEDICATED flag, not _is_animating: _is_animating stays True for
+            # library_panel's whole open transition, INCLUDING scenarios (a stuck
+            # `finished` connection) that _close_library_flow's own teardown must be
+            # able to recover from — reusing it here to guard this narrow pre-start
+            # gap would also block that recovery path for the rest of the session.
+            # This flag is true ONLY between scheduling the deferred call below and
+            # _finish_library_entry_animation actually running, and is checked by
+            # _close_library_flow as an ADDITIONAL condition alongside its existing
+            # animation.state() == Running check (see that method).
+            self._library_entry_animation_pending = True
+            QTimer.singleShot(
+                0, lambda: self._finish_library_entry_animation(panel_w, sidebar_y)
+            )
+
+    def _finish_library_entry_animation(self, panel_w, sidebar_y):
+        """Sets up the slide-paint-suppression proxy (List mode only) and starts the
+        library_panel_animation slide. Split out of _start_library_entry so the first-
+        open case can defer this whole block by one event-loop tick — see that
+        method's own comment for why."""
+        self._library_entry_animation_pending = False
+        # List-mode-only slide paint suppression: grab the viewport NOW (content is already
+        # current — see NOTES.md/the design plan for why open-start beats close-and-store) with
+        # hover suppressed, and show a static proxy over the viewport for the duration of the
+        # slide instead of letting QListView repaint its full, expensive delegate-painted content
+        # on every position tick. Measured: QListView paint cost in List mode was 149-187ms of a
+        # ~300ms slide; the grab itself costs ~25-38ms steady-state, paid once up front. Any
+        # failure here must not prevent the slide itself from starting — see the except below.
+        if self.config.get_library_view_mode() == "List":
+            delegate = self.library_panel._delegate
+            try:
+                delegate._suppress_hover_for_grab = True
+                try:
+                    pixmap = self.library_panel._list_view.viewport().grab()
+                finally:
+                    delegate._suppress_hover_for_grab = False
+                top_left = self.library_panel._list_view.viewport().mapTo(
+                    self.library_panel, QPoint(0, 0)
+                )
+                viewport_size = self.library_panel._list_view.viewport().size()
+                proxy = QLabel(self.library_panel)
+                proxy.setPixmap(pixmap)
+                proxy.setGeometry(QRect(top_left, viewport_size))
+                proxy.raise_()
+                proxy.show()
+                self._library_list_proxy = proxy
+                self.library_panel._list_view.viewport().setUpdatesEnabled(False)
+            except Exception:
+                logger.exception(
+                    "[LIST-PROXY] grab/proxy setup failed, falling back to live slide"
+                )
+                self._teardown_library_list_proxy()
+
         # Set animation guard to prevent layout updates during slide
         self.library_panel._is_animating = True
         self.library_panel_animation.finished.connect(self._on_library_shown)
@@ -1389,13 +2174,25 @@ class PanelManager:
             pass
         self.library_panel._is_animating = False
         self.library_panel._list_view.setUpdatesEnabled(True)
+        # The slide-paint-suppression proxy (if one was created) disabled updates on the
+        # VIEWPORT specifically, not the QListView itself — the line above alone does not
+        # restore that. Idempotent/harmless if no proxy was ever created this open.
+        self.library_panel._list_view.viewport().setUpdatesEnabled(True)
         logger.debug(f"[STUTTER-TRACE] t={time.perf_counter():.6f} _on_library_shown: "
                      f"calling refresh()")
         self.library_panel.refresh()
         logger.debug(f"[STUTTER-TRACE] t={time.perf_counter():.6f} _on_library_shown: "
                      f"refresh() returned")
+
+        def _settle_and_teardown_proxy():
+            self.library_panel._list_view.viewport().update()
+            # Tear down the proxy only after requesting the live repaint above, so the
+            # handoff from frozen pixmap to live paint has no visible gap. Idempotent —
+            # safe even if _close_library_flow already tore it down first.
+            self._teardown_library_list_proxy()
+
         # Small delay lets the event loop settle before first paint
-        QTimer.singleShot(16, self.library_panel._list_view.viewport().update)
+        QTimer.singleShot(16, _settle_and_teardown_proxy)
 
     def _stop_stutter_profile(self):
         """TEMPORARY (library-panel stutter investigation, 2026-07-17): stop the profiler
@@ -1747,7 +2544,17 @@ class PanelManager:
         self._pending_panel_open = None
 
     def _close_library_flow(self):
-        if self.library_panel_animation.state() == QAbstractAnimation.State.Running:
+        # The second condition covers the brief window (first-open case only, see
+        # _start_library_entry) between that method deferring _finish_library_entry_
+        # animation and that deferred call actually starting the real animation —
+        # library_panel_animation.state() reads Stopped for that whole window since
+        # nothing has called .start() yet. Deliberately NOT _is_animating: that flag
+        # stays True for library_panel's entire open transition, including scenarios
+        # (a stuck `finished` connection) that _close_library_flow's own teardown must
+        # remain able to recover from — reusing it here would also block that recovery
+        # path for the rest of the session, not just this narrow pre-start gap.
+        if (self.library_panel_animation.state() == QAbstractAnimation.State.Running
+                or self._library_entry_animation_pending):
             logger.debug("[BOOKSWITCH-TRACE] _close_library_flow: already running, no-op return")
             return
         logger.debug(f"t={time.perf_counter():.6f} [BOOKSWITCH-TRACE] _close_library_flow: entry")
@@ -1757,6 +2564,15 @@ class PanelManager:
         # Set animation guard
         self.library_panel._is_animating = True
         self.library_panel._list_view.setUpdatesEnabled(True)
+        # Owns the OTHER end of the slide-paint-suppression proxy's lifecycle (the open path
+        # owns the normal case). Idempotent — a no-op if no proxy is currently up, which is
+        # the ordinary case (open already finished cleanly and tore its own proxy down). If a
+        # proxy WAS still up — e.g. a close landing between the open animation's finish and the
+        # 16ms settle callback, or a stuck `finished` connection that never fired
+        # _on_library_shown at all — this is what prevents it from sliding out frozen over the
+        # live list, and prevents a second proxy being created on top of an orphaned first one
+        # at the next open. See the design plan for the full reasoning.
+        self._teardown_library_list_proxy()
 
         self.library_panel_animation.setStartValue(QPoint(0, sidebar_y))
         self.library_panel_animation.setEndValue(QPoint(-panel_w, sidebar_y))
@@ -1769,6 +2585,19 @@ class PanelManager:
             self.blur_animation.setEndValue(0)
             self.blur_animation.start()
             self._clear_visual_area_clip()
+
+    def _teardown_library_list_proxy(self):
+        """Idempotent teardown for the List-mode slide-paint-suppression proxy (see
+        _start_library_entry). Safe to call whether or not a proxy currently exists — both
+        _on_library_shown's settle callback and _close_library_flow call this unconditionally,
+        so the proxy can never strand regardless of which transition actually runs."""
+        proxy = self._library_list_proxy
+        if proxy is None:
+            return
+        self._library_list_proxy = None
+        proxy.hide()
+        proxy.deleteLater()
+        self.library_panel._list_view.viewport().setUpdatesEnabled(True)
 
     def _on_library_hidden(self):
         logger.debug(f"t={time.perf_counter():.6f} [BOOKSWITCH-TRACE] _on_library_hidden: entry")
@@ -1876,6 +2705,11 @@ class PanelManager:
         self.stats_panel.show()
         self.stats_panel.refresh_current_tab()
         self.stats_panel.raise_()
+        # Timeline grid content is fully determined by refresh_current_tab() above, before the
+        # slide even starts — nothing legitimate changes it while the panel is merely sliding
+        # into view. See StatsPanel.suspend_timeline_paint's own docstring for the measured
+        # cost this avoids (StreakGrid.paintEvent: 20-27ms/call, 6-12 calls per slide).
+        self.stats_panel.suspend_timeline_paint()
         # panel_key="stats" (2026-09-08, first keyboard-nav pass): lands initial focus on
         # Stats' own tab bar (via panel_tab_widgets("stats")'s first entry) instead of the
         # panel root — same shape as Settings. Without this, _claim_panel_focus's default
@@ -1891,6 +2725,7 @@ class PanelManager:
                 self.stats_panel_animation.finished.disconnect(_on_stats_slide_finished)
             except (TypeError, RuntimeError):
                 pass
+            self.stats_panel.resume_timeline_paint()
             self._apply_transport_bar_blur(self.stats_panel)
             # visual_area blur starts HERE (not at panel-open) so it matches the
             # transport bar's timing — see _start_visual_area_blur.
@@ -2074,6 +2909,12 @@ class PanelManager:
         sidebar_y = 56
         self.stats_panel_animation.setStartValue(QPoint(0, sidebar_y))
         self.stats_panel_animation.setEndValue(QPoint(-panel_w, sidebar_y))
+        # Same cost, same fix as the open path (_start_stats_entry) — the Timeline grid's
+        # content doesn't change while the panel is merely sliding out either. _on_stats_hidden
+        # calls hide() at finish, which stops paint delivery on its own regardless, but resuming
+        # explicitly there keeps the grid's updatesEnabled state consistent for the NEXT open
+        # rather than relying on hide()'s side effect to leave it in a sane state.
+        self.stats_panel.suspend_timeline_paint()
         self.stats_panel_animation.finished.connect(self._on_stats_hidden)
         self.stats_panel_animation.start()
         self._clear_transport_bar_blur()
@@ -2094,6 +2935,7 @@ class PanelManager:
         except RuntimeError:
             pass
         self.stats_panel.hide()
+        self.stats_panel.resume_timeline_paint()
         self._release_panel_focus(self.stats_panel)
         self._notify_panel_closed()
 
@@ -2194,6 +3036,25 @@ class PanelManager:
         # clobber a live value. active_full_panel() already excludes mid-close panels
         # via _is_closing, which is exactly the state we must not "restore" blur to.
         self._book_detail_underlay = self.active_full_panel()
+        # Library hover-bleed fix (2026-09-24, live-reported). Book Detail is a real, opaque,
+        # natively-painted widget in Transparent mode (no grab/proxy in that mode — see
+        # _wire_slide_paint_suppression's THIRD CORRECTION), so once it's shown and raised, Qt
+        # correctly stops delivering mouse events to whatever's underneath. The bug is a TIMING
+        # gap, not a hit-testing leak: opening a book highlighted a library row (mouse-hover or
+        # the solid keyboard-selection fill, depending on view mode); the highlight then stayed
+        # frozen/visible until the user's FIRST mouse movement after Book Detail was already up
+        # — at which point Qt finally resolves the library viewport's real Leave (it was
+        # occluded, never actually left, until that first post-open move forces Qt to
+        # re-evaluate hit-testing) and `_on_view_left` fires, clearing it. Pryme's own diagnosis:
+        # the highlight should never survive into the open Book Detail panel at all — clear it
+        # proactively, before the panel ever appears, rather than waiting for Qt's occlusion
+        # bookkeeping to catch up on its own schedule. `_on_view_left` is the library's own
+        # existing full-teardown method (clears the model's _hovered_path AND the delegate's
+        # list-mode/keyboard-fill state), so this reuses it rather than duplicating its effect.
+        # Scoped to when Library is actually the underlay — calling it harmlessly no-ops
+        # otherwise (nothing to clear), but the guard makes the intent explicit.
+        if self._book_detail_underlay == 'library':
+            self.library_panel._on_view_left()
         self._book_detail_return_focus_widget = QApplication.focusWidget()
         self._complete_main_fade()
         # Snapshot of the library's current search text, so tag chips (library context only)
@@ -2235,6 +3096,20 @@ class PanelManager:
         self.book_detail_panel.show()
         self.book_detail_panel.raise_()
         self._claim_panel_focus(self.book_detail_panel)
+        # Frost/wash backdrop now fires HERE too (2026-09-23, moved from slide-finish-only),
+        # so the static backdrop behind the sliding proxy (see
+        # _wire_slide_paint_suppression's _on_start) is correct from the very first frame,
+        # not just once settled. Unlike _start_visual_area_blur's cross-referenced
+        # "TIMING IS LOAD-BEARING" warning (a live ANIMATED blur-in tween that visibly ran
+        # ahead of a still-sliding panel when moved to open-start, 2026-07-27), this frost is
+        # a ONE-SHOT STATIC grab — nothing about it continues to run/animate after this call
+        # returns, so the specific failure mode that warning describes (blur racing ahead of
+        # motion) does not apply here. _book_detail_frost_rect() depends only on mw.width()/
+        # mw.height()/self._book_detail_underlay, all already valid at this point — not on
+        # the panel's own (still off-screen) position. Live-verified 2026-09-23 that this does
+        # not reproduce the same-shaped bug the visual_area case had.
+        self._apply_transport_bar_blur_full(self.book_detail_panel)
+        self._arm_book_detail_frost_refresh()
 
         def _on_book_detail_slide_finished():
             try:
@@ -2258,6 +3133,16 @@ class PanelManager:
             # structurally CANNOT cover this panel's backdrop. Hence no
             # _start_visual_area_blur call here — that asymmetry vs. the other five
             # panels is deliberate, not an omission.
+            #
+            # KEPT DELIBERATELY, even though _start_book_detail_entry now ALSO calls this at
+            # open-start (2026-09-23, for the sliding-proxy static-backdrop fix — see that call
+            # site's own comment): re-grabbing here refreshes the frost against whatever the
+            # underlay looks like NOW, at settle, vs. whatever it looked like at open-start —
+            # not proven redundant, since the underlay could have repainted during the slide
+            # (a live-updating stat, its own animation). Cutting this second call was
+            # considered and NOT done without live verification that nothing depends on the
+            # refresh; the two calls are cheap and harmless to run twice (frost_panel_backdrop
+            # is idempotent — same rect in, same frost child updated).
             self._apply_transport_bar_blur_full(self.book_detail_panel)
             if _BOOKDETAIL_PROFILE_ENABLED:
                 self._stop_bookdetail_profile()
@@ -2281,6 +3166,7 @@ class PanelManager:
     def _close_book_detail_flow(self):
         if self.book_detail_panel_animation.state() == QAbstractAnimation.State.Running:
             return
+        self._disarm_book_detail_frost_refresh()
         panel_w = self.main_window.width()
         book_detail_panel_y = 32 # Position under the titlebar
         self.book_detail_panel_animation.setStartValue(QPoint(0, book_detail_panel_y))
@@ -2304,6 +3190,20 @@ class PanelManager:
         except (TypeError, RuntimeError):
             pass
         self.book_detail_panel.hide()
+        # RETRACTED 2026-09-24: a forced `_resync_tab_bar_hover` call used to live here,
+        # reasoning that Qt's QTabBar hover tracking would be left STALE (stuck on whatever tab
+        # was hovered BEFORE Book Detail opened) once the bar became hit-testable again. That
+        # theory does not match what Pryme actually reported: there is no hover on the tabs
+        # before Book Detail opens; he deliberately hovers a tab WHILE it is covered, and only
+        # THEN closes the panel — and that tab lights up for ~0.5s on close. That is the cursor's
+        # CURRENT resting position being resolved, not a stale pre-open one — and forcing a
+        # QHoverEvent(HoverMove) at that exact instant is precisely what manufactures the paint,
+        # since Qt's real hover requires actual mouse MOVEMENT over the widget, not merely resting
+        # over where it will appear once revealed. The fix was the bug. Removed outright rather
+        # than reworked — the real cause of the highlight-appears-from-nothing symptom is still
+        # unidentified (see TODO.md); do not re-add a resync call here without first confirming,
+        # live, that native Qt event delivery alone (no manual resync) still leaves something
+        # stale — it may not.
         self._release_panel_focus(self.book_detail_panel)
         # Hand focus back to whatever specifically held it when Book Detail opened —
         # 2026-09-09, closing the gap this comment used to flag as known/deferred (see

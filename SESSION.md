@@ -1,3 +1,218 @@
+## Session Summary — 2026-09-26 Session 1 — Extended `_wire_paint_probe` with per-tab/underlay context for Book Detail/Stats measurements, then chased three live-reported Book Detail bugs to real fixes: a duration-bleed across books, a cover/tab-row layout race, and — the big one — a silent scanner truthiness bug that had been dropping duration data (and, for one book, 4 of 5 VT parts) for real, valid, untagged audio files.
+
+**Measurement work first, at Pryme's request** ("We'll get the measurements for opening the book
+details, month tab, week tab and themes tab"): confirmed a panel reopens on whichever tab it was
+last closed on, so "measure Month/Week/Themes" means measuring the PANEL's own slide-open with
+that tab already active, not the tab-switch itself. Added `_stats_probe_context` (`panels.py`,
+mirrors the existing `_book_detail_probe_context`) so `_wire_timing_probe`/`_wire_paint_probe`'s
+`stats` wiring finally carries per-tab attribution — a run with several Stats open/closes had
+no way to attribute any pair back to a specific tab without an exact click-order transcript,
+which isn't reasonable to ask for. First real numbers, captured under real background load
+(Chatterbox running a TTS conversion "full blast"): Book Detail's own open scales sharply by
+underlay (Library 330ms/43ms max frame gap avg, Tags 391ms/102ms, Stats 530ms/239ms, worst
+sample 478ms gap — a genuinely dropped frame), while close is uniform (~307ms/~20ms) across all
+three; Stats'/Settings' own panel-slide showed no such problem regardless of active tab. Logged
+as a worst-case-under-load data point in the existing "smoother under load than idle" TODO
+item — it's real and large, but there's still no idle baseline to compare it against, so it
+doesn't resolve that open question either way. Also built a new `_wire_text_stall_probe`
+(per-tick paint timeline for text-bearing widgets) after Pryme described a symptom the existing
+totals-only PAINT probe genuinely cannot show ("text briefly stuck in places," specifically on
+close) — this is wired but not yet acted on; no live data was gathered against it tonight before
+the session moved to the book-detail bug reports below.
+
+**Bug 1 — duration bleed across books, real and fixed.** Pryme caught this live: a deleted book
+with a genuinely missing duration correctly showed blank on open, but the PREVIOUS book's stale
+duration reappeared the instant Close was clicked, then correctly hid again on the next open.
+Root cause: `_on_close_clicked` unconditionally calls `_cancel_remove()` on every close (not just
+after an actual remove-confirm), and `_cancel_remove` unconditionally did
+`self._duration_label.setVisible(True)` regardless of whether the CURRENT book has a duration —
+`setVisible(False)` never clears text, so the label was still holding whatever the previous book
+had set. Fixed by delegating to `_update_duration_label()`, the one method that already owns this
+decision correctly. New `tests/test_book_detail_duration_label_cancel_remove.py` (4 tests),
+confirmed to fail against the pre-fix code before trusting it.
+
+**Bug 2 — cover pop + tab-row height, two separate defects found via live geometry logging, not
+guessed.** Pryme reported a 6px cover shift and, after a wrong first theory from me (blamed it on
+duration-label visibility; his own screenshot-overlay math correctly showed the "shift" was just
+proper vertical centering of a shorter thumbnail, not a bug) and a genuinely useful correction
+("I am comparing it to itself... if duration field had no affect on it, it would have appeared on
+the [same] coordinates"), a `[COVER-DRIFT]` geometry probe traced through `load_book` found the
+REAL mechanism: the cover moved from `(10,10)` to `(10,16)` on the event-loop tick AFTER
+`load_book` returned — a genuine, user-visible pop, caused by `_cover_label` having no explicit
+cross-axis alignment in `header_layout`, so Qt's own layout redistribution differed between the
+synchronous pass inside `load_book` and its later deferred pass. Fixed with `Qt.AlignTop`. A
+SECOND, separate defect surfaced once Pryme asked to test with a temporary DB-inserted fake
+duration: the tab row sat 12px higher for a durationless book than for every other book — adding
+the fake duration immediately restored the correct position. Root cause: `dur_save_row` (a
+`QHBoxLayout` with no `setRetainSizeWhenHidden`) collapses to zero height when both
+`_duration_label` and `_confirm_remove_label` are hidden, shrinking `meta_block` and pulling the
+tab bar up with it. Fixed by giving `_duration_label` the same `setRetainSizeWhenHidden(True)`
+policy `_narrator_label`/`_year_label` already use for the identical reason. New
+`tests/test_book_detail_header_row_height.py` (2 tests, real `BookDetailPanel` widget tree via
+`_build_ui()`), confirmed to fail (147px → 124px) against the pre-fix code.
+
+**Bug 3 — the real one: a silent scanner truthiness bug losing duration data for valid, untagged
+audio files, confirmed to have ALSO broken a completely different book's VT stitching.** Pryme's
+own hunch ("I suspected it was not an M4B — indeed, single MP3 file") pointed the investigation
+the right direction. `_extract_metadata`'s per-file loop used `if m and m.info:` to decide whether
+`mutagen.File()` successfully parsed a file — but `mutagen.FileType` subclasses `dict` (it IS the
+tag mapping), so a real, fully-parsed, PERFECTLY VALID file with zero ID3/tag data evaluates as an
+empty dict and `bool(m)` is `False`, even though `m.info` (a genuine `MPEGInfo` with a real
+`.length`) is sitting right there. Confirmed directly against the restored real file:
+`bool(m and m.info)` → `False`, `bool(m is not None and m.info)` → `True`, `m.info.length` →
+`14030.21s`. Added logging first (scanner.py previously had NONE at all — every failure here was
+silent by construction) and had Pryme force-rescan before the fix landed, specifically so the
+scan's own trail would confirm the mechanism rather than trusting the fix blind. That rescan
+surfaced something bigger than the one book: **the identical failure hit 4 of 5 MP3 parts in a
+totally unrelated book (Shadow Country)** — only Part1 (which happened to carry a tag) survived
+the old guard. Pryme caught the consequence live, independently, before I'd even connected it:
+Shadow Country's Book Detail showed "8h 18m" against his own spreadsheet's "40h 24m," and Player
+wasn't stitching the parts into one VT at all — `book_files` had only 1 of 5 rows, silently, for
+who knows how long. Fixed the guard to `if m is not None and m.info:`. Force-rescanning again
+after the fix restored both books correctly: Carver's real duration (`14030.21s`), and Shadow
+Country's full 5-row `book_files` (`145462.25s` total ≈ 40h24m, matching Pryme's spreadsheet
+exactly). New `tests/test_scanner_untagged_mp3_duration.py` (4 tests, including one that
+constructs a real 5-part multi-file book from raw MPEG frame bytes — no ffmpeg dependency, no
+checked-in binary fixture — and asserts all 5 parts survive into `book_files`), each confirmed to
+fail against the pre-fix code with the EXACT failure shape from the live report (`1 == 5`,
+4 parts logged as dropped). Commits pending.
+
+**One correction to the debugging-discipline record, worth keeping**: my first theory for the
+cover-pop symptom (duration-label visibility) was wrong, and Pryme's correction wasn't just "no" —
+it was a specific, checkable claim ("if it had no effect, it would appear at the same
+coordinates") that turned out to name the exact right test. The geometry log that actually
+resolved it only existed because the WRONG theory got tested and disproven first (a `[COVER-DRIFT]`
+probe at `_on_close_clicked` showed the cover never moves there at all) — retracting cleanly and
+re-instrumenting at the right point (inside `load_book`, across the deferred tick) is what
+surfaced the real mechanism, not a second guess.
+
+---
+
+## Session Summary — 2026-09-25 Session 2 — Closed the Timeline-tab CPU-storm saga: throttled TasselOverlay's idle sway tick rate instead of retrying the crashed WA_OpaquePaintEvent fix, then caught and corrected two real measurement mistakes of my own (a cumulative-average `ps` misread, and a single anomalous sample nearly written up as a clean result) before landing on honest, controlled numbers.
+
+**The fix.** Root cause (found earlier the same night, see Session 1 below): `TasselOverlay`'s
+idle sway timer called `self.update()` every 33ms unconditionally, forcing a full
+`WA_StyledBackground`-region repaint — including `HourlyHeatmap`/`StreakGrid`'s own expensive
+`paintEvent` — regardless of whether anything actually changed. The first fix attempt
+(`WA_OpaquePaintEvent` on the grids) crashed with a real SIGSEGV tied to one of the grids' own
+in-flight `QPropertyAnimation`s. Deliberately avoided retrying that same mechanism this time —
+throttled the tassel's OWN repaint rate instead, since `IDLE_AMP` (the idle sway's entire motion
+range) is only ±1px and most 33ms ticks were already moving it by an imperceptible sub-pixel
+amount. New `_IDLE_TICK_MS` (150ms) used while idle, with the same timer switching to the
+original fast rate for as long as a kick (the real ~6px click-triggered swing) is actively
+decaying. Pryme's own live catch, before any code was written: making the tassel itself opaque
+wasn't viable either, since its bounding rect deliberately extends past the tab to give the
+swinging tassel room, and it visibly overlaps the bookmark during a kick — the same class of
+problem `WA_OpaquePaintEvent` hit on the grids, just relocated. Shipped as `5b5995b`.
+
+**Two real measurement mistakes, both caught and corrected before the write-up, not glossed
+over.** First: `ps`'s `%CPU` column is a cumulative average since process start, not an
+instantaneous rate — distorted every reading taken with it tonight, including the original ~90%
+baseline claim. Switched to a correct instantaneous `/proc/[pid]/stat`-delta sampler. Second, and
+more consequential: even with the correct method, a single Streak-at-180ms reading came back
+~1.0% CPU against the ~90% baseline — a strikingly clean-looking result that was nearly accepted
+and written up as the fix's true effect. Pryme's own skepticism ("Most probably I'll leave it at
+150... Revert to 150ms and measure again") is what caught it: the 150ms re-measurement came back
+~29-31%, not the near-zero the 180ms reading implied for the same grid. A fully controlled
+re-test (fresh relaunch per condition, never reusing a longer-lived process) showed both 150ms
+and 180ms land in the SAME ~18-31% band — the ~1.0% reading was pure noise. A third measurement
+at an extreme `_IDLE_TICK_MS=2000` ("pretty much not swaying anymore," Pryme's own framing, used
+specifically to isolate whether the tassel was even the dominant remaining cost) measured Streak
+at ~15% — confirming the throttle genuinely helps, proportionally, while also surfacing a real,
+separate ~15% floor this fix was never meant to touch (most likely `StatsPanel.eventFilter`'s
+own already-documented app-wide cost, a different tracked issue).
+
+**150ms shipped** — Pryme's original instinct, confirmed equivalent to 180ms by the corrected
+numbers rather than assumed. Net, honestly measured: ~90% sustained CPU with Stats' Timeline tab
+open, before → ~18-31% after. 10 new tests (`tests/test_tassel_overlay_sway_rate.py`). Full trail,
+including both measurement corrections in detail, in NOTES.md; TODO.md's now-closed CPU-storm
+entry moved to TODO_ARCHIVE.md.
+
+---
+
+## Session Summary — 2026-09-25 Session 1 — Continuation of the same-night Playback/StreakGrid investigation: found and fixed Library List mode's slide-paint cost (the TODO item that session left open), caught a real first-open geometry race live after shipping, and separately confirmed the Timeline-tab CPU-storm root cause stands with its crashed fix still reverted, plus a false-alarm theme-rotation check that turned out to be the existing guard working correctly.
+
+**Timeline-tab CPU storm check (no code change).** Pryme asked directly whether turning off the
+tassel decoration should have fixed the bookmark's own click-triggered animation dropping frames —
+it hadn't. Traced this correctly rather than assuming the earlier root-cause writeup covered it:
+`set_show_tassel(False)` genuinely stops the idle 30fps sway timer (confirmed by reading
+`_on_sway_tick`/`showEvent`/`hideEvent`), but the bookmark TAB itself is explicitly documented as
+never affected by that flag (`set_show_tassel`'s own docstring: "the tab itself... is never
+affected"), and `TasselOverlay.play()` — the click-triggered slide-down/hold/retreat animation —
+uses a completely separate `QPropertyAnimation` (`self._slide`) on the SAME non-opaque widget, still
+sitting inside `stats_time_tab`'s `WA_StyledBackground` region. Same structural mechanism as the
+already-documented, already-reverted CPU-storm root cause, just a different trigger (`play()`'s
+slide, not the idle sway) — genuinely unfixed, not contradicted. Folded into the existing TODO.md
+entry's understanding rather than treated as a new bug; no code touched.
+
+**Four "unnecessary" theme-apply calls — investigated and confirmed to be the guard working
+correctly, not a leak.** Pryme flagged four `_on_theme_changed`/`complete_main_fade` log lines
+firing with no obvious trigger and asked specifically whether the rotation timer could fire with
+only one theme in a size-1 pool. Traced `_rotate_theme`/`_do_rotate` directly: the pool-size check
+(`len(candidates) > 1`) gates the ONLY two call sites of `_on_theme_changed` inside `_do_rotate`, so
+a size-1 pool literally cannot produce a spurious apply through that path — it can only no-op
+silently (and, separately, fail to reschedule its own timer in that case, a real but harmless and
+deliberately-left-alone gap, since rotation resuming only requires an unrelated settings change to
+restart the timer). The real source of the four calls was `_on_theme_unhovered()` — called
+unconditionally by every Settings-panel dismiss (`_close_settings_flow`), itself calling
+`_on_theme_changed(current_theme, ...)` as a deliberate safety re-assert (see CLAUDE.md's "DO NOT
+make any panel-dismiss path depend on a stashed snapback" rule) — confirmed via the log's own
+`[GUARD-MASK-TRACE]` lines showing `_apply_stylesheets NEVER CALLED this invocation` on every one
+of the four hits, because the existing no-op guard (matching `_theme_ever_applied`) caught them for
+free. No bug, no code change — reported back plainly rather than left unresolved.
+
+**Library List mode's slide-paint cost — the TODO item this same night's earlier investigation
+left open ("wire `_wire_paint_probe` to `library_panel_animation` while in List mode and read
+what's actually expensive") — found, designed through two independent review rounds, implemented,
+and live-verified, including a real bug caught live after shipping.** Measured all five view modes
+live: `QListView`'s paint cost dominates every slide, but List mode is 2-3x every grid mode
+(149-187ms of a ~300-355ms slide, vs. 51-90ms for the grid modes) — the same "Qt repaints a moving
+widget's full content on every tick" mechanism CLAUDE.md already documents for Book Detail, landing
+here on one expensive widget instead of many cheap ones.
+
+Design went through genuine back-and-forth review before any code was written. First draft
+(grab-at-close, cache, reuse at next open — matching Pryme's own framing, "it opens however you
+close it") was rejected on three concrete grounds an independent review found: `Off` hover-fade
+mode has no state to detect a held hover at all; a staleness fingerprint missed real cases (Pryme's
+own correction, mid-review: metadata edits, exclusion, and theme CAN change while Library is
+closed, via Book Detail); the deferred-grab lifecycle had an unguarded reopen race. Revised to grab
+at OPEN-START instead (content already current, nothing to go stale) with hover suppressed for the
+one grab — cost measured live before committing (~25-38ms steady-state) rather than assumed. A
+SECOND review round, after the revised design was written up, caught three more concrete bugs
+before any code existed: the hover-suppress flag needed to live on the delegate INSTANCE, never
+the class (an instance attribute silently shadows a same-named class attribute — the wrong
+assignment would have done nothing, with no error); `setUpdatesEnabled(False)` needed to target the
+viewport specifically, not the whole `QListView` (would also freeze the frame/scrollbar the proxy
+doesn't cover); and the proxy's teardown needed to be idempotent and owned by both the open-finish
+path and `_close_library_flow`, so neither a close landing in the open-to-settle gap nor a stuck
+`finished` connection could strand an orphaned proxy.
+
+**A real visual bug survived both review rounds and was only caught live, by Pryme, after
+shipping**: "I see one issue at the first open after the app launch. It appears I think 2 px down,
+it moves up with the hand-off." Root-caused with a temporary live geometry probe rather than
+guessed — a pre-existing, unrelated `QTimer.singleShot(0, ...)` fix already in `LibraryPanel.
+showEvent` (for List/Square mode's top-margin remainder math needing settled layout) hadn't landed
+yet when the new synchronous open-start grab fired, on a process's FIRST Library open only. Two
+plausible-sounding fixes (`layout().activate()`, `QListView.updateGeometries()`) were each tried
+live and confirmed, by direct measurement, to have zero effect before the real cause was found —
+neither assumed to have worked. Fixed by deferring the grab by the same one event-loop tick, but
+only on that first-open case (every later open confirmed to stay on the synchronous fast path).
+That fix then surfaced one more gap, caught by reasoning through it before it could ship as a live
+bug: a close issued inside the new deferral window would slip past `_close_library_flow`'s existing
+guard and start a close-slide from the wrong position — fixed with a dedicated, narrowly-scoped
+flag, deliberately NOT reusing `_is_animating` (which needed to stay available for the stuck-
+connection recovery case the earlier review round had specifically asked for).
+
+Live-confirmed by Pryme, not just assumed from the design's own reasoning: theme changes, scan-
+location removal, and un-excluding a book all correctly show current content on the next open —
+each traced through its actual code path to confirm it updates `LibraryPanel`'s model synchronously,
+never deferred. 17 new tests (`tests/test_library_list_slide_paint_suppression.py`), 733/733 full
+suite passes. Full design and review trail preserved in NOTES.md; TODO.md's now-closed entry moved
+to TODO_ARCHIVE.md. Close-side cost (125-135ms, untouched by this fix) flagged as a likely,
+lower-risk follow-up, not implemented tonight.
+
+---
+
 ## Session Summary — 2026-09-22 Session 2 — Two small confirmed fixes (a stale Undo anchor surviving a book switch/removal, a tag-completer double-add on Enter+arrow-selection), two small EQ-slider features (right-click reset, Shift+arrow jump-to-extreme), and a performance investigation that started from a single stale TODO item and ended somewhere much larger: a real bug in the theme stylesheet catch-up mechanism, a 10,000-row synthetic-data cleanup, and a systemic event-filter-overhead lead handed off for a future session.
 
 **Undo anchor surviving a book switch (`d07a559`) and book removal (`cdedb0e`).** Live report:

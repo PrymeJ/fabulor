@@ -537,6 +537,15 @@ class LibraryPanel(QFrame):
         self._tag_filter_active: bool = False
         self._programmatic_search_update: bool = False
         self._sort_initialized = False
+        # Set True at the end of showEvent's deferred _apply_view_mode re-run (see that
+        # method's own comment: the FIRST show's viewport height/margin computation runs
+        # before real layout has settled, so it's deliberately re-run one event-loop tick
+        # later). Read by PanelManager._start_library_entry's List-mode slide-paint-
+        # suppression grab, which must not run before this settles on a process's very
+        # first Library open — confirmed live, 2026-09-25: grabbing before this re-run
+        # landed captured the viewport 1px short, producing a visible pop at handoff once
+        # the real (correctly-margined) viewport took over.
+        self._first_show_geometry_settled = False
         # Keyboard-selection highlight: the flash is triggered ONLY from the list's key
         # handler (never from mouse selection), so mouse clicks never flash. Single fade anim,
         # restarted (stop+start) on each keyboard move so passes-through never stack.
@@ -2101,7 +2110,10 @@ class LibraryPanel(QFrame):
         # happened. Re-running it here, deferred one event-loop tick (same idiom as
         # _load_visible_covers above) so Show has fully completed first, fixes the first-open
         # case without needing the user to touch the mode selector.
-        QTimer.singleShot(0, lambda: self._apply_view_mode(self._delegate._view_mode))
+        def _reapply_view_mode_after_layout_settles():
+            self._apply_view_mode(self._delegate._view_mode)
+            self._first_show_geometry_settled = True
+        QTimer.singleShot(0, _reapply_view_mode_after_layout_settles)
 
     def hideEvent(self, event):
         self._progress_timer.stop()
@@ -2450,6 +2462,11 @@ class BookDelegate(QStyledItemDelegate):
         self._hover_fade_timer = QTimer(self)
         self._hover_fade_timer.setInterval(16)  # ~60fps
         self._hover_fade_timer.timeout.connect(self._advance_hover_fade)
+        # Set True only for the duration of a single viewport().grab() call (see
+        # PanelManager._start_library_entry's open-start grab) so the captured pixmap never
+        # freezes a hover highlight or fade trail into a static proxy. Must be read on the
+        # DELEGATE INSTANCE, never assigned on the class — see that call site's own comment.
+        self._suppress_hover_for_grab = False
         # Keyboard-selection highlight state — fully separate from hover. Path-keyed so it
         # survives a resort/refilter; _kbd_alpha (0–255) is driven by LibraryPanel's fade anim.
         # Used by 1-per-row (tint) and 2/3-per-row/Square (gates the duration/progress overlay,
@@ -3397,7 +3414,13 @@ class BookDelegate(QStyledItemDelegate):
         # Fast/Normal/Slow/Off fade trail) via on_list_hover_enter/leave — see
         # _flash_keyboard_selection_list — rather than the generic tint the other modes use.
         painter.fillRect(r, self._row_one if index.row() % 2 == 0 else self._row_two)
-        if self._hover_fade_mode != "Off":
+        # _suppress_hover_for_grab forces every row to paint as if nothing has any hover-derived
+        # alpha at all — both branches below, not just the currently-hovered row — so a
+        # viewport().grab() taken while this flag is set can't freeze a highlight or a mid-fade
+        # trail into a static proxy. See PanelManager._start_library_entry.
+        if self._suppress_hover_for_grab:
+            pass
+        elif self._hover_fade_mode != "Off":
             fade_alpha = self._hover_fade.get(book.path, 0)
             if fade_alpha > 0:
                 fade_color = QColor(self._hover_bg_color)

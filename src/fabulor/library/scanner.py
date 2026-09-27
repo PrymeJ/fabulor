@@ -1,3 +1,4 @@
+import logging
 import threading
 import os
 import re
@@ -9,6 +10,8 @@ from PIL import Image
 from PySide6.QtCore import QObject, Signal, QThread
 from PySide6.QtGui import QImage
 from ..db import LibraryDB
+
+logger = logging.getLogger(__name__)
 
 class ScannerWorker(QObject):
     progress = Signal(int, int)  # processed, total
@@ -198,7 +201,22 @@ class ScannerWorker(QObject):
                 break
             try:
                 m = mutagen.File(af)
-                if m and m.info:
+                # `m is not None`, NOT `if m` — mutagen.FileType subclasses dict (it IS the
+                # file's tag mapping), so a real, fully-parsed, valid file with ZERO tags is a
+                # perfectly normal case and evaluates as an EMPTY dict, i.e. bool(m) is False.
+                # `if m and m.info:` treated that as "mutagen failed," silently discarding the
+                # file's real .info (a genuine, non-null MPEGInfo/duration) whenever the file
+                # simply had no ID3/tag data — root-caused live 2026-09-26 (Pryme) on a real,
+                # playable, untagged MP3 (confirmed directly: mutagen.File(path) returned an
+                # MP3 object with tags=None, repr '{}', bool() False, and a perfectly real
+                # m.info.length of ~14030s) — and the SAME failure hit multiple files in one
+                # other real book (Shadow Country's 4 MP3 parts) the very first time this
+                # branch's own new logging ran, meaning this was silently losing duration data
+                # for more than the one book that originally surfaced it. `m is None` is
+                # mutagen's actual "could not identify/open this file" signal; `m.info` being
+                # falsy after that is still checked for correctness (a real file whose format
+                # mutagen recognizes but truly has no parseable stream info).
+                if m is not None and m.info:
                     duration += m.info.length
                     file_duration_ms = int(m.info.length * 1000)
                     book_files.append({
@@ -209,6 +227,29 @@ class ScannerWorker(QObject):
                         'title': af.stem,
                     })
                     cumulative_start_ms += file_duration_ms
+                else:
+                    # Genuinely rare now that the `if m` truthiness bug above is fixed (see that
+                    # branch's own comment) — this fires only for mutagen's actual failure case,
+                    # `m is None` (file genuinely unopenable/unidentifiable), or the rarer case of
+                    # a recognized format with truly no parseable stream info. Before the fix
+                    # above, THIS branch is what silently ate a real, playable, untagged MP3's
+                    # duration (confirmed live 2026-09-26, Pryme — see NOTES.md "Book Detail
+                    # duration bleed / tab-row height" investigation): `duration` stayed 0.0 for
+                    # the whole book, no exception raised, and nothing else ever re-derived it —
+                    # the book still got created via the folder-name fallback below, just
+                    # permanently missing a duration with no trail explaining why. This logging
+                    # is what caught it: re-scanning the restored file surfaced this exact log
+                    # line for it and, in the same run, for four more files in a SEPARATE,
+                    # unrelated book (Shadow Country) that had never been reported as having any
+                    # problem — meaning the `if m` bug was silently losing duration data more
+                    # broadly than the one book that happened to surface it. Kept here
+                    # (now genuinely rare rather than the common case) so any FUTURE real mutagen
+                    # failure still leaves a trail instead of reverting to silence.
+                    logger.warning(
+                        "[SCAN-DURATION] mutagen could not extract usable info for %s "
+                        "(m=%r, m_is_none=%s) — this file will not contribute to the book's "
+                        "duration or be added to book_files",
+                        af, m, m is None)
 
                 # Eagerly grab narrator from tags of the first track
                 if idx == 0 and hasattr(m, 'tags') and m.tags:
@@ -249,6 +290,15 @@ class ScannerWorker(QObject):
                                 if tag_year:
                                     break
             except Exception:
+                # Same silent-loss shape as the else-branch above, just for a genuine exception
+                # (mutagen raising outright) rather than a falsy-but-non-raising result — this
+                # file also drops out of `duration`/`book_files` with, previously, no trail at
+                # all. logger.exception (not .warning) so the traceback is captured too, since an
+                # unexpected exception here is more likely to point at a real, fixable parsing
+                # bug than the else-branch's "just an unparseable file" case.
+                logger.exception(
+                    "[SCAN-DURATION] exception extracting metadata from %s — this file will "
+                    "not contribute to the book's duration or be added to book_files", af)
                 continue
 
         if len(audio_files) > 1 and book_files:

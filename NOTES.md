@@ -1,3 +1,2124 @@
+## 2026-09-26 — `mutagen.FileType`'s dict-subclass truthiness silently dropped duration for real, valid, untagged audio files — one book's duration lost, another book's VT stitching broken (4 of 5 parts missing from `book_files`)
+
+**The bug.** `ScannerWorker._extract_metadata` (`scanner.py`) decided whether `mutagen.File(af)`
+successfully parsed an audio file with `if m and m.info:`. This looks like a reasonable
+"did mutagen give us something usable" check, and for years it silently wasn't one:
+`mutagen.FileType` (what `mutagen.File()` returns) subclasses `dict` — it literally IS the file's
+tag mapping — so a real, fully-parsed, PERFECTLY VALID audio file with zero ID3/tag data
+evaluates as an empty dict, and `bool(m)` is `False`, even though `m.info` (a genuine
+`mutagen.mp3.MPEGInfo` object with a real, correct `.length`) is sitting right there, fully
+populated. The guard short-circuited on `m`'s truthiness alone and never even reached `.info`.
+Confirmed directly, live, against the real file that surfaced this:
+
+```python
+>>> m = mutagen.File(path)
+>>> bool(m)                          # OLD guard's first operand
+False
+>>> m.tags
+None
+>>> m.info.length
+14030.210612244899                   # a completely real, correct duration — silently discarded
+```
+
+**How this was found.** Pryme reported a Book Detail bleed bug (a deleted book's blank duration
+briefly showing the PREVIOUS book's stale value on close — a separate, already-fixed bug, see
+below) and, investigating it, noticed the deleted book's OWN duration was `0.0` in the DB with no
+narrator/year either — genuinely missing, not a display bug. His own hunch, stated plainly before
+any code was read: "I suspected that it was not an M4B — indeed, single MP3 file." That was the
+right instinct; `scanner.py` had **zero logging anywhere in the whole file** at the time, so there
+was no trail to consult — the failure had always been completely silent by construction. Added a
+`logger` to the module and two new log lines (the `if`'s `else` branch, and the surrounding
+`except Exception` block, which ALSO silently swallowed failures with no trail) before asking
+Pryme to force-rescan, specifically so the scan's own log would either confirm or rule out the
+mechanism rather than trusting a fix built on inference alone.
+
+**The rescan surfaced something bigger than the one book.** The very first run with logging in
+place caught the Carver file (`m={}, m_is_none=False` — exactly the dict-truthiness case) AND,
+completely independently, **four MP3 files from an unrelated book — Shadow Country — with the
+identical failure signature.** Pryme caught the real-world consequence of that second case live,
+before the connection to this investigation had even been made explicit: Book Detail showed
+"8h 18m" for Shadow Country against his own spreadsheet's "40h 24m," and Player wasn't stitching
+the book's 5 parts into one continuous virtual timeline at all. The DB confirmed it directly:
+`book_files` had exactly ONE row (Part 1 — the only part that happened to carry an ID3 tag, which
+made it survive the old truthy check) instead of five. Per this file's own documented VT
+architecture, a `book_files` result this sparse means `Player` never builds a real VT for the
+book — every duration/chapter/seek computation downstream only ever saw Part 1's ~8h18m. This had
+apparently been silently wrong for as long as the book had been in the library, with nothing
+anywhere pointing at it.
+
+**The fix.** `if m and m.info:` → `if m is not None and m.info:`. `mutagen.File()` returning
+`None` is the library's actual "could not identify/open this file" signal; a falsy-but-non-None
+`m` (a real file with no tags) is a completely normal case and must not be treated as a failure.
+`m.info` is still checked separately afterward (a real, recognized format that genuinely has no
+parseable stream info is a distinct, rarer case the same branch still correctly catches). Verified
+directly against the real files before and after:
+
+```python
+>>> bool(m and m.info)                    # OLD
+False
+>>> bool(m is not None and m.info)        # NEW
+True
+```
+
+Re-running the SAME force rescan after the fix landed corrected both books in one pass — no
+special-casing either one, confirming the fix is general, not a patch for the specific file that
+surfaced it: Carver's `duration` became `14030.21s` (its real, correct value), and Shadow
+Country's `book_files` gained all 5 rows, totaling `145462.25s` ≈ 40h24m22s — matching Pryme's
+spreadsheet exactly.
+
+**Regression coverage.** `tests/test_scanner_untagged_mp3_duration.py` builds a real,
+mutagen-parseable, genuinely tag-free MP3 from raw MPEG-1 Layer III frame bytes (a single correct
+128kbps/44100Hz/stereo frame header repeated — enough consecutive synced frames for
+`mutagen.mp3.MPEGInfo` to compute a real duration) — no `ffmpeg` dependency, no checked-in binary
+fixture. Four tests: the fixture itself genuinely reproduces the bug condition (`bool(m) is
+False`, `m.info` real); a single-file book's duration is correctly captured; the folder-name
+fallback still works correctly for a book with literally no tags at all; and — the one that
+directly pins the Shadow Country shape — a 5-part multi-file book where only Part 1 carries a tag
+keeps ALL 5 parts in `book_files`, not just the tagged one. Every test confirmed to fail against
+the pre-fix code first, with the multi-file test reproducing the exact live failure shape
+(`1 == 5`, the other 4 parts logged as dropped) before confirming the fix resolves it.
+
+**Generalizable lesson, worth keeping separate from this specific bug**: a bare `if some_object:`
+truthiness check is not a safe stand-in for `if some_object is not None:` whenever the object's
+type might override `__bool__`/`__len__` in a way that's unrelated to whether it successfully
+represents "the thing we wanted." `mutagen.FileType` overriding truthiness via its `dict` base
+class is exactly this shape — the override exists for a completely different, legitimate reason
+(so a `FileType` can be used like the tag dict it wraps), and nothing about that API contract
+signals "and also, don't rely on `bool()` to mean success." Any future `if <library object>:`
+guard written against an unfamiliar third-party type's return value is worth a moment's check of
+whether that type has a customized `__bool__`/`__len__`/`__eq__` before trusting truthiness as a
+success signal — `is not None` is the only check that's unambiguous regardless.
+
+## 2026-09-26 — Book Detail duration-label bleed and header-row layout race, two real bugs caught live in the same investigation as the scanner truthiness bug above
+
+**Bug A — stale duration text reappearing on close.** `_on_close_clicked` unconditionally calls
+`_cancel_remove()` on every close, not just after an actual remove-confirm was armed.
+`_cancel_remove` used to unconditionally do `self._duration_label.setVisible(True)` regardless of
+whether the CURRENT book has a duration. `setVisible(False)` never clears a label's text — so a
+book with a genuinely missing duration (correctly hidden on load via `_update_duration_label`)
+was still holding whatever the PREVIOUS book's duration text had been, and re-showing it on every
+close surfaced that stale text for the length of the close slide, then correctly hid it again on
+the book's next open. Pryme caught this live, precisely: "Blank when it is opened. Appears when I
+hit close. Shown during close. Open again, blank." Fixed by having `_cancel_remove` delegate to
+`_update_duration_label()` — the one method that already owns this visibility/text decision
+correctly — instead of re-deriving (and getting wrong) the same logic inline. New
+`tests/test_book_detail_duration_label_cancel_remove.py` (4 tests), confirmed to fail against the
+pre-fix code.
+
+**Bug B — two separate layout defects, found via live geometry logging after an initial wrong
+theory was disproven, not guessed at.** Pryme reported the cover thumbnail sitting "6px down"
+after close. My first theory — that this tracked `_duration_label`'s visibility — was wrong, and
+Pryme's own screenshot-overlay math showed why: comparing the SAME book's cover position across
+states (not different books, which is what I'd initially misread the comparison as), the observed
+6px shift was correct, expected vertical centering of a cover shorter than the max 120px box, not
+a bug. A `[COVER-DRIFT]` geometry probe placed at `_on_close_clicked` confirmed this directly —
+the cover's `QRect` never changed at all through that entire handler. But Pryme's follow-up
+correction reframed the actual defect correctly: whether the duration field is empty or not
+should have NO bearing on the cover's position at all, full stop — and asked for the probe to be
+moved to where it could actually see one changing the other. Re-instrumented inside `load_book`
+itself, across the very next event-loop tick, and found it: the cover moved from `(10,10)` to
+`(10,16)` on the tick AFTER `load_book` returned — a real, user-visible pop, not a rendering
+artifact — caused by `_cover_label` having no explicit cross-axis alignment in `header_layout`,
+so Qt's own layout redistribution of leftover row height differed between the synchronous layout
+pass inside `load_book` and Qt's own later deferred pass. Fixed with `Qt.AlignmentFlag.AlignTop`.
+
+**Bug B, part 2 — the tab row itself moved.** After the AlignTop fix, Pryme reported the tab row
+still starting 12px higher for the durationless book than for every other book — and asked to
+insert a temporary fake duration into the DB to isolate it before fixing anything further
+(`UPDATE books SET duration = 3600.0 WHERE ...`, reverted after). That immediately restored the
+tab row to its correct position, isolating the cause precisely: `dur_save_row` (a `QHBoxLayout`
+holding `_duration_label` and `_confirm_remove_label`, both normally hidden for an ordinary,
+non-remove-confirming, durationless book) has no `setRetainSizeWhenHidden` on either child, so
+with BOTH hidden the row collapses to zero height — shrinking `meta_block`'s total height and
+pulling every row below the header, including the tab bar, up with it. Fixed by giving
+`_duration_label` the same `setRetainSizeWhenHidden(True)` policy `_narrator_label`/`_year_label`
+already carry for the identical reason (visible a few lines above it in the same constructor).
+New `tests/test_book_detail_header_row_height.py` (2 tests, built against a REAL `BookDetailPanel`
+widget tree via a direct `_build_ui()` call — this needed real `QHBoxLayout`/`QVBoxLayout`
+geometry behavior a lighter fake couldn't answer), confirmed to fail (147px measured height →
+124px) against the pre-fix code.
+
+**Debugging-discipline note, worth keeping separate from the mechanism above**: the first
+`[COVER-DRIFT]` probe (at `_on_close_clicked`) was built against a WRONG theory and correctly
+showed nothing moved there — that's not a wasted step. Testing the wrong theory and getting a
+clean, honest "no" from it is what made the CORRECT re-instrumentation (inside `load_book`, across
+the deferred tick) targeted rather than another guess. Pryme's correction wasn't just "no, that's
+not it" — it was a specific, checkable claim ("if duration had no effect, position would be
+identical") that named exactly where to look next.
+
+## 2026-09-25 — Library List mode's slide repainted its whole QListView on every frame — root-caused, fixed with an open-start grab-and-proxy, and a real first-open geometry race caught live and fixed too
+
+Closes the TODO item this same night's earlier Library List/Timeline bisect left open: "no cause
+found tonight, still just janky at every checkpoint... the tractable next step is the same
+live-instrumentation approach that found StreakGrid's cause — wire `_wire_paint_probe` to
+`library_panel_animation` specifically while in List mode." That's exactly what this entry does.
+
+**Measurement, all five view modes, live, `_wire_paint_probe` (already wired unconditionally to
+`library_panel_animation` in `panels.py` — no new instrumentation needed):**
+
+| Mode | QListView open | QListView close | Paint calls |
+|---|---|---|---|
+| **List** | 149-187ms | 125-135ms | 7-11 |
+| 1-per-row | 80-90ms | 51-77ms | 11-17 |
+| 2-per-row | 61-69ms | 23-47ms | 13-16 |
+| 3-per-row | 62-75ms | 25-32ms | 11-12 |
+| Square | 51-64ms | 23-31ms | 12-19 |
+
+`QListView` dominates every mode's paint cost, but List mode is 2-3x every grid mode, against a
+~300-355ms nominal slide — meaning List mode spends roughly half its wall-clock slide time
+repainting the list widget alone. Same structural mechanism CLAUDE.md already documents for Book
+Detail's slide (Qt repaints a moving widget's full content on every position tick); here it lands
+on one expensive widget (`QListView`'s dense per-row delegate painting) rather than many cheap
+ones, which is why List mode specifically is the outlier. Grid modes were confirmed cheap enough
+to be out of scope — no fix attempted there.
+
+**Design went through independent review before any code was written, twice, and both rounds
+caught real bugs that would otherwise have shipped:**
+
+*Round 1 rejected the first draft entirely.* Original plan: grab the viewport at CLOSE (deferred
+until any hover-fade trail settles), cache the pixmap, reuse it as a static proxy at the NEXT open,
+matching Pryme's own framing ("it opens however you close it"). Rejected on three grounds: `Off`
+hover-fade mode has no timer/flag to detect a held hover at all (hover in Off mode is answered
+purely at paint time via Qt's native `option.state`, with zero persistent state) — a close-time
+grab there could freeze a highlight with nothing available to wait on. A fingerprint meant to
+detect staleness (row count/view mode/sort key+direction) missed real, common cases: metadata
+edits, exclusion, and theme changes are all reachable via Book Detail while Library is closed, and
+none of them move that tuple. The deferred-grab lifecycle also had an unguarded reopen-during-
+pending-grab race — nothing stopped a second open from firing while an earlier deferred grab was
+still waiting on a fade to settle.
+
+*Revised approach: grab at OPEN-START instead.* Right when the content is already current — nothing
+is stored across a close, so nothing can go stale by construction, and there's no deferral for a
+race to land in. Hover is suppressed unconditionally for the one grab (a `_suppress_hover_for_grab`
+flag on `BookDelegate`, checked in `_paint_list_row`'s hover-fill block — forces BOTH fade-mode
+branches to skip painting any hover-derived alpha at all, not just the currently-hovered row, which
+matters for a row that's mid-fade-OUT with a live but non-hovered `_hover_fade` entry). Cost
+confirmed live before committing to the approach, not assumed: a temporary probe timed
+`viewport().grab()` at the exact call site, List mode — one 225ms cold-start outlier (first call in
+process, not representative per this file's own "report timings chronologically" rule), then
+steady-state 24.86-38.06ms. ~25-38ms paid once, up front, against the 149-187ms this removes from
+the slide — a clear net win, measured rather than assumed.
+
+*Round 2, after the open-start design was written up, caught three more concrete bugs before any
+code existed:* the hover-suppress flag had to be set on the `BookDelegate` INSTANCE
+(`library_panel._delegate`), never the class — `_suppress_hover_for_grab` is initialized in
+`__init__`, making it an instance attribute that silently SHADOWS a class attribute of the same
+name; assigning `BookDelegate._suppress_hover_for_grab = True` on the class would have done
+nothing at all, with no error, and the grab would have shown hover as normal — an easy bug to ship
+undetected. `setUpdatesEnabled(False)` had to target the VIEWPORT specifically
+(`_list_view.viewport()`), not `QListView` itself — disabling on the view would also freeze its
+frame border and scrollbar, neither of which the proxy (sized to the viewport only) covers, risking
+a visible smear/blank strip during the slide. And the proxy's teardown had to be a single,
+idempotent method owned by BOTH the open-finish path and `_close_library_flow` — a close landing in
+the gap between the open animation finishing and its 16ms settle callback, or a stuck `finished`
+connection that never fires `_on_library_shown` at all, would otherwise strand an orphaned proxy
+that then either slides out frozen over the live list or gets a second proxy stacked on top of it
+at the next open.
+
+**A real visual bug survived both review rounds and was only caught live, by Pryme, after
+shipping:** on a process's FIRST-EVER Library open only, the panel visibly shifted ~1-2px
+vertically right at the moment the frozen proxy handed off to the live list — "I see one issue at
+the first open after the app launch. It appears I think 2 px down, it moves up with the hand-off."
+
+Root cause, found by adding a temporary live geometry probe (logging `viewport().geometry()` at
+grab-time and at handoff-time) rather than guessed: List mode's `_apply_view_mode` computes a top
+viewport-margin correction from `viewport().height() % row_h`, and `LibraryPanel.showEvent` already
+carries a PRE-EXISTING, unrelated fix for this exact class of problem — a `QTimer.singleShot(0,
+...)` re-run of `_apply_view_mode`, documented in its own comment, originally written for Square
+mode's identical remainder math, because the FIRST show's viewport height reads wrong before Qt has
+genuinely settled layout, and correcting it needs one deferred event-loop tick. The new open-start
+grab, being synchronous, was racing that exact pre-existing correction — on a process's first open
+only, since every later open already has the correction settled from the first time it ran. Two
+plausible-sounding fixes were tried live and BOTH measured to have zero effect before the real
+cause was found — `library_panel.layout().activate()` (the same idiom already used successfully for
+an outwardly similar Book Detail geometry problem, `panels.py`'s `_open_book_detail`) settles
+`library_panel`'s OWN layout but does not reach `QListView`'s separate, internal
+`QAbstractScrollArea` viewport/scrollbar geometry at all; `QListView.updateGeometries()` (that
+scroll area's own internal recompute method) also produced identical, still-stale numbers.
+Confirmed by direct, repeated measurement across four separate live relaunches before either was
+ruled out — not assumed to have worked, not assumed to have failed.
+
+Fixed with a `LibraryPanel._first_show_geometry_settled` flag (`False` by default, set `True` at
+the end of that same pre-existing deferred callback) and having `_start_library_entry` defer its
+OWN grab-and-proxy setup by the identical one event-loop tick, but ONLY while that flag is still
+`False` — every open after a process's first stays on the synchronous, zero-added-latency fast
+path, confirmed unaffected by direct measurement (grab-time and handoff-time geometry identical
+across five consecutive opens in the same process).
+
+This introduced one more real gap, caught by reasoning through the change before it could ship as
+a live bug: a close issued inside that narrow first-open deferral window would see
+`library_panel_animation.state()` still `Stopped` (nothing had called `.start()` yet) and slip past
+`_close_library_flow`'s existing `Running`-state guard, starting a close-slide from the WRONG
+assumed start position (`(0, sidebar_y)`, the animation's target, while the panel is actually still
+off-screen at `(-panel_w, sidebar_y)`) — a visibly wrong phantom slide. Fixed with a dedicated
+`_library_entry_animation_pending` flag, true only for that narrow gap. Deliberately NOT reused
+from `_is_animating`, which stays `True` for `library_panel`'s ENTIRE open transition — including
+the stuck-`finished`-connection scenario the close-side teardown specifically exists to recover
+from. An earlier draft of this same fix tried exactly that reuse and was caught, before shipping,
+by one of the new regression tests failing for the right reason: it would have permanently blocked
+`_close_library_flow`'s recovery path for the rest of the session whenever a prior open's
+`finished` connection genuinely got stuck, defeating the whole point of the close-side teardown the
+earlier review round had specifically asked for.
+
+**Live-confirmed correctness across the cases most likely to break something this broad** — not
+just assumed from the design's own reasoning: theme changes while Library is closed, scan-location
+removal, and un-excluding a book from the Excluded Books popup, each independently traced through
+the actual code path to confirm the change lands in `LibraryPanel`'s model SYNCHRONOUSLY, never
+deferred to Library's next open — `_on_book_metadata_saved`/`_on_excluded_book_restored` both call
+`library_panel.refresh(force=True)` (or the model directly) immediately when the signal arrives;
+`LibraryController._on_remove_location` calls `self.ui.refresh_panel(force=True)`, a thin forward to
+the same `refresh()`. `LibraryPanel.refresh()` itself runs its `set_books()` call unconditionally,
+with no `isVisible()` guard and no dependency on the `force` parameter for that part. Theme changes
+were separately already covered: `_start_library_entry`'s very first line is
+`self._flush_pending_restyle()`, which runs BEFORE `.show()` and therefore before the grab,
+guaranteeing any deferred library restyle has already landed.
+
+17 new tests (`tests/test_library_list_slide_paint_suppression.py`): hover suppression in both fade
+modes including a mid-fade-out trail on a non-hovered row (not just a held hover, and not just Off
+mode — the actual gap the first design draft would have missed), proxy placement via `mapTo`
+against the viewport (not its raw, locally-scoped `.geometry()` — a wrong mapping would coincide by
+chance in a layout with no frame/offset, so the test fixture deliberately gives the layout a
+nonzero top margin to force genuine divergence), both exception-fallback paths (a `grab()` failure
+caught by an inner `try/finally`, and a failure AFTER the proxy was already created and stored,
+caught by the outer `except` calling the same idempotent teardown — the second case is NOT covered
+by the first, and needed its own test with a monkeypatch scoped to throw only on the specific
+`setUpdatesEnabled(False)` call, not unconditionally, since a blanket throw would also break the
+teardown's own restore-to-`True` call and fail the test for the wrong reason), the first-open
+deferral itself, and the close-during-deferral-window guard. 733/733 full suite passes.
+
+Design and review trail (both rejected drafts, both independent review rounds) folded into this writeup above rather than kept in a separate design doc. Close-
+side cost (125-135ms, currently untouched by this fix) is flagged there as a likely, lower-risk
+follow-up — grab at close-START mirroring this design exactly, reusing the same idempotent
+teardown — not implemented tonight.
+
+---
+
+## 2026-09-25/26 — Continuous ~90% CPU while Stats' Timeline tab is open: CLOSED — throttled TasselOverlay's idle sway tick rate instead of retrying the crashed WA_OpaquePaintEvent fix; a real measurement-methodology bug found and fixed along the way
+
+Follow-up to the entry directly below ("real root cause found... fix attempt CRASHED... fix does
+NOT ship"). That entry's root cause stands unchanged; this entry is the fix that finally shipped,
+plus an honest account of two live measurement mistakes made while verifying it — worth keeping
+in full, since correcting them is what turned a nearly-wrong writeup into a correct one.
+
+**Fix direction, chosen deliberately over retrying `WA_OpaquePaintEvent`.** The crash trace (see
+the entry below) was tied specifically to `WA_OpaquePaintEvent` interacting with one of the
+grids' own in-flight `QPropertyAnimation`s (`_reveal_anim`/`_label_anim`) — not a coincidence.
+Rather than retry that same mechanism "more carefully," chose TODO.md's own third listed option:
+throttle the tassel's OWN repaint rate instead of touching the grids' paint contract at all.
+`IDLE_AMP` (the idle sway's entire motion range) is only ±1px — most individual 33ms ticks were
+already moving the sway by a sub-pixel amount, paying the full expensive repaint cascade for a
+change too small to see. Added `TasselOverlay._IDLE_TICK_MS` (a second, much coarser interval
+used while idle), with the same `_sway_timer` switching to the original fast interval for as long
+as a kick (the real, visible ~6px click-triggered swing) is actively decaying, then dropping back
+once its envelope clears. `_idle_phase`'s per-tick step is scaled by the interval ratio so the
+sway's real-world period (~3.5s/cycle) stays correct regardless of which rate is ticking. Three
+more call sites needed to agree on which interval is current — the constructor, `showEvent`'s
+resume (must honor `_kick_active`, which deliberately survives the transport-bar blur grab's
+~64ms hide/show churn — see that method's own pre-existing docstring), and `set_show_tassel`'s
+re-enable — each reasoned through individually rather than assumed to fall out of the main
+mechanism for free. Pryme correctly flagged, live, that making the tassel itself opaque (a
+tempting-sounding alternative) wasn't viable either: the widget's own bounding rect is
+deliberately larger than the tab so the tassel has room to swing, and painting a solid rect over
+that whole area would either clip the tassel against a hard edge mid-swing or paint over
+whatever's actually behind it — the same underlying problem `WA_OpaquePaintEvent` on the GRIDS
+was trying to avoid, just moved to a different widget. Shipped as commit `5b5995b`, 10 new tests
+(`tests/test_tassel_overlay_sway_rate.py`).
+
+**Two real measurement mistakes made and corrected while verifying this live — the actual before/
+after numbers are NOT what the first live comparison suggested, and it's worth recording exactly
+how that was caught rather than just stating the corrected numbers.**
+
+1. **`ps`'s `%CPU` column is a CUMULATIVE average since the process started, not an instantaneous
+   rate** — confirmed directly (`man ps`: "CPU time used divided by the time the process has been
+   running"). Every reading taken with it tonight, including the ORIGINAL ~90% baseline claim
+   from the entry below, was distorted by this — worse the longer the process had been running,
+   since a brief early spike or lull gets diluted into an increasingly stale average rather than
+   reflecting current behavior. Switched to a correct instantaneous sampler
+   (`/proc/[pid]/stat`'s `utime`+`stime` fields, delta over a short wall-clock window — the same
+   method `top` itself uses) partway through tonight's verification.
+2. **Even with the correct method, a single early reading was a genuine statistical outlier, not
+   a real effect — and was very nearly written up as one before Pryme's own skepticism caught
+   it.** A live A/B between two idle-interval candidates (150ms, the design's original choice, vs.
+   180ms, tried on Pryme's own suggestion after noticing the tassel visually overlaps the bookmark
+   tab during a kick — a real, separate reason `WA_OpaquePaintEvent` on the tassel itself
+   wouldn't have worked either) produced one Streak-at-180ms sample reading ~1.0% CPU, against a
+   documented ~90% baseline — a strikingly clean-looking result. Pryme did not accept it at face
+   value ("Well, I guess ... Most probably I'll leave it at 150") and asked for a revert-and-
+   remeasure at 150ms specifically. That reading came back ~29-31%, not the expected near-zero if
+   180ms's ~1% had been the true number — a real, unexplained contradiction for the SAME grid.
+   Rather than accept either number, ran a fully controlled comparison: kill and freshly relaunch
+   the app for EACH condition (never reuse a process across measurements, since a longer-lived
+   process's ambient state — cache warmth, GC pauses, unrelated background activity — can itself
+   drift), sample Streak AND Heatmap on each fresh process, immediately, before doing anything
+   else. Result: **BOTH 150ms and 180ms land in the same ~18-31% band for both grids** (Streak
+   ~29-31%, Heatmap ~18-22%, at either interval) — the earlier ~1.0% reading was pure noise, not
+   a real property of 180ms. A third, more extreme data point (`_IDLE_TICK_MS=2000`, chosen
+   specifically as a "pretty much not swaying anymore" near-off condition, per Pryme's own
+   framing, to isolate whether the tassel mechanism was even the dominant remaining cost) measured
+   Streak at ~15% — roughly half of 150ms's figure, confirming the throttle mechanism DOES
+   genuinely help, proportionally, exactly as designed — but also surfacing a real, separate ~15%
+   floor that no amount of further tassel-throttling can remove. Live log evidence
+   (`[PANEL-TIMING] stats EVENTFILTER`) taken during this same investigation showed
+   `StatsPanel.eventFilter` itself costing 13-23ms per sampling window at up to ~1200 calls — a
+   real, substantial, ALREADY-DOCUMENTED separate cost (see TODO.md's "Book Detail slide
+   paint-suppression" thread) — the most likely explanation for that floor, though not
+   independently re-confirmed as the exact cause in this session.
+
+**150ms shipped** — Pryme's own original instinct, confirmed equivalent to 180ms by the corrected
+numbers rather than assumed superior or inferior either way; 180ms's only real difference is a
+visibly choppier idle sway for zero measured benefit, so there was no reason to prefer it once
+the two were shown to cost the same.
+
+**Net, honestly measured result**: ~90% sustained CPU while Stats' Timeline tab is open,
+before → ~18-31% after (not the ~20% a bad early reading nearly reported this as, and not the
+near-zero the one anomalous sample suggested) — a real, large, correctly-verified improvement,
+with a known, separate, already-tracked ~15% residual floor that this fix was never meant to
+address. **Standing lesson for any future live perf verification on this codebase**: `ps`'s
+`%CPU` is unsafe for anything beyond a first coarse glance — use an instantaneous sampler from
+the start; and a single striking-looking sample, however clean, is not a result until it survives
+a second measurement on a freshly-launched process, not the same long-lived one. Both lessons are
+now added to CLAUDE.md's own "chronological order"/"i.i.d. samples" measurement-discipline rules
+in spirit, though not yet copied there verbatim — worth doing on a future pass through that
+section.
+
+---
+
+## 2026-09-25 — Continuous ~90% CPU while Stats' Timeline tab is open: real root cause found (TasselOverlay's 30fps sway forces a full styled-background repaint cascade), fix attempt CRASHED (real SIGSEGV) and was reverted — root cause stands, fix does NOT ship
+
+Direct continuation of tonight's StreakGrid slide-jank fix (see the entry below). Pryme reported,
+mid-session, something that broke the pattern of everything else investigated tonight: "there is
+definitely something wrong somewhere that affects all animations. Now I clicked on the tassel...
+even in a short distance it travels in a short time, it drops frames" — the tassel toggle, a
+trivial ~20×56px widget click-animation that had never shown a problem before, all session.
+
+**Investigation, in order, each step either confirming or ruling out a candidate directly rather
+than guessing:**
+- `ps`/`top` on the live process: **~90% CPU, sustained, not a spike** — confirmed across three
+  separate samples 2s apart. Closing Stats dropped it to ~5% instantly; reopening on Heatmap
+  brought it straight back to ~79-90%. This is CONTINUOUS cost tied to Stats/Timeline being
+  visible, not a per-slide cost like everything else found tonight.
+- `py-spy` (installed fresh via pip into the venv) dump + a 5-second 100Hz statistical profile:
+  **56.9-65.7% of ALL CPU time in `paintEvent`** (later confirmed as `HourlyHeatmap`'s, once a
+  mix-up with Streak-being-default-on-restart was caught and corrected), 15.5% in
+  `visual_area_blur.py`'s `draw` (real blur work, confirmed separately NOT causal — switching
+  Panel Backdrop away from Frosty dropped `draw`'s share to 1.7% but `paintEvent`'s share went
+  UP, to 65.7%, proving blur was a bystander cost, not the driver).
+- **Ruled out directly, not assumed**: real mouse movement (cursor was confirmed outside the app
+  the whole time); `TasselOverlay._sway_timer`/`_on_sway_tick` (searched all profile samples —
+  never appeared as a leaf OR a caller, despite being the obvious first suspect); `focus_marker.py`
+  (searched — never appeared anywhere in any sampled stack); a stuck/still-running
+  `reveal_progress`/`label_progress` animation (py-spy `--locals` dump showed `anim_alpha: 1,
+  anim_scale: 1, local: 1` — fully settled, steady-state values, not mid-animation); a Python-level
+  `HourlyHeatmap.update()`/`repaint()` override (a temporary traceback-logging override was added,
+  restarted, reproduced — only ONE hit ever logged, the harmless construction-time call, despite
+  `paintEvent` clearly still firing dozens of times per second live).
+- **Real root cause found via `QT_LOGGING_RULES="qt.widgets.painting=true"`** (Qt's own native
+  paint-diagnostic category, set at process launch — the only technique that could see past
+  Python's inability to trace a C++-level trigger). The captured log showed an exact, repeating
+  cycle: `Marking QRect(...) of TasselOverlay dirty ... Sending update request to MainWindow ...
+  Syncing dirty widgets ... Painting and flushing dirty ... QList(TasselOverlay(...))` — and
+  critically, EVERY cycle's paint pass also re-marked `stats_time_tab` (FULL SIZE, 260x463) and
+  `StreakGrid` (FULL SIZE, 242x448, even though HIDDEN) dirty alongside `HourlyHeatmap`, not just
+  the tassel's own small rect.
+
+**Mechanism, confirmed via direct code read (not inferred)**: `TasselOverlay` has NO
+`setAttribute` calls anywhere in its `__init__` — no `WA_OpaquePaintEvent`, no opacity effect, a
+completely default `QWidget`. Its `_sway_timer` (33ms interval, ~30fps, by design — a continuous
+idle-sway micro-animation, not gateable since it's ALWAYS visually changing) calls `self.update()`
+every tick. Because `TasselOverlay` is a non-opaque widget sitting inside `stats_time_tab` (which
+has `WA_StyledBackground=True` and paints an opaque `bg_main`, per `covers_opaquely()`'s own
+docstring), Qt's compositor cannot treat the tassel's dirty region as isolated — it has to
+re-composite the WHOLE styled-background region behind it, sweeping in every sibling sharing that
+region: `HourlyHeatmap` (visible) AND `StreakGrid` (hidden, but still repainted — its own
+`paintEvent` still runs even while `setVisible(False)`, per Qt's own semantics for a widget that's
+merely not shown vs. one that's been destroyed). This directly explains the earlier `_on_sway_tick`
+py-spy absence too: the Python call itself (`self.update()`) executes in well under 1ms and was
+never once caught mid-execution by 100Hz sampling — only its much more expensive DOWNSTREAM
+consequence (`HourlyHeatmap`/`StreakGrid`'s own expensive `paintEvent`, the same 20-27ms/call cost
+measured for StreakGrid earlier tonight) was visible in the profile.
+
+**This explains Pryme's tassel-jank report directly, not just the CPU number**: with
+`HourlyHeatmap`/`StreakGrid` each costing tens of milliseconds per paint and BOTH being dragged
+into every single 33ms tassel tick's repaint cascade, the tassel's own trivial slide animation was
+competing for main-thread time against a self-inflicted ~30Hz storm of expensive, unnecessary
+repaints of completely unrelated widgets — a textbook explanation for "a widget that's been
+clicked many times without issue suddenly drops frames," once something else (StreakGrid/Heatmap
+being the active Timeline view) put load into the same feedback loop.
+
+**Fix attempted, CRASHED with a real SIGSEGV, REVERTED — do not re-attempt without much more
+careful testing.** The standard Qt fix for "a translucent widget forces its styled-background
+ancestor's region to repaint": give `HourlyHeatmap`/`StreakGrid` `WA_OpaquePaintEvent` (so Qt's
+compositor never needs to touch them on an unrelated sibling's repaint) — but that flag is a
+correctness CONTRACT requiring the widget to paint every pixel of its own rect on every call, so a
+`_bg_color` full-rect `fillRect` was added as the first paint operation in both `paintEvent`s (the
+existing 1px cell-gap borders previously relied on the parent's background showing through
+unpainted), wired via a new `set_bg_color` method fed from `on_theme_changed`'s existing `bg_main`
+read (already used for `_spinbox_arrow_color`) and from initial construction
+(`self._spinbox_arrow_color`, already the same value at that point).
+
+**Live-tested — crashed on the very next Stats-panel interaction.** `coredumpctl`/`journalctl`
+confirmed a real `SIGSEGV` (not a Python exception — the redirect log was completely empty, no
+traceback at all): `QAbstractAnimationPrivate::setState` → a Qt signal dispatched into Python
+(`PySide::SignalManager::callPythonMetaMethod` → `PyObject_SetAttr`, i.e. a `@Property` setter) →
+segfault inside `QtWidgets.abi3.so`'s own compiled code (`__dynamic_cast` failing on what is very
+likely a dangling/mismatched C++ pointer). This fired from `QAnimationDriver::advanceAnimation` —
+i.e., genuinely from one of the grids' own `QPropertyAnimation`s (`_reveal_anim`/`_label_anim`)
+ticking, not from anything obviously unrelated. **Root cause of the crash itself is NOT
+diagnosed** — plausible candidates (setting `WA_OpaquePaintEvent` while an animation has cached
+paint-related state from before the flag was set; some interaction between the newly-added
+`_bg_color`/`set_bg_color` machinery and an in-flight property animation's own Qt-side dirty
+tracking) were not investigated further — the fix was reverted (`git checkout --
+src/fabulor/ui/stats_panel.py`) rather than debugged live, given the severity (an actual crash,
+not a visual glitch) and the hour. 716/716 tests still pass on the reverted, clean code (the crash
+was never caught by the test suite — it's a live Qt-animation-timing interaction, not something a
+headless/offscreen test would plausibly reach).
+
+**Standing state**: the root cause (TasselOverlay's non-opaque paint forcing a styled-background
+repaint cascade) is real, confirmed, and well-understood. The specific fix attempted (opaque
+grids + background fill) is NOT safe as implemented and does NOT ship. Whoever picks this up next
+should: (1) re-derive a fix from scratch rather than reusing the reverted diff verbatim, (2) test
+`WA_OpaquePaintEvent` changes in isolation from the `set_bg_color`/`_bg_color` machinery to narrow
+which half is implicated in the crash, (3) consider a structurally different fix instead — e.g.
+throttling/gating the tassel's own repaint rate while Stats' Timeline tab shows an expensive grid,
+rather than trying to make the grids immune to the cascade at the compositor level, (4) test any
+new attempt through MANY more open/close/tab-switch/theme-change cycles before considering it
+safe, given this crash took a full panel interaction cycle to surface, not the first paint.
+
+---
+
+## 2026-09-25 — StreakGrid's own-slide jank root-caused and FIXED: 20-27ms/paintEvent call, 6-12 calls per Stats slide, real content re-derived every frame for a genuinely static view
+
+Direct continuation of the Book Detail investigation below — after finding the ~15µs/event
+app-wide-filter tax (see the entry directly below this one), extended the same live-probe
+approach (`_wire_paint_probe`/`_wire_event_filter_cost_probe`/`_wire_event_dispatch_probe`,
+previously only wired to `book_detail_panel_animation`) to Library's and Stats' OWN slide
+animations, generalizing `_wire_event_filter_cost_probe` with a `name` parameter (it previously
+hardcoded `"book_detail"` in its log line and read Book-Detail-specific context unconditionally
+— fixed to only do either when actually measuring Book Detail's own slide).
+
+**Real, striking result from Pryme's live test round**: `StreakGrid.paintEvent` cost 93.7-187.4ms
+across just 4 Stats-on-Timeline-Streak opens, at 6-12 calls per open — **20-27ms per single
+paintEvent call**, easily enough on its own to blow a 60fps frame budget. Traced to the actual
+`paintEvent` body (`stats_panel.py:2593`): a `for r in range(26): for c in range(14)` loop (364
+cells) doing `timedelta` subtraction, `isoformat()` string construction, dict lookups, and
+`QColor` allocation/`setAlpha` PER CELL, unconditionally, on every single call — none of it
+cached or short-circuited for a call where nothing changed.
+
+**Pryme asked the right question before any fix was written**: whether this had already been
+addressed when `StreakGrid` was originally designed, since he specifically remembered a cache
+being built for exactly this reason. Checked git history and SESSION.md rather than assumed:
+`73f64c9` ("add streak_grid_cache backend", 2026-06-11) landed the SAME DAY as `6002e4d`
+(StreakGrid's own UI), confirming this was a real, deliberate, from-day-one design decision —
+but it caches the underlying DATA only (the 364-day listened/finished-day sets, avoiding
+re-querying `listening_sessions`/`book_events`), matching exactly the four invalidation triggers
+Pryme named (a book finished for the first time that day, a book unfinished, a session deleted,
+`day_start_hour` changed). **It never addressed the PAINT side** — nobody in 2026-06-11 measured
+`paintEvent`'s own per-call cost during an unrelated panel-slide animation, because that class of
+measurement (live paint-cost probing during a panel slide) didn't exist until tonight's Book
+Detail investigation invented it. So this is a genuinely separate, newly-discovered gap on an
+axis the original design was never built to address — not something that fell through a crack in
+work already done.
+
+**Fix, corrected once after a live-reported regression.** First version: `StreakGrid.
+setUpdatesEnabled(False)` for the Stats slide's duration (mirroring "the data can't have changed,
+so don't repaint it"), no proxy — reasoned (wrongly) that no proxy was needed since, unlike Book
+Detail's own slide, the grid doesn't MOVE relative to its parent during Stats' slide. **Live-
+reported by Pryme with screenshots**: the grid slid in visibly BLANK, then popped fully-painted
+the instant `resume_timeline_paint()` ran. Root cause of the regression: `setUpdatesEnabled(False)`
+doesn't skip repainting only unchanged content — it skips ALL painting, including the grid's very
+first paint, and the grid hadn't painted yet by the time it became visible (`_start_stats_entry`
+calls suspend before `.show()`'s cascade ever reaches it). The "no proxy needed" reasoning
+addressed the wrong risk — a proxy isn't needed for MOTION tracking here (correct), but IS needed
+to show the grid's already-correct content immediately instead of nothing.
+
+**Corrected fix**: `StatsPanel.suspend_timeline_paint()`/`resume_timeline_paint()` (`stats_panel.
+py`) now grab a pixmap of the grid BEFORE disabling updates, show it via a lazily-built,
+reused-not-leaked `QLabel` proxy (`self._timeline_paint_proxy`) positioned at the grid's own
+`.geometry()` within its shared parent (no position-tracking needed, since nothing here moves
+relative to its parent — unlike Book Detail's `_wire_slide_paint_suppression`, where the
+animated widget IS the thing sliding). Wired into `PanelManager._start_stats_entry`/
+`_close_stats_flow`/`_on_stats_hidden` (`panels.py`), suspend right after `.show()`+
+`refresh_current_tab()` (so content is fully determined first) and right before the slide starts,
+resume at slide-finish. Only suspends whichever grid `_show_streak_grid` says is actually
+visible — the hidden one is already `setVisible(False)` and gets no paint events regardless.
+
+**Live-confirmed working, twice — once catching the regression, once confirming the fix**:
+"Fast but displays a behavior I don't like. Slides blank, then populates in a blink" (first
+version) → "I confirm that it works as intended with the sluggishness gone" (corrected version).
+9 new tests (`tests/test_stats_timeline_paint_suppression.py`) specifically cover the proxy
+mechanism (visibility, geometry match, non-null pixmap, hide-on-resume, reuse-not-leak-a-new-
+proxy-per-call) — the first version's own test suite (5 tests, `updatesEnabled()` only) would
+NOT have caught the blank-flash regression, since it never asserted anything about what's
+actually shown. 716/716 full suite passes.
+
+**Not yet checked**: whether `HourlyHeatmap` (the OTHER Timeline view) has the same class of
+expensive per-cell paintEvent cost — untested tonight (Pryme's live rounds specifically targeted
+Streak), though `suspend_timeline_paint`/`resume_timeline_paint` already cover it structurally
+(the fix suspends whichever grid is visible, not Streak specifically) since HourlyHeatmap is a
+similarly-sized grid (14×24=336 cells vs Streak's 26×14=364) with the same "static once built"
+design. If HourlyHeatmap's own paint cost is ever measured and found expensive too, this fix
+already applies to it with no further code change needed.
+
+---
+
+## 2026-09-25 — Book Detail's per-source jank ordering (Tags worst, Stats middle, Library best) quantified and explained at the mechanism level: ~15µs/event marginal cost per app-wide `eventFilter`, structurally irreducible without removing the filter entirely
+
+Direct continuation of the entry below (occlusion guard shipped for `ScrollHoverTracker`/
+`GridHoverTracker`). Pryme pushed back correctly after that fix: "After testing many theories, we
+are not any closer to finding the causes" for Library List jank and Timeline/Streak jank (both
+janky at every historical checkpoint tested tonight, no bisectable before/after — see the entry
+below), but flagged Book Detail's INCONSISTENCY (sometimes smooth, sometimes not, varying by
+source panel) as the one lead with real internal variation worth instrumenting live rather than
+bisecting historically.
+
+**Method**: reused the existing `_wire_timing_probe`/`_wire_paint_probe`/`_wire_event_filter_cost_probe`
+instrumentation already wired to `book_detail_panel_animation` (`install_panel_timing_probe`,
+default-enabled via `FABULOR_PANEL_TIMING=1`, logs to `platformdirs.user_log_dir("fabulor")` —
+**file-only, no console handler**, so `/tmp/*.log` redirects from launch never show it; had to find
+the real log path first). Marked the log's line count, asked Pryme to open/close Book Detail
+repeatedly from Library/Stats/Tags while the fixed build ran, then read forward from the marker.
+
+**Quantified result, 21 real opens, matches Pryme's felt ordering exactly:**
+
+| source | n | avg wall | avg max_frame_gap | avg jank ratio | avg own_cpu% |
+|---|---|---|---|---|---|
+| library | 6 | 360.1ms | 60.2ms | 0.39 | 82.3% |
+| stats | 5 | 404.3ms | 79.3ms | 0.66 | 98.8% |
+| tags | 10 | 367.5ms | 56.4ms | 0.82 | 103.1% |
+
+None of these are actually "smooth" by any strict reading (jank ratio 0.39-0.82, CPU pegged at or
+above 100% on most opens) — this updates the earlier, more optimistic framing from tonight's
+`e55fdb6`/occlusion-guard work. But the ORDERING (Tags worst, Stats close behind, Library clearly
+best) is real, consistent, and matches Pryme's very first report of the whole night almost exactly.
+
+**First hypothesis, checked and found wrong before being reported as a finding**: `EVENTFILTER`
+lines showed `tags_panel._thumb_hover` (the `GridHoverTracker` just patched with an occlusion guard
+this session) still logging 593-1245 calls during a single ~350ms slide — looked at first like the
+guard wasn't taking effect. Checked rather than assumed: confirmed the running process was
+genuinely built from the patched commit (`e450ba1`, `git log -1` + `readlink -f /proc/<pid>/cwd`),
+confirmed the guard code was present in the file, then computed PER-CALL cost (total_ms/calls) —
+~12-22µs/call, consistent with a fast early-return, not with the tracker's real resync/hit-test
+logic (which does `childAt()` walks and geometry checks and would cost more). **The guard IS
+working — the call COUNT staying high is a structurally different problem the guard was never
+positioned to fix.**
+
+**Root cause of the remaining cost, measured directly rather than inferred**: `hover_tracker.py`'s
+own module comment already documents WHY the filter must be `QApplication`-wide rather than scoped
+to the scroll area/viewport — "verified offscreen: zero moves observed for a move sent to a row"
+when tried at viewport scope, because rows are children of the scrolled content and events land on
+THEM, not on any ancestor a narrower filter could watch. This forecloses the naive "install it
+somewhere smaller" fix. A real isolated benchmark (`QApplication.sendEvent` through a bare
+`QObject.eventFilter`, zero probe wrapper, zero guard logic) measured:
+- **~2.3µs/event with ZERO app-wide filters installed** (baseline Qt dispatch cost).
+- **~17.35µs/event with ONE app-wide filter installed** (any filter, even one that does nothing
+  but `return False` immediately) — matches the live-measured ~12-22µs/call almost exactly, and
+  is the actual explanation for the plateau: this is the fixed C++↔Python marshalling cost PySide6
+  pays every time Qt calls into a Python `eventFilter`, paid once per installed filter per event,
+  REGARDLESS of what the filter's Python body does. My guard's own lookup chain
+  (`self.parent().window()`) measured separately at ~0.09µs — negligible, confirming the ~15µs
+  marginal cost per filter is Qt/PySide's dispatch overhead, not anything reducible from inside
+  `hover_tracker.py`.
+
+**This is the actual, now-quantified explanation for the Tags > Stats > Library ordering**: Library
+has ZERO app-wide filters active (`total_filter_calls=0` in every Library-sourced open logged
+tonight). Stats has exactly one (`StatsPanel.eventFilter`, occlusion-guarded via `e55fdb6`). Tags
+has up to two simultaneously (`TagManagerWidget.eventFilter` + whichever of `_row_hover`/
+`_thumb_hover` is active, both occlusion-guarded this session) — each paying the same ~15µs/event
+marginal tax independently, on every one of the hundreds of app-wide events (`Paint`, `Move`,
+`UpdateLater`, `PolishRequest`, etc.) that fire during a single panel slide. More installed
+app-wide filters, more marginal tax per event, compounding linearly — not a bug in any one filter,
+a structural cost of the ARCHITECTURE (how many app-wide filters are live at once), which the
+occlusion guards reduce (each filter is now individually cheap once occluded) but cannot eliminate
+(Qt still dispatches to install, guard or no guard).
+
+**Honestly scoped, not chased further tonight**: closing this gap further would mean either (a)
+finding a way to observe row/cell hover WITHOUT an app-wide filter at all — a genuine
+re-architecture of `hover_tracker.py`'s core mechanism, not a follow-up to tonight's guard, and the
+module's own docstring already records that the obvious narrower alternative was tried and
+confirmed not to work; or (b) reducing how many app-wide filters can be simultaneously live, which
+would need to be checked against every one of the multiple live-reported bugs each filter's
+existence already fixes (Tab/Backtab list-nav interception, click-outside detection, keyboard
+detail-panel handling — see `tag_manager.py`'s own extensive comments on why these exist). Neither
+is scoped or started. Filed as a genuine, understood, but NOT closed architectural cost — see
+TODO.md.
+
+**Correction, same night, caught by Pryme directly: the above explains only PART of the ordering,
+and I initially wrote it up as if it explained all of it — it doesn't.** Pryme pointed out
+correctly: "we had these issues, especially the book details slowness, before these filters were
+implemented though." Checked against this session's own earlier bisect data rather than
+defended: at the `6002e4d` checkpoint (2026-06-11, StreakGrid's first commit — `a4e3d65`, which
+introduces `ScrollHoverTracker`/`GridHoverTracker`, does not exist until 2026-07-31, seven weeks
+LATER), Pryme directly reported "book details just as bad as today when opened from the Stats,
+but better from the Library and the Tags." **Tags was BETTER than Stats at that point** — the
+opposite of tonight's live-logged ordering (Tags worst) — and the hover trackers this entry's
+whole mechanism explanation rests on did not exist yet. So the Stats-worse-than-Library asymmetry
+predates `a4e3d65` by seven weeks and cannot be explained by it.
+
+What DOES fit, checked directly rather than assumed: `StatsPanel.eventFilter` itself (a
+DIFFERENT, Stats-specific app-wide filter, unrelated to the two hover trackers) was introduced by
+`8257546` ("feat: dismiss 'Reset all stats' confirmation on click outside") at 01:41 on
+2026-06-11 — confirmed via `git merge-base --is-ancestor 8257546 6002e4d` to be an ancestor of,
+and therefore already present in, the 17:00-same-day `6002e4d` build that was tested. **This is a
+much better fit for the ORIGINAL Stats-vs-Library gap**: it's a real app-wide filter, it existed
+at the exact checkpoint where the asymmetry was first confirmed present, and it predates the
+hover trackers entirely. The corrected picture, not yet re-verified with fresh live numbers: (1)
+`StatsPanel.eventFilter` alone plausibly explains Stats being worse than Library, consistently,
+since 06-11 — independent of anything shipped tonight; (2) `a4e3d65`'s hover trackers, introduced
+much later (07-31), are what pushed TAGS specifically from "better than Stats" (06-11) to "worse
+than both" (tonight's logged data) — a separate, later-arriving effect layered on top of the
+older Stats-specific one, not the same cause restated. Both mechanisms are real and both are
+occlusion-guarded now (`e55fdb6` for Stats, tonight's fix for Tags' trackers) — but the ~15µs/event
+marginal-filter-cost explanation above should be read as explaining the TAGS-specific escalation,
+not the whole ordering's origin. The original Stats-vs-Library gap's own root cause (why
+`StatsPanel.eventFilter`'s cost specifically, rather than just "an app-wide filter exists") has
+not been separately measured — flagged here rather than left implied as already covered by the
+generic marginal-cost number above, which was measured against a synthetic bare filter, not
+`StatsPanel.eventFilter`'s own real body.
+
+**Second correction, same night: a controlled retest shows "Tags worst" was itself an artifact of
+the first test round, not a stable finding.** Pryme directly disputed the ordering: "my eyes also
+don't agree with the numbers about Tags being worse than Stats... a tag with a few thumbnails
+usually opens the book details less jankier than the Stats." Rather than re-argue from the
+existing data, extended the probe itself — `_book_detail_probe_context()` (`panels.py`) now
+records OPEN-vs-CLOSE direction (read from `book_detail_panel_animation.endValue().x()`, not
+inferred) and, for Tags specifically, the exact tag name and live thumbnail count
+(`len(tags_panel._book_grid._thumbs)`) — so a retest would be self-documenting instead of needing
+reconstruction after the fact. 707/707 tests still pass; four log call sites updated to use the
+new helper instead of reading `_book_detail_underlay` directly.
+
+Pryme then did a SECOND, better-controlled round (86 real opens/closes, deliberately varying tag
+size: `humor`=3 books, `2015`=4 books, `elide`=19 books, `dummy`=84 books — a genuine stress-test
+range, not a single arbitrary tag). Isolated to OPEN only (the direction actually being judged):
+
+| source | n | avg wall | avg gap | avg jank ratio | avg cpu% |
+|---|---|---|---|---|---|
+| library | 13 | 397.7ms | 98.3ms | 0.56 | 94.1% |
+| tags | 19 | 379.5ms | 73.0ms | 0.76 | 98.0% |
+| stats | 11 | 411.5ms | 100.1ms | 0.64 | 102.6% |
+
+**Library is still clearly best. Stats vs. Tags is now genuinely mixed, not a clean ordering**:
+Tags has the higher jank ratio (0.76 vs 0.64) but the LOWER CPU% (98.0 vs 102.6) and a lower avg
+gap (73.0ms vs 100.1ms) than Stats — the two metrics disagree on which is "worse," which they did
+NOT do in the first round's cleaner-looking 0.39/0.66/0.82 ordering. That first ordering should be
+read as noisier than it looked, not as a stable ranking.
+
+**The book-count breakdown is the more important finding, and it directly supports Pryme's
+correction: jank does NOT scale monotonically with tag size at all.**
+
+| tag | books | n | avg jank ratio | avg cpu% |
+|---|---|---|---|---|
+| humor | 3 | 3 | 0.84 | 103.7% |
+| 2015 | 4 | 4 | 0.75 | 96.2% |
+| elide | 19 | 4 | **0.69 (lowest)** | 96.2% |
+| dummy | 84 | 8 | 0.78 | 97.6% |
+
+The SMALLEST tag (`humor`, 3 books) had the WORST jank ratio of the four; a mid-sized tag
+(`elide`, 19 books) was the smoothest; the heaviest stress-test tag (`dummy`, 84 books) sat
+in between, not at the top. **This directly confirms Pryme's lived observation that grid size is
+not a reliable predictor of Book Detail jank when opened from Tags** — whatever drives the
+variance, it isn't simply "how many thumbnails are loaded." Not yet identified: what actually
+does drive the per-open variance (candidates not yet checked — how recently the mouse moved
+over the grid before the click, which specific book/row was clicked, GC pauses, or genuine
+run-to-run noise this measurement granularity can't resolve). **The honest state of this
+sub-investigation is now: Library is reliably best, but Stats-vs-Tags cannot currently be ordered
+with confidence, and tag size specifically is ruled out as the explanation for Tags' internal
+variance.** This does not retract the earlier ~15µs/event marginal-filter-cost mechanism (still
+real, still measured independently via a synthetic isolated benchmark) — it retracts the CLAIM
+that this mechanism produces a clean, stable Tags > Stats ordering, which the first round's small
+sample made look more decisive than a larger, controlled sample actually supports.
+
+---
+
+## 2026-09-25 — General app sluggishness: live bisect finds a real, precisely-dated regression (Playback smoothness, `a4e3d65`, 2026-07-31), partially fixed 09-22, and separates several older/structural jank sources from it
+
+Direct continuation of tonight's earlier general-sluggishness thread (see the entry immediately
+below this one, and CLAUDE.md's in-progress Book Detail paint-suppression work). Pryme reported,
+unprompted, that jank isn't confined to Book Detail — it varies by panel and view mode: Library
+smooth in 1/2/3-per-row and Square, janky in List; Settings smooth except Themes (janky open,
+clean close); Tags slow to *start* sliding but smooth once moving (a different symptom shape —
+front-loaded delay, not per-frame jank); Stats Overall/Settings smooth, Timeline janky, Day better
+than Week/Month. Decided to bisect live against Pryme's own real-time judgment rather than guess
+from reading code.
+
+**A real methodological bug invalidated the first ~5 rounds and was caught mid-session, not after.**
+Worktrees were created at historical commits and the existing `fabulorenv` venv was symlinked in for
+speed — but `fabulorenv` is an EDITABLE pip install (`__editable__.fabulor-0.1.0.pth` hardcodes
+`/home/pryme/Coding/Python/fabulor/src` as the import path), so every "bisect" launch silently
+imported the MAIN REPO's live `src/`, not the worktree's own checked-out code, regardless of which
+commit the worktree pointed to. Caught when Pryme reported seeing the EQ feature (added 2026-09-18,
+confirmed via `grep -c equalizer` = 0 in a genuinely-old checkout) in a build supposedly checked out
+at 2026-08-09 — a report of what Pryme actually saw contradicting an inference, handled per this
+file's own "the next action is a lookup, not a restatement" rule: verified via `python -c "import
+fabulor; print(fabulor.__file__)"`, which confirmed the bug immediately. **Every round before this
+point (testing 5d364f9/08-09, dd3b0e6/09-09, e308c47/09-18, and current HEAD, all reported as
+different results) was actually testing the SAME code every time and produced no real signal.**
+Fixed for all subsequent rounds via `PYTHONPATH=<worktree>/src` at launch (confirmed to correctly
+override the `.pth`-injected site-packages path — verified both via `sys.path` ordering and via
+`fabulor.__file__` resolving to the worktree, with the EQ-absence check re-confirmed clean).
+
+**Structural/old findings (present at the oldest tested checkpoints, not recent regressions):**
+- **StreakGrid has always been worse than HourlyHeatmap**, confirmed at StreakGrid's own first
+  commit (`6002e4d`, 2026-06-11) — "still worse... could be slightly better than today, but hard to
+  say." Very likely just the structural cost of painting 364 cells vs. a much smaller 14x24 grid,
+  not a regression. Not pursued further as a bisect target.
+- **Book Detail opened from Stats is worse than from Library/Tags**, confirmed present at least back
+  to 06-11. A real, reproducible asymmetry, plausibly explained by Stats' own app-wide `eventFilter`
+  historically staying live while occluded (see `e55fdb6`, fixed earlier tonight) — but predates that
+  fix's own investigation, so likely a longer-standing version of the same class of problem.
+- **Month's "heavy lifting before the panel opens, then a clean slide" symptom** is old — present
+  at both the 3-months-back (`e6c5f379`, 06-24) and StreakGrid's-first-commit (`6002e4d`, 06-11)
+  checkpoints. Different symptom SHAPE than the wobbly-first-20%-of-the-slide jank reported for
+  today's build — likely two different bugs sharing the same tab, not one.
+- **Library List mode jank** confirmed present as far back as `4700b31` (2026-07-28) and
+  `21ac097`/`0658e58` (2026-07-31) — old, not a recent regression.
+- At `9b6a1ad` (2026-05-05, HourlyHeatmap's very first commit, before StreakGrid existed at all):
+  Library, Month, Settings, and Timeline(-heatmap-only) all read as genuinely CLEAN. This is the
+  earliest tested point and the only one with no reported jank anywhere — establishes that "nothing
+  has ever been smooth" is false; a real clean baseline existed.
+
+**The regression: Playback itself measurably slowed down, pinned to one commit.**
+Bisecting `e6c5f379` (06-24, confirmed smoother than today for Playback specifically) against
+current HEAD, using the corrected `PYTHONPATH`-isolated methodology throughout:
+
+| checkpoint | date | commit | Playback |
+|---|---|---|---|
+| known-good | 06-24 | `e6c5f379` | smooth |
+| known-good | 07-17 | `ebc5a57` | smooth |
+| known-good | 07-28 | `4700b31` | smooth |
+| known-good | 07-31 (early) | `0658e58` | smooth (re-confirmed twice) |
+| **regression lands** | **07-31 (later)** | **`a4e3d65`** | **bad, confirmed exactly at this commit** |
+| still-bad | 07-31 | `59ad261` | bad |
+| still-bad | 08-01 | `b94c28c` | bad |
+| still-bad | 08-02 | `e7e23d8` | bad |
+| partial fix | 09-22 | `4fecc29` | "definitely better than bad 07-31, but slightly worse than good
+07-31 — subtle, could be wrong" |
+| current | 09-25 | HEAD (`918d344`) | bad |
+
+**Root cause of the pinned regression**: `a4e3d65` ("wip: track scroll-area row hover from cursor
+position instead of QSS :hover") introduces `ScrollHoverTracker`/`GridHoverTracker`
+(`hover_tracker.py`), constructed inside `TagManagerWidget._build_ui()` (called from `__init__`,
+i.e. once at app startup) and each installing its OWN permanent `QApplication.instance().
+installEventFilter(self)` with no matching removal — walking every Qt event anywhere in the app,
+including plain Playback interactions with zero relation to Tags, for the entire session regardless
+of whether Tags was ever opened. This matches this file's own prior finding (see "Separately —
+Pryme noticed the whole app felt generally less smooth than a month prior" in an earlier entry) that
+flagged this exact class of leak but hadn't pinned an exact introducing commit or confirmed it
+against Playback specifically until tonight.
+
+**Partially fixed, not fully.** `4fecc29` (2026-09-22, "fix: stop ScrollHoverTracker/GridHoverTracker
+leaking their app-wide filter") paired `install_filter()`/`remove_filter()` to `TagManagerWidget.
+showEvent`/`hideEvent`, closing the PERMANENT leak — confirmed via code read (`tag_manager.py:929-942`)
+and live-tested: clearly better than the broken state, matching Pryme's own report. But a known,
+documented, STILL-OPEN gap remains (TODO.md, "Remaining open question, not started"): the fix pairs
+to show/hide, not to OCCLUSION — if Tags is open behind Book Detail (occluded, not hidden), the
+filter stays live exactly like Stats' own filter did before `e55fdb6`'s occlusion guard (shipped
+earlier tonight) fixed that same class of gap for Stats specifically. Tags never got the equivalent
+fix. This plausibly explains the "slightly worse than good 07-31" residual Pryme reported at the
+09-22 checkpoint — a smaller, still-live version of the same mechanism, not fully closed.
+
+**Also unexplained, flagged honestly, not chased further tonight**: TODO.md's existing record of
+the `e55fdb6` A/B testing (earlier tonight, unrelated context) found Library/Tags-sourced Book
+Detail opens got measurably SLOWER by the same commit that only touches Stats' code path — "no
+confirmed cause found (thermal/memory/competing-process all ruled out)." This may be the same
+family of issue as tonight's Playback finding (both are "something got slower for a reason not
+localized to the panel being tested") but was not cross-checked against it this session.
+
+**Not yet done**: apply the same occlusion-guard shape already proven twice tonight (Tags'
+`eventFilter` itself, then Stats' `eventFilter` via `e55fdb6`) to `ScrollHoverTracker`/
+`GridHoverTracker` directly — this is the concrete, scoped next step, not a vague follow-up.
+
+**Honest confound, raised directly by Pryme, checked rather than dismissed: system-level drift
+cannot be ruled out and genuinely overlaps the code-bisect window.** Every worktree build tested
+tonight ran on TODAY's kernel/Mesa/KWin, never on the version actually live at the historical
+commit under test — there is no way to have tested "old code on old system state" tonight. Checked
+`/var/log/zypp/history*` (openSUSE Tumbleweed, rolling release) directly rather than speculating:
+- **Kernel updated ~13 times between 2026-06-07 (7.0.11) and today (7.2.6, installed 09-20)** — a
+  new kernel roughly every 4-6 days throughout the whole window.
+- **Mesa-libGL1 updated on a similar cadence** (26.1.1 in early June → 26.2.3 today, ~13 point
+  releases plus one minor-version bump 26.1.6→26.2.0 on 08-14).
+- **Real version bumps landed inside or immediately around the code-bisect's own regression
+  window**: kernel 7.1.4-1.1→7.1.4-1.2 AND Mesa 26.1.5-1.1→26.1.5-1.2 both on **07-30**, one day
+  before `a4e3d65` (07-31) was pinned as the regression commit; kernel 7.1.4-1.2→7.1.5-1.1 on
+  **08-02**, the same day as the `e7e23d8` "still bad" checkpoint; Mesa 26.1.5-1.2→26.1.6-1.1 on
+  **08-05**; kernel 7.1.7-1.1→7.1.8-1.1 AND Mesa 26.1.6-1.1→26.2.0-1.1 (minor bump) both on
+  **08-14**.
+
+**What this does and doesn't undermine, precisely:** the SAME-DAY split within 07-31 itself
+(`0658e58`/clean vs. `a4e3d65`/`59ad261`/bad, both tested tonight on today's system, both
+representing code that historically ran on the SAME post-07-30-update system state) is NOT
+explained by system drift — that comparison is clean regardless, since neither side benefits or
+suffers from a system update the other side didn't also have. What IS genuinely unverified: whether
+`a4e3d65`'s code change would show the same gap running under 07-31's ACTUAL system stack instead of
+today's — i.e., whether the magnitude of "bad" felt tonight for `a4e3d65` on today's system matches
+what it would have felt like in July, or whether some of today's "bad" reading is system drift
+layered on top of a smaller original code-level effect. **Cannot be resolved without either an old
+kernel/Mesa snapshot (impractical/risky to set up safely) or a controlled test isolating the ONE
+variable we can actually control: whether fixing the code-level leak on TODAY's system measurably
+helps TODAY's felt experience** — which is the next concrete step, and stands on its own regardless
+of how much of the original regression was system-driven.
+
+**Occlusion guard shipped and tested against that exact question.** Applied the same shape already
+proven twice tonight (Tags' own `eventFilter`, then `StatsPanel.eventFilter` via `e55fdb6`) to
+`ScrollHoverTracker.eventFilter`/`GridHoverTracker.eventFilter` directly (`hover_tracker.py`): both
+now check `self.parent().window().book_detail_panel` (mirrors `tag_manager.py`'s own existing
+`self.window().book_detail_panel` lookup — these are `QObject`s, not `QWidget`s, so `.parent()` is
+needed to reach the owning `TagManagerWidget` first) and decline (`return False`) early whenever
+Book Detail is visible, same reasoning as the reference case: nothing legitimate can be hovered
+while occluded, so declining costs nothing. 707/707 tests pass (full suite, no regressions).
+Live-tested on current HEAD: "Playback opens normally... possible [improvement in other areas]...
+still not perfectly smooth." **This is the expected, honest result given the confirmed system
+drift above** — the fix closes a real, confirmed code-level gap, but was never expected to fully
+restore July's feel on its own, since kernel/Mesa version changes are very likely also contributing
+and are outside what a code fix can touch. Recorded as a genuine improvement to a real bug, not as
+"the fix," and not oversold as resolving the felt sluggishness completely.
+
+---
+
+## 2026-09-25 — KWin offscreen-framebuffer / kernel-trace correlation attempt CONCLUDED: overlap achieved, no correlation found
+
+Direct continuation of the entry below. After three failed attempts (60s targeted, 15-min
+opportunistic, both zero overlap — see below), a fourth 30-minute trace
+(`/tmp/fabulor_correlate_trace2.dat`, 14:04-14:34, current boot) finally captured genuine overlap:
+8 KWin `offscreen framebuffer` errors landed inside the active trace window (14:15:24, 14:15:40 x2,
+14:30:14, 14:30:16 x2, 14:30:17, 14:30:21).
+
+**Correlation result: no relationship found.** `trace-cmd report` extracted 59,819
+`intel_plane_update_arm` events; wall-clock was anchored from the trace file's mtime (14:34:44,
+the moment the 1800s capture completed) against the last event's kernel-uptime timestamp
+(21628.150677s), then sanity-checked against the first event (computed 14:04:44, matching the
+trace's known ~14:04 start — anchor is trustworthy).
+
+A first pass (±2s window around each error, compared against whole-trace percentiles) looked
+suggestive — every error had a nearby gap of 134-216ms, above the trace median of 16.66ms. **This
+was a methodological trap, caught before being reported as a finding**: comparing an error window
+against the WHOLE-TRACE percentile conflates busy and idle periods across 30 minutes. Redone
+properly — max plane-update gap in a tight ±0.3s window around each error, against 199 random
+±0.3s windows sampled from the same trace (excluding windows near any real error, same methodology
+applied symmetrically) — the two distributions are indistinguishable: KWin-error windows mean
+147.1ms max-gap vs. matched-baseline mean 150.9ms (baseline median actually higher, 181.3ms).
+~150-200ms max-gaps in any given 0.6s window are simply common throughout this trace, with or
+without a KWin error nearby.
+
+**Conclusion: the KWin `offscreen framebuffer` compositor error does not correlate with
+compositor-level plane-update stalls, at least not at the granularity this measurement can see.**
+Combined with the earlier finding that the error fires with Fabulor not even running (13
+occurrences before Fabulor was launched this session), the working theory connecting this KWin bug
+to Fabulor's Stats-panel jank specifically is not supported by any evidence gathered across this
+entire multi-session sub-investigation. This does not rule out that the KWin error causes SOME
+user-visible effect — only that it doesn't show up as a widened plane-update gap in the kernel
+trace at the moment it fires. The KWin bug remains real and reproducible (confirmed independently
+many times this session) but is very likely an unrelated, general desktop-compositor issue, not a
+mechanism for the Stats > Tags > Library jank severity ranking established earlier via other
+measurement layers. This sub-investigation (KWin-error/kernel-trace correlation) is now closed —
+no further attempts planned unless new evidence reopens the question.
+
+---
+
+## 2026-09-25 — First real same-boot KWin offscreen-framebuffer hit, and a 15-minute trace running to try to catch the next one with overlapping data
+
+Direct continuation of the entry below (boot-boundary correction, 115 not 16). Plan was to stay on
+the current boot and periodically check `journalctl --user -b 0 | grep -c "offscreen framebuffer"`
+during ordinary app use, since the error recurs in irregular bursts (previous boot's `kwin_wayland`
+occurrences: gaps ranging 1.3-107 minutes, median ~7.4 minutes excluding one long outlier).
+
+**First real hit on this boot**, found on Pryme's check at 07:26:
+
+```
+Sep 25 07:19:01 localhost.localdomain kwin_wayland[2271]: 0x1: GL_INVALID_VALUE in glTexStorage2D(width, height or depth < 1)
+Sep 25 07:19:01 localhost.localdomain kwin_wayland[2271]: Invalid framebuffer status:  "GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT"
+Sep 25 07:19:01 localhost.localdomain kwin_wayland[2271]: Failed to create an offscreen framebuffer
+```
+
+Same three-line signature as every prior occurrence, confirmed still reproducing on this fresh
+boot (~29 minutes after Fabulor was relaunched at 06:53) — this alone is useful: the bug is not a
+one-off artifact of the previous boot's specific state, it recurs under ordinary conditions on a
+clean boot too.
+
+**No kernel trace was running at 07:19:01** — the only trace captured tonight covers 06:56:44-
+06:57:44, far earlier, zero overlap. Started a new 15-minute `trace-cmd` capture
+(`i915:intel_plane_update_arm`/`_noarm` only this time, dropped `sched:sched_switch` to keep the
+file smaller for a longer duration) at ~07:26, running in the background while Pryme continued
+normal use. **Result: the trace ran its full 15 minutes (07:26-07:41) with no second
+offscreen-framebuffer hit landing inside it** — checked twice during the window (07:36, 07:41) and
+once more after it finished, all showing the same single 07:19:01 occurrence, unchanged. The
+trace file itself is preserved (`/tmp/fabulor_correlate_trace.dat`, 4.9MB) in case a future
+session wants to re-attempt this specific correlation, but as captured it has no matching KWin
+error inside its window and can't be used for the intended cross-reference.
+
+**Session ending here** (Pryme: "I'll go to sleep soon") — this specific cross-reference (a real,
+same-boot KWin offscreen-framebuffer hit landing inside an active kernel trace window) was not
+achieved tonight, despite two proactive trace attempts. This is genuinely just a timing/luck
+problem given the error's irregular, sometimes 7+ minute-apart recurrence — not a flaw in the
+method. **Next session's most direct path**: start a trace covering a LONGER window (the
+15-minute attempt here may simply have been too short relative to the actual gap distribution) or
+revisit the plan once there's a longer natural-use session to work with, rather than trying to
+force a short, deliberate capture window.
+
+## 2026-09-25 — Cross-referencing the kernel trace against KWin's offscreen-framebuffer errors hit a real boundary: a boot switch split the two signals into different journal scopes; corrected count is 115, not 16, and 21 of those are under kwin_wayland specifically
+
+Direct follow-up attempting the "not yet started" next step from the entry directly below. Tried
+to correlate the >100ms plane-update gap timestamps from the Library/Stats kernel trace against
+the KWin `Failed to create an offscreen framebuffer` dmesg/journalctl errors found earlier tonight.
+
+**Found nothing in the trace's own window** — `journalctl --user -b 0` over the exact 06:56:00-
+06:58:00 span returned only 16 unrelated lines (sudo/PAM session bookkeeping for the two
+`trace-cmd` invocations, plus unrelated Discover-notifier noise). Checking the WHOLE current
+boot's journal (`journalctl --user -b 0`, no time filter) also returned zero
+`offscreen framebuffer` hits — not a narrow-window miss, a genuine zero for the entire boot so
+far.
+
+**Root cause, confirmed via `journalctl --list-boots`, not guessed**: switching between the
+Wayland and X11 sessions earlier tonight (for the NVIDIA PRIME-offload testing) triggered a full
+**reboot**, not just a re-login — `journalctl --list-boots` shows the current boot
+(`bfc262cede4e4d3c8e2198fd559cee80`) started at 06:50:14, well after every one of tonight's
+original KWin-error sightings. `journalctl -b 0` only ever searches the CURRENT boot by
+definition, so the zero-hit result is completely explained by this — the errors are real and
+still exist, just filed under the PREVIOUS boot's journal (`-b -1`,
+`3017853a906f484ba0f90a71434e8dab`, spanning 02:29:39-06:49:56).
+
+**Checking the previous boot directly surfaced a real correction to the earlier count**:
+`journalctl --user -b -1 | grep -c "offscreen framebuffer"` returns **115**, not the 16 originally
+reported earlier tonight — the original search must have covered a narrower window or otherwise
+undercounted; not yet root-caused why the two counts differ, flagged honestly as a real
+discrepancy rather than silently using whichever number is more convenient. Breaking the 115 down
+by which KWin process logged them:
+
+```
+ 21 kwin_wayland[2301]
+ 94 kwin_x11[51724]
+```
+
+So the bug is real and reproduces under BOTH compositor backends — but the large majority of
+tonight's occurrences (94 of 115) are from the brief X11 session used for the NVIDIA offload
+testing, not the Wayland session this whole investigation is otherwise scoped to. The 21
+`kwin_wayland` occurrences are the ones actually relevant to the Stats-vs-Library jank
+investigation; NOT yet normalized by session duration (the X11 session's higher raw count could
+simply reflect it running longer/more actively, not X11 being inherently worse — this has not been
+checked).
+
+**The kernel trace and the KWin errors can no longer be directly timestamp-correlated** — they
+sit in different journal boot-scopes, and `trace-cmd`'s uptime-relative timestamps aren't
+meaningfully comparable across a boot boundary either. This specific cross-reference attempt is
+closed, not completed.
+
+**Pryme's own framing of the fix, worth recording verbatim**: asked "how do we reach the same
+state where we can cross-reference reliably?" — the direct answer is that nothing special needs
+reaching: the current boot (started 06:50, no session switch/reboot since) already IS the right
+state; a same-boot correlation just requires NOT switching sessions again and letting both signals
+(a kernel trace, and a KWin error) land within this same boot's scope. Since the KWin error
+recurs in irregular bursts sometimes 7+ minutes apart (per the original finding), Pryme's own
+choice was to let it surface naturally during ordinary app use rather than force a match with a
+long orchestrated trace — check `journalctl --user -b 0 | grep -c "offscreen framebuffer"`
+periodically, and once it shows a genuine hit, correlate that specific timestamp against whatever
+trace data covers that moment.
+
+## 2026-09-25 — Fifth measurement layer, outside the app entirely: a targeted kernel trace at the real i915 compositor level confirms Stats is worse than Library — the strongest evidence yet, since it can't be explained by anything inside Fabulor's own process
+
+Direct follow-up to the four in-app probes below (paint cost, event-filter cost, Stats-owned
+timers, Qt event-dispatch volume) — none of which fully explained the Stats > Tags > Library
+severity ranking. Since Fabulor's own instrumentation was exhausted, the next step went outside
+the process entirely: a real kernel trace (`trace-cmd`, `i915:intel_plane_update_arm`/
+`intel_plane_update_noarm`, same events used earlier tonight's general jank investigation), this
+time deliberately scoped to compare Library-sourced vs. Stats-sourced Book Detail opens
+specifically, rather than general playback jank.
+
+**Setup, and an honest correction mid-way through**: first attempted with Pryme giving a live
+"switching to stats" cue mid-capture — he caught mid-turn that he'd forgotten to start playback
+for that first attempt, and asked to discard and redo rather than analyze a compromised trace.
+Second attempt used a different protocol per Pryme's own suggestion: no live cue, just note the
+wall-clock switch time afterward. The trace file's own mtime (06:57:44, a few seconds after the
+`sleep 60` wrapper's actual end due to `trace-cmd`'s post-capture flush) gave an estimated trace
+start of ~06:56:44, and Pryme's reported switch time (06:57:20) was converted to a corresponding
+trace-internal uptime timestamp (**428.06**) via that estimate — confirmed independently, before
+Pryme's exact wording arrived, by a real secondary signal: destination-rect (`dst=`) geometry in
+the plane-update events showed 93 patterns appearing ONLY before that computed point and 38 ONLY
+after, consistent with a genuine panel-geometry change (Library full-width vs. Stats 90%-width,
+per this codebase's own `panels.py`) landing right around there. **Pryme's own confirmation
+arrived matching this estimate almost exactly** ("06:56:44 to 06:57:20 is library, the rest
+stats") — the mtime-based reconstruction and the independent geometry-shift check were both
+right, not just plausible.
+
+**Result — real, measured, at the actual compositor level, independent of anything inside
+Fabulor's own process**:
+
+| Block   | n events | avg gap | median gap | max gap    | >100ms gaps | >100ms gap rate (normalized) |
+|---------|----------|---------|------------|------------|--------------|-------------------------------|
+| Library | 1701     | 20.8ms  | 16.6ms     | 216.5ms    | 56           | 1.58/s (35.4s block)          |
+| Stats   | 903      | 27.2ms  | 16.7ms     | **482.9ms**| 43           | 1.75/s (24.6s block)          |
+
+Stats' average gap is ~31% higher than Library's, and its single worst gap (483ms — a genuinely
+visible freeze) is more than double Library's worst (217ms). Median gap is nearly identical
+(16.6ms vs 16.7ms) — the difference is concentrated in the WORST-case tail, not a uniform shift
+across every frame, which matches the "sometimes smooth, sometimes janky" bursty character Pryme
+described earlier tonight rather than a constant, always-present slowdown. The normalized
+>100ms-gap RATE is closer between the two (1.58/s vs 1.75/s, ~11% higher for Stats) than the raw
+average/worst-case numbers suggest — reported honestly rather than only quoting the more dramatic
+comparison.
+
+**Why this result matters more than the four in-app probes**: this is measured at the i915 kernel
+driver's own plane-commit events — literally the GPU/compositor accepting a new frame to display.
+Nothing in Fabulor's Python process, no matter how it's instrumented, can fake or distort this
+signal; it is ground truth about what actually reached the screen. Paint cost, event-filter cost,
+and event-dispatch cost were all checked and found NOT to explain the ranking (or to invert it) —
+this result confirms the ranking is real at the one layer downstream of all of them, without yet
+explaining WHY. That "why" remains open: the compositor-cost theory from the previous entry (GPU/
+compositor round-trip cost tied to Stats' larger backdrop-frost/blur composite area) is now
+better-supported circumstantially (a real compositor-level effect exists) but still not pinned to
+a specific mechanism — this trace shows THAT frames arrive later for Stats, not WHY KWin takes
+longer to commit them.
+
+**Not yet done**: correlating the >100ms gap timestamps against the earlier dmesg-level KWin
+`Failed to create an offscreen framebuffer` errors from earlier tonight's investigation (same
+mechanism as the general jank case) to see if they cluster around Stats-sourced opens specifically
+— the natural next step if this thread is picked back up, using the same dmesg/journalctl
+cross-reference technique already established earlier tonight.
+
+Direct follow-up to the entries below. With paint cost, event-filter dispatch cost, and every
+Stats-owned periodic timer all checked and ruled out, the next candidate was a DIFFERENT
+mechanism: Qt's own per-event dispatch cost/volume across every event type (not just Paint, not
+just app-level filters) — does walking a deeper widget tree to deliver ordinary events (resize,
+move, polish/layout requests, hover events, destroy/teardown events) cost measurably more for
+Stats than Library/Tags, independent of what any single widget's own handler does with an event
+once it arrives.
+
+**New probe** (`_wire_event_dispatch_probe`/`_EventDispatchCounter`, `panels.py`): a genuine
+`QObject.installEventFilter`/`removeEventFilter` pair (unlike `_wire_paint_probe`, which
+monkeypatches `paintEvent` directly — this is the first probe this session to use Qt's real
+event-filter mechanism, which is the correct tool for counting ALL event types, not one). Wraps
+the panel and every descendant, tallies per-`QEvent.Type` counts and total filter-chain dispatch
+time, same start/finish-scoped install shape as every other probe tonight. Logs
+`[PANEL-TIMING] book_detail EVENTDISPATCH total_events=... total_dispatch_ms=...
+watched_widgets=... from='...' top=...`.
+
+**First pass, raw averages — looked like a real match, but was hiding a confound:**
+
+| Source  | n  | avg events | avg dispatch_ms | avg watched_widgets |
+|---------|----|------------|--------------------|-----------------------|
+| library | 10 | 242.3      | 3.38               | 230.6                 |
+| tags    | 14 | 149.3      | 2.54               | 126.0                 |
+| stats   | 10 | 386.1      | 4.44               | 396.4                 |
+
+Stats clearly worst on all three, consistent with the theory. But the raw per-sample sequences
+showed an unmistakable BIMODAL pattern within every source: alternating high-count samples
+(`PolishRequest`/`Destroy`/`ChildRemoved`-dominated, several hundred events, several ms) and
+low-count samples (`Paint`/`Move`-dominated, ~60-80 events, well under 1ms) — almost certainly
+OPEN vs. CLOSE, not source. Confirmed by pairing each `EVENTDISPATCH` line with its most recent
+preceding `[PANEL-TIMING] book_detail START target=...` line by timestamp (`target.x()==0` =
+open, `target.x()==panel_w` = close, the same convention the A/B test harness already uses).
+
+**Separated by direction — a real, but incomplete, result:**
+
+| Direction | Source  | n | avg events | avg dispatch_ms | avg watched_widgets |
+|-----------|---------|---|------------|--------------------|-----------------------|
+| OPEN      | library | 5 | 415.6      | 5.99               | 282.4                 |
+| OPEN      | tags    | 7 | 235.1      | 4.42               | 161.6                 |
+| OPEN      | stats   | 5 | **696.4**  | **8.07**           | **477.0**              |
+| CLOSE     | library | 5 | 69.0       | 0.77               | 178.8                 |
+| CLOSE     | tags    | 7 | 63.4       | 0.67               | 90.4                   |
+| CLOSE     | stats   | 5 | 75.8       | 0.81               | 315.8                  |
+
+**On OPEN**: Stats is clearly worst on every metric — confirms, for the first time with a real
+measurement, that Stats' widget tree genuinely IS structurally larger (477 watched widgets vs.
+282/162) and genuinely does cost more to dispatch events to (8.07ms vs. 5.99/4.42ms). This is real
+signal, not noise — the magic-number-identical `PolishRequest=399`/`400` seen across sources in
+the unsplit data turned out to be a real, large, roughly-constant-magnitude cost each source pays
+on open, just scaled by tree size.
+
+**But this does NOT fully reproduce the frame-gap ranking**: on OPEN, Library (5.99ms) costs MORE
+than Tags (4.42ms) — the OPPOSITE order from the frame-gap data (where Library was the BEST/least
+janky and Tags was worse than Library). So this metric correctly flags Stats as worst but gets
+Library-vs-Tags backwards. **On CLOSE**, event-dispatch cost is essentially flat and cheap across
+all three (all under 1ms) — dispatch volume/cost isn't a meaningful factor on close at all, even
+though `watched_widgets` still shows Stats structurally larger there too (this is just the
+snapshot-at-start widget count, not something the close itself does more work processing).
+
+**Honest state of the investigation**: four real, distinct measurement layers now checked (paint
+cost, event-filter dispatch cost, Stats-owned timers, and Qt event-dispatch volume/cost). Every
+one of them either fails to explain the ranking at all, or partially matches (correctly flags
+Stats as worst) while getting a piece wrong (Library-vs-Tags ordering, in this case). The severity
+ranking itself remains solid or measured on frame-gap timing specifically — nothing checked so far
+has been shown to BE what frame-gap timing is measuring, only correlated-or-not with it. A
+genuinely different question, not yet asked: whether frame-gap timing's OWN measurement mechanism
+(the `valueChanged` signal's delivery timing) is itself being delayed by something upstream of
+BOTH paint and generic event dispatch — e.g. Qt's internal animation-timer scheduling competing
+with GPU/compositor round-trips specific to Stats' larger backdrop-frost/blur composite area (see
+the transport-bar-blur cost note earlier in this file, `covers_opaquely()`'s docstring, for a
+precedent of a real, measured, panel-specific compositor-cost difference already found once this
+session, just for a different panel/tab).
+
+## 2026-09-25 — TasselOverlay's ~30fps sway timer ruled out by architecture, before a live test was even needed — it's Timeline-tab-scoped, and Book Detail can only open from Day/Week/Month
+
+Direct follow-up to the entry below. The next named candidate after event-filter dispatch cost was
+`TasselOverlay._sway_timer` — a ~30fps (33ms interval) `QTimer` unique to Stats (Library/Tags have
+no equivalent), which calls `self.update()` (a real repaint request) on every tick and has an
+`isVisible()` safety net that, per this session's own established occlusion pattern, seemed
+plausibly capable of staying `True` — and therefore still ticking — while Book Detail occludes
+Stats. A probe (`_wire_event_filter_cost_probe`, extended to wrap
+`StatsPanel._tassel._on_sway_tick`) was written and shipped to test this directly.
+
+**Pryme caught the actual scope question before any test was needed**: "Tassel is in a different
+tab. I can interact with it separately, but I can't open the book details over the Timeline tab."
+This is correct and, on checking the code, turns out to be architecturally decisive, not just
+practically inconvenient: `StatsPanel._build_time_tab()` constructs `widget` with
+`objectName="stats_time_tab"` — **this IS the Timeline tab's own `QTabWidget` page** — and
+`self._tassel = TasselOverlay(widget)` parents the tassel directly inside it (`stats_panel.py:4027`,
+inside `_build_time_tab`, not in any shared/always-visible container). Since `QTabWidget` hides
+every non-current page, `TasselOverlay` is only a member of the visible widget tree — and only
+receives `showEvent`/keeps `_sway_timer` running — while the **Timeline tab specifically** is
+active. Book Detail only opens from clicking a book ROW, which exists only on the Day/Week/Month
+tabs — Timeline has no book rows. So a Book Detail slide sourced from Stats can, by construction,
+never happen while Timeline (and therefore the tassel) is the visible tab.
+
+**This rules out the sway timer as a candidate WITHOUT needing a live test** — every sample already
+collected for the severity-ranking measurement (all sourced from clicking a book row) is
+guaranteed to have had the tassel already hidden and its `_sway_timer` already stopped (via
+`TasselOverlay.hideEvent`, confirmed at `stats_panel.py:3249`) before Book Detail ever opened.
+Checked the already-captured `[PANEL-TIMING] book_detail EVENTFILTER` log for any `sway` mentions
+as a sanity pass — found none, but this is NOT treated as confirming evidence, since that log
+predates the sway-timer probe extension being added at all (the instrumentation didn't exist yet
+at capture time); the absence there is uninformative, not corroborating. The real, load-bearing
+reason this is closed is the tab-page parenting fact above, verified by reading
+`_build_time_tab`/`TasselOverlay.__init__`/`.hideEvent` directly, not by an absence in a log that
+was never capable of showing the opposite.
+
+**Net effect**: the sway timer's own `covers_opaquely()` docstring (found while checking this,
+`stats_panel.py` ~3985) already documents a DIFFERENT, real, but unrelated cost of the same timer —
+`TransportBarBlurOverlay`'s blur-grab cycle delays it from its nominal 33ms to an effective ~44ms
+(22.8fps) specifically because the Timeline tab's OWN opaque background makes grabbing/blurring
+underneath it wasted work the blur overlay already knows to skip. That is a real, previously-found,
+already-handled cost internal to the Timeline tab's own visual smoothness — unrelated to Book
+Detail's slide, and not reopened here.
+
+**Follow-up, same session — every other named Stats-owned timer checked, all ruled out or
+inapplicable:**
+- `StatsPanel._kbdnav_hover_poll` (60ms `QTimer`) is gated on keyboard navigation actually having
+  been used (`_enter_kbdnav_hover_mode`, called only from keyboard row-selection, never from a
+  mouse click) — every sample collected so far used mouse clicks to open Book Detail, so this
+  timer was very likely never started during any of them. Not tab-scoped like the tassel, so it
+  remains a genuinely open candidate IF keyboard navigation is ever mixed into a future test
+  session, but doesn't explain the mouse-driven data already collected.
+- `StatsRowListView._scroll_active_timer` — `setSingleShot(True)`, only fires once, only after a
+  real horizontal scroll of a `FinishedScrollRow`. Not a continuous per-tick cost; would need the
+  narrow coincidence of scrolling at the exact moment Book Detail opens. Not a systematic
+  explanation.
+- The shared 200ms `ui_timer`/`_update_ui_sync` heartbeat (`app.py`) — checked its actual sync
+  sub-methods (`_sync_playback_state`/`_sync_ui_render`/`_sync_progress_sliders`/
+  `_sync_chapter_ui`/`_sync_persistence`) directly for any panel-specific branching. Found exactly
+  ONE such branch in the whole block: `if self.library_panel.isVisible():
+  self.library_panel.update_current_book_progress()` — Stats and Tags have NO equivalent special
+  case in this shared timer at all. Since Book Detail occludes rather than hides its underlay,
+  `library_panel.isVisible()` stays `True` during a Library-sourced slide too — meaning if this
+  branch matters at all, it would add extra work to LIBRARY's slide, not Stats'. This is the
+  opposite of what would explain the reported ranking, so it's also ruled out as the explanation
+  (though it is informative: it shows the shared timer isn't the source of Stats' disadvantage
+  either).
+
+**Where this leaves the investigation**: three real, systematic, checkable candidates (widget
+paint cost, app-wide event-filter dispatch cost, and every Stats-owned periodic
+timer/heartbeat branch) have now all been checked directly against real captured data or code
+reading, and none of them explain the Stats > Tags > Library severity ranking on frame-delivery
+timing. The ranking itself remains real and measured (see the entry below — `max_frame_gap`/
+`jank_frame_rate` track it cleanly across three independent runs). What's causing it is now a
+genuinely harder question than "which specific piece of Stats' own code is doing more work" —
+the checked candidates covered the most obvious main-thread-competition explanations and came up
+empty. Not yet considered: whether Stats' widget TREE DEPTH itself (not paint cost, not filter
+cost, but literal Qt event-propagation/geometry-recalculation overhead simply from having more
+nested widgets to walk on each animation tick, independent of what any single widget's paintEvent
+or eventFilter actually does) could produce this pattern — this would be a different mechanism
+than anything checked so far and has not been designed or tested.
+
+## 2026-09-25 — Event-filter dispatch cost ALSO ruled out as the explanation — real, measured, but mismatched with the severity ranking; Tags' GridHoverTracker cost flagged as a separate, genuine issue worth its own fix
+
+Direct follow-up to the entry below this one, which found paint cost doesn't track the Stats >
+Tags > Library severity ranking but frame-delivery timing (`max_frame_gap`/`jank_frame_rate`)
+does. The next named candidate was app-wide `QApplication` event filter dispatch cost during the
+slide — `StatsPanel.eventFilter`, `TagManagerWidget.eventFilter`, and `hover_tracker.py`'s
+`ScrollHoverTracker`/`GridHoverTracker` all install via
+`QApplication.instance().installEventFilter(self)` (confirmed app-wide, confirmed still live
+during a Book Detail slide since occlusion doesn't fire `hideEvent`).
+
+**New probe** (`_wire_event_filter_cost_probe`, `panels.py`): wraps each candidate's live INSTANCE
+`eventFilter` method (never the class — see this session's own earlier class-vs-instance
+monkeypatching gotcha) with a timing wrapper, scoped to the Book Detail animation's start/finish
+only, same shape as `_wire_paint_probe`. Logs `[PANEL-TIMING] book_detail EVENTFILTER
+total_filter_ms=... total_filter_calls=... from='...' detail=...`.
+
+**Real, measured result — genuinely surprising, does NOT confirm the theory being tested:**
+
+| Source  | n  | avg filter_ms | max filter_ms | avg filter_calls | max filter_calls |
+|---------|----|--------------| --------------|-------------------|-------------------|
+| library | 18 | 0.000        | 0.000         | 0.0               | 0                 |
+| stats   | 10 | 8.773        | 16.670        | 1148.7            | 2816              |
+| tags    | 14 | 61.868       | 93.240        | 1789.5            | 3545              |
+
+Library: zero filter cost, zero calls, every single time — clean confirmation that nothing
+competes for the main thread via an app-wide filter during a Library-sourced slide. Stats: real,
+non-trivial cost (avg 8.8ms, ~1149 calls). **Tags: dramatically higher cost than Stats — 7x
+higher on average (61.9ms vs 8.8ms), driven almost entirely by `tags_panel._thumb_hover`
+(`GridHoverTracker`), not `tags_panel`'s own filter** — e.g. one sample: `tags_panel=19.99ms/1779x,
+tags_panel._thumb_hover=63.55ms/1766x`. The hover tracker alone regularly costs 2-3x what the
+panel's own filter does.
+
+**This does NOT explain the severity ranking — it contradicts it.** Tags has by far the highest
+event-filter dispatch cost of the three, yet Tags measured LESS janky than Stats on frame-gap
+timing (avg `max_frame_gap` 49.3ms for Tags vs. 58.3ms for Stats, from the entry below). If
+event-filter cost were the driver of frame-delivery delay, Tags should be worse than Stats, not
+better. It isn't. **Event-filter dispatch cost is ruled out as THE explanation for the severity
+ranking**, joining paint cost as a real, measured, but non-explanatory factor.
+
+**Two things worth keeping separate from that negative result, both real on their own merits:**
+1. **Tags' `GridHoverTracker` (`_thumb_hover`) event-filter cost (up to 93ms/slide, ~3500 calls) is
+   a genuine, independently-worth-fixing cost** — this is exactly the TODO.md "Remaining open
+   question, not started" item (hover_tracker.py's trackers have no occlusion guard, unlike the
+   guard shipped for `StatsPanel.eventFilter` earlier tonight). It doesn't explain THIS
+   investigation's severity ranking, but it's real overhead during every Tags-sourced Book Detail
+   open regardless, and the same occlusion-guard shape already proven twice (Tags' own
+   `TagManagerWidget.eventFilter`, then `StatsPanel.eventFilter`) would very likely apply here too.
+   Not yet attempted — flagged, not started.
+2. **Stats' own filter cost (8.8ms avg, ~1149 calls) is real but modest** — smaller than Tags'
+   hover-tracker cost in absolute terms, yet Stats is the panel with the worse frame-delivery
+   problem. This reinforces that whatever's actually causing Stats' frame-delivery delay is
+   NOT (primarily) event-filter dispatch cost, at least not on its own.
+
+**Next candidate, not yet checked**: the 200ms `ui_timer` heartbeat (`_update_ui_sync`) landing
+mid-slide — specifically whether Stats' own tab-refresh path (heatmap/streak-grid recompute,
+`StatsRowListView` model refresh, or similar) does meaningfully more work per tick than whatever
+Library/Tags have running at the same cadence, and whether that tick's work is what's actually
+delaying `valueChanged` ticks during a Stats-sourced slide.
+
+## 2026-09-25 — Severity ranking now measured, not just felt: Stats > Tags > Library holds on frame-DELIVERY timing, and does NOT hold on paint cost — the two are cleanly separated
+
+Direct follow-up to the entry below this one. Pryme asked what angles were left on Stats
+specifically; the paint-cost probe (`_wire_paint_probe`, corrected earlier the same session to
+record which panel — Library/Stats/Tags — a Book Detail slide opened over via a new `context_fn`
+parameter, `from=` in the `[PANEL-TIMING] book_detail PAINT` log line) was checked first, since it
+was the cheapest thing already wired and ready to run.
+
+**Paint cost: NO signal, real negative result, not inconclusive.** From a live test session
+(n=10/12/16 for library/stats/tags — small, but the numbers land in the same range with no
+separation):
+
+| Source  | n  | avg paint ms | max paint ms | avg paint calls |
+|---------|----|-----------  |-------------|-----------------|
+| library | 10 | 5.82        | 9.10        | 49.6            |
+| stats   | 12 | 5.82        | 9.30        | 53.2            |
+| tags    | 16 | 6.11        | 9.10        | 36.6            |
+
+Library and Stats are tied on average paint cost; Tags — which Pryme reports as SOMETIMES better
+than Stats — has the highest average of the three. This flatly does not track the reported
+ranking. Individual widget paint calls are cheap and roughly equal cost across all three panels;
+whatever's different about Stats is not "its widgets are more expensive to paint."
+
+**Frame-delivery timing: a real, clean, three-way-corroborated signal — this is the actual
+finding.** `_wire_timing_probe` (the wall-clock/frame-gap probe, already existing, already wired
+with the same `from=` context for Book Detail since an earlier point in this investigation)
+produced a MUCH larger sample from the same test session (n=337/421/354, the full session rather
+than a short manual window) and shows the reported ranking on THREE independent metrics at once:
+
+| Source  | n   | avg wall_ms | avg max_frame_gap | worst-ever max_frame_gap | jank_frame_rate |
+|---------|-----|-------------|--------------------|--------------------------|------------------|
+| library | 337 | 338.3       | 40.0ms             | 163.5ms                  | 44.8%            |
+| tags    | 354 | 352.1       | 49.3ms             | 155.8ms                  | 51.0%            |
+| stats   | 421 | 359.6       | 58.3ms             | **349.3ms**              | 55.4%            |
+
+`jank_frame_rate` = fraction of `valueChanged` ticks whose gap from the previous tick exceeded one
+60fps frame budget (16.7ms) — i.e. how often the animation visibly stutters, not just how long it
+takes overall. All three metrics agree on the SAME ordering Pryme reported purely from feel:
+Library best, Tags in the middle, Stats worst. Stats' average worst-single-gap is 46% higher than
+Library's, and its single worst outlier across the session (349ms) is more than double the worst
+seen for either other panel — a gap that size is a genuinely visible freeze, not "a bit choppy."
+
+**This precisely separates two different questions that could both have been "the answer," and
+only one of them is**: it is NOT that Stats' widgets are expensive to paint once a frame arrives
+to paint them. It IS that frames arrive late / ticks get delayed more often and more severely
+during a Stats-sourced Book Detail slide than a Library-sourced one, with Tags in between. That
+points at something competing for the main thread's time DURING the slide — not rendering cost,
+but scheduling/dispatch cost. The most obvious existing candidates already on record in this same
+investigation: `StatsPanel.eventFilter`'s app-wide install (even with tonight's earlier occlusion
+guard, it's still live and dispatching during a Library/Tags-sourced open, and fully live during a
+Stats-sourced one before the slide even starts), `hover_tracker.py`'s `ScrollHoverTracker`/
+`GridHoverTracker` (Tags-only, also app-wide, no occlusion guard yet — see TODO.md), and the
+already-documented "why does Stats' one filter outpace Tags' two combined" open question — none of
+these have been directly correlated against per-slide `max_frame_gap`/`jank_frame_rate` yet; that
+correlation is the natural next step, not yet started.
+
+**Not yet checked, explicitly**: whether the 200ms `ui_timer` heartbeat (`_update_ui_sync`) landing
+mid-slide contributes — Stats' own tab refresh/heatmap-streak-grid work if a tick lands while Book
+Detail is opening over it, versus Library's comparatively cheap `BookModel`/`BookDelegate` list
+paint. Also not checked: whether this ordering holds with playback OFF (all of tonight's samples
+had a book playing, since the transport-bar-blur re-grab investigation from earlier the same night
+required it) — if the ranking persists with playback off, that would rule out `_grab_and_blur`'s
+own per-tick blur-grab-and-composite cost as a confound; if it disappears, that reopens the blur
+grab cycle as a candidate specifically for why Stats fares worst (larger widget tree behind it to
+re-grab/re-blur on each of `_grab_and_blur`'s ~65-200ms cycles).
+
+## 2026-09-25 — Jank characterization from Pryme: sporadic/intermittent (not constant), and a consistent Stats > Tags > Library severity ranking — single-machine/single-DE caveat acknowledged, not actionable
+
+Pryme's own description, worth recording verbatim rather than paraphrased, since the exact shape
+of the intermittency is diagnostic information in itself: "The jankiness is somewhat sporadic.
+Sometimes I get a smooth run for a minute, then it is janky again, or I get mixed result with two
+very smooth slides, then three janky ones. Stats is always the worst, Library the best, Tags
+between them."
+
+Two separate claims here, both worth keeping distinct:
+
+1. **Temporal intermittency** — jank comes and goes in bursts (a smooth minute, then a janky one),
+   and can even vary slide-to-slide on the SAME repeated action (two smooth, then three janky, same
+   panel, same conditions as far as anyone can tell). This is consistent with everything found
+   tonight across three independent measurement layers (screen-recording frame PTS, kernel
+   plane-update tracing, GPU frequency sampling) — none of them found a constant/deterministic
+   cause, and the KWin offscreen-framebuffer failures found via dmesg fire in irregular bursts (16
+   times, non-uniformly spaced) rather than continuously, which is the same "bursty, not constant"
+   shape as the reported symptom. Nothing here proves that lead is THE cause, but the shapes match
+   in a way worth noting rather than coincidence-dismissing.
+
+2. **Severity ranking across panels — Stats worst, Tags middle, Library best.** This is a NEW,
+   specific, comparable data point that fits an already-partially-investigated thread:
+   `StatsPanel` genuinely has the heaviest/most complex child widget tree of the three (the stats
+   grid, `_RecentHistoryWidget`, `HourlyHeatmap`/`StreakGrid`, `TasselOverlay` and its tassel
+   physics, multiple tabs each with their own row lists) — while `LibraryPanel` paints its entire
+   content through ONE delegate-painted `QListView` (`BookDelegate`/`BookModel`), which per this
+   session's own earlier finding (the Book Detail slide-paint-suppression investigation, see the
+   `_wire_paint_probe` finding referenced in the open plan file) is structurally cheaper to
+   repaint on every animation frame than a tree of individually-repainted child widgets. Tags sits
+   architecturally between the two: a real widget tree (tag rows, color swatches, thumbnail grids)
+   but smaller/shallower than Stats'. **A severity ranking that tracks widget-tree complexity this
+   cleanly is a real, checkable clue for a future investigation** — it points at the same repaint-
+   cost mechanism the Book Detail slide-paint-suppression plan already targets, just observed here
+   on panel-open/close slides generally rather than on Book Detail specifically. Not yet
+   cross-checked against the open plan's own diagnostic (`_wire_paint_probe`'s per-widget paint
+   counts) for Stats vs. Library vs. Tags specifically — that would be the natural next step if this
+   thread is picked back up, since the instrumentation to check it already exists and is already
+   wired in.
+
+**Acknowledged constraint, Pryme's own words, not glossed over**: "I am testing the app on one
+machine, one desktop environment. That's a problem but I can't do anything about it." Every finding
+across this entire multi-session investigation — the GPU-offload dead end, the KWin
+offscreen-framebuffer leads, the kernel trace, tonight's severity-ranking observation — is
+single-machine, single-DE (KDE Plasma/Wayland/KWin, Optimus hybrid GPU laptop) evidence only. This
+does not invalidate any of it as real (the jank itself, and everything measured about it, is
+genuinely reproducible on THIS machine), but nothing here should be treated as proven to generalize
+to a different desktop/compositor/GPU combination without independent confirmation there. Recorded
+as a standing caveat on this whole investigation thread, not a new finding to chase.
+
+## 2026-09-25 — Tried forcing Fabulor onto the NVIDIA GPU (PRIME offload) as a jank isolation test — does not work on this Wayland/KWin desktop, not scheduled work
+
+Follow-up to the general jank investigation below: given the GPU-frequency sampling finding (Intel
+iGPU pinned at floor frequency, 99.8% of the time, during active jank — i.e. not GPU-bound), the
+next natural isolation test was "does Fabulor render faster/smoother on the idle NVIDIA GPU
+instead?" This machine's hybrid Optimus setup (Intel HD 630 `card1` driving the display, NVIDIA
+GTX 1060 `card0` idle) made this look like a cheap, non-invasive thing to try.
+
+**Four different approaches, all failed to move any rendering onto the NVIDIA card — confirmed via
+live `nvidia-smi` (0% util, flat 14MB/driver-overhead VRAM) after each, not assumed from env vars
+alone:**
+1. `__NV_PRIME_RENDER_OFFLOAD=1 __GLX_VENDOR_LIBRARY_NAME=nvidia` — the standard X11/GLX PRIME
+   offload incantation. **First-pass mistake, caught by Pryme, not self-caught**: I initially
+   reported this as working, reasoning from `/proc/<pid>/maps` showing `libGLX_nvidia.so` and
+   friends mapped into the process. That is NOT evidence of active rendering — Mesa/GLX can dlopen
+   a vendor library during enumeration/negotiation without ever making it the active driver for any
+   real GL context. Pryme's direct report ("Its use remained 0% while the VRAM used was 14 MB with
+   no change") was the actual ground truth and immediately falsified the claim — retracted per this
+   file's own "never substitute a plausible explanation for a checked one" rule.
+2. `QT_QPA_PLATFORM=wayland-egl` (forcing Qt's Wayland-EGL platform plugin explicitly) — no change.
+3. `__EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/10_nvidia.json` (forcing the EGL
+   vendor ICD directly, bypassing GLX-specific selection entirely) — no change.
+4. Checked whether KWin itself exposes any secondary-GPU render path via D-Bus
+   (`org.kde.KWin /Compositor`) — `supportedOpenGLPlatformInterfaces: egl`, single interface, no
+   multi-GPU selection surfaced there either.
+
+**Root cause (architectural, not a missing flag)**: this is a Wayland session
+(`XDG_SESSION_TYPE=wayland`), and KWin is the DRM master / compositor — it owns actual buffer
+allocation on `card1` (Intel) for the display. A normal windowed Wayland client hands its rendered
+buffers to the compositor via `wl_drm`/`linux-dmabuf`; it doesn't unilaterally pick which physical
+GPU renders its window the way an X11/GLX client can via `__NV_PRIME_RENDER_OFFLOAD`— that
+mechanism is designed for the X11/GLX offload model specifically. A bare-shell `eglinfo` on this
+machine shows NVIDIA as the default EGL vendor (unconstrained context, no compositor buffer-sharing
+involved) — a fundamentally different situation from a real windowed client under KWin, which is
+why that result doesn't transfer.
+
+**Confirmed only `kwin_wayland` (5MiB) and `Xorg.bin` (4MiB, likely XWayland-related) show up as
+NVIDIA-registered processes at all (`nvidia-smi`'s process list) — Fabulor never appears there
+under any of the four attempts.**
+
+**Not pursued further**: the one remaining lever (forcing KWin's own render backend onto the NVIDIA
+GPU, e.g. via `KWIN_DRM_DEVICES` or a logind/systemd override) would move the ENTIRE desktop's
+compositing onto NVIDIA, not just Fabulor — a much bigger, harder-to-reverse change requiring a
+compositor restart/re-login, explicitly out of scope for what was meant to be a cheap isolation
+test. Pryme's own call: stop here, this line is a dead end for now.
+
+**Follow-up under X11 (same night, after logging into Plasma X11 specifically to get a real
+`xrandr --listproviders` offload path)**: confirmed PRIME offload genuinely WORKS on this system
+under X11 — `xrandr --listproviders` lists both `modesetting` (Intel) and `NVIDIA-G0` (offload
+sink) as real providers, and a plain `glxinfo` run with the same env vars correctly picked up the
+NVIDIA renderer. Fabulor's own process, launched the same way, also genuinely loaded
+`libGLX_nvidia.so` and the NVIDIA GL stack (confirmed via `/proc/<pid>/maps`, not just env var
+presence this time — a real signal, unlike the earlier Wayland false-positive below). **Still 0%
+NVIDIA utilization and flat 7MiB VRAM across 30 consecutive 0.3s-interval samples, taken with a
+book actively PLAYING and a panel actively OPEN** (the specific condition needed to trigger
+`transport_bar_blur.py`'s repeating `_grab_and_blur` cycle — confirmed this condition was genuinely
+met before concluding anything, after an earlier sampling pass without playback running was
+correctly caught as inconclusive and redone).
+
+**Root cause, found by reading the code rather than sampling further — this is the real answer,
+not another negative result:** Fabulor has ZERO `QOpenGLWidget`/GPU-accelerated Qt rendering
+anywhere in its codebase (confirmed via `grep -rn QOpenGLWidget` across `ui/` and the package root —
+no hits). It is entirely `QWidget`-based raster painting (Qt's software/CPU rasterization backend).
+The transport-bar blur effect — the single heaviest, most frequent GPU-shaped operation in the
+app — is `QGraphicsBlurEffect` composited through a disposable offscreen `QGraphicsScene`
+(`transport_bar_blur.py:311`, `_blur_pixmap`), which is CPU-side software blur, not a GPU shader
+pass. mpv is configured `vo='null'` (`player.py:208`) — no video output at all, since this is an
+audiobook player with no video track (`vid=False` too) — so there was never anything on the mpv
+side to offload either.
+
+**This closes the GPU-offload line cleanly, with a real mechanism instead of a guess**: Fabulor has
+essentially no GPU-acceleratable rendering work to move to a different GPU, on either the Qt side
+or the mpv side. This is consistent with, not contradicting, the earlier GPU-frequency-floor
+finding (Intel iGPU pinned at idle/floor frequency during jank) — the iGPU isn't idle *despite* the
+jank, it's idle because there's genuinely nothing GPU-bound happening in this app at all. The jank,
+whatever it is, has to be CPU/scheduler/compositor-side — consistent with, and now better
+explaining, tonight's two dmesg-level leads (the i915 kernel timer warning, the KWin
+offscreen-framebuffer failures) as the more promising remaining direction. Chatterbox/Fabulator
+(the separate TTS-generation sibling project) was checked as a contrast case in the same
+investigation — its `torch.cuda.is_available()` correctly reports the NVIDIA GPU and it already
+uses it for real, GPU-heavy generation work with no changes needed; the difference is purely that
+Fabulor's own workload has nothing GPU-shaped to redirect, not any offload-mechanism failure.
+
+## 2026-09-25 — General jank investigation, continued: confirmed real via kernel-level tracing (independent of Fabulor/KWin/screen-recorder self-reporting); two concrete system-level leads found, neither yet acted on
+
+**Direct continuation of "General app sluggishness investigation" (2026-09-22/23, below)** — Pryme's
+own words reopening this thread: "As janky as before. We were going to check 'why is Stats' single
+filter alone doing 2x Tags'. And yesterday's bisect into commits from 2 months earlier, when the
+keyboard support was not even extended yet, still had the same jankiness. So, nothing really
+explains." Correctly read as: the `StatsPanel.eventFilter` fix (immediately below) and everything
+else app-side tonight is real but cannot be THE cause, since the bisect already showed the same
+jank at a commit predating all of it. Abandoned further app-code investigation and went outside
+Fabulor entirely, per that entry's own "genuinely open questions" list.
+
+### Screen recording, twice — confirms the jank is real and independent of anything Fabulor/KWin self-report
+
+Used Spectacle (KDE's native Wayland screen recorder, PipeWire portal) to record two full-screen
+sessions of real Fabulor use: once with VS Code/Claude Code also open (the normal daily-use
+condition), once with everything else closed. Extracted REAL per-frame presentation timestamps from
+each `.webm` via `ffprobe -show_entries frame=pts_time` (not the container's nominal 60fps — actual
+decoded frame PTS) and computed inter-frame deltas.
+
+Both recordings show the same shape, nearly identical distributions: median ~18-19ms (healthy,
+close to the 16.7ms/60fps ideal — confirms the RECORDER's own baseline is trustworthy, not itself
+the source of noise), but a genuine heavy tail — p90 ~37ms, p99 ~91-101ms — and **32-38 severe
+stutter events (gaps >100ms) in each ~88-90 second recording**, roughly one every 2-3 seconds.
+Extracted still frames at several stutter timestamps in both recordings and visually confirmed real
+Fabulor interaction (Stats Day/Week/Month tabs, Tags panel, Library) at each one — genuine jank
+during genuine use, not an artifact of idle time or another window.
+
+**This directly settles the "is it VS Code contention" question Pryme had already tested once
+before** (2 days prior, per his own account) and now confirmed again here: closing everything else
+made no meaningful difference to the jank's frequency or severity. Ruled out as a cause, for the
+second time, by two independent tests.
+
+### GPU utilization sampled during genuine active use — the iGPU is never the bottleneck
+
+This laptop (Dell Inspiron 7577) is a hybrid Intel+NVIDIA Optimus setup — `glxinfo`/`lspci` confirm
+KWin actually composites on the Intel HD Graphics 630 (`card1`, Kaby Lake, several years old), with
+the NVIDIA GTX 1060 Mobile (`card0`) sitting almost entirely idle (`nvidia-smi`: 0% util, P8/lowest
+power state, 14MiB used) even during active jank-producing use. Sampled `/sys/class/drm/card1/
+gt_cur_freq_mhz` (world-readable, no root needed) at ~50Hz for 90 seconds of confirmed real, active
+Fabulor interaction: **99.8% of samples sat at 350MHz, the iGPU's OWN FLOOR frequency** (max is
+1100MHz) — it essentially never ramped up at all, even while jank was actively occurring. **This
+rules out GPU compute/render saturation as the cause** — whatever is happening, the iGPU is not
+struggling to keep up with rendering work; it's barely being asked to do any.
+
+### Real kernel-level tracing (`trace-cmd`, ftrace) — the most authoritative evidence in the whole investigation
+
+Installed `trace-cmd` (`sudo zypper install -y trace-cmd`, a real system package addition — done
+with Pryme's explicit confirmation) to capture real kernel scheduler and i915 GPU-driver events,
+completely independent of Fabulor's process, KWin's own event loop, AND the screen recorder's own
+encoding pipeline (which the earlier two methods could not fully rule out as a confound).
+
+`i915:intel_crtc_flip_done` never fired on this kernel/driver combination (0 events across every
+capture) — not a capture bug, this kernel's atomic-modesetting path apparently signals frame
+presentation through `intel_plane_update_arm`/`_noarm` instead. Used the plane-1A `intel_
+plane_update_arm` event stream (real `frame=`/`scanline=` counters from the driver, genuine
+per-commit ground truth) as the frame-timing signal instead. Two captures, ~45s and ~60s, both
+during confirmed real active Fabulor use:
+
+- First capture: real but contaminated (a stray `nvidia-smi dmon` process I had started earlier in
+  the session for the GPU-frequency check, and never confirmed stopped, was still polling
+  throughout — ~40K scheduler events; VS Code also present). Still showed p50=16.7ms, p90=83ms,
+  p99=300ms, max=500ms, **96 gaps >100ms in 45 seconds**.
+- Second capture (self-timed via a 15s-delay wrapper script, so Pryme could close VS Code first
+  without needing me actively running anything): `nvidia-smi` confirmed killed beforehand (real
+  contamination source, only found by checking `pgrep` directly rather than assuming an earlier
+  command had cleanly exited); VS Code still showed some residual scheduler presence (~5,530
+  events, likely the extension host or a not-fully-closed window) but far cleaner overall. Result:
+  p50=16.7ms, p90=100ms, p99=250ms, max=683ms, **143 gaps >100ms in 60 seconds** — same shape,
+  same order of magnitude, if anything slightly worse (plausibly denser interaction during this
+  specific window).
+
+**Directly examined the scheduler trace during the single biggest gap (683ms)**: `kwin_wayland` was
+scheduled 143 times and Fabulor's own `python` process 78 times DURING that gap — both receiving
+substantial, active CPU time throughout, not starved. **This rules out simple CPU-scheduling
+starvation as the cause** — whatever is stalling the frame, it is not because Fabulor or KWin were
+denied the CPU.
+
+### Two concrete, real, previously-unknown leads found while checking system logs for context — neither acted on yet
+
+Per this project's own measurement discipline, checked `dmesg`/`journalctl` directly rather than
+stopping at "scheduling looks fine, therefore no more information available":
+
+1. **A single kernel warning, real but likely not the primary cause given it only fired once**:
+   `WARNING: kernel/time/hrtimer.c:1071 at hrtimer_forward+0x78/0xb0` — `timer->is_queued` assertion
+   failure, triggered from inside `i915_sample()` (`Fri Sep 25 03:34:21`, this exact session). A
+   genuine kernel-level timer-bookkeeping inconsistency inside the Intel driver's own GPU-busy
+   sampling code, on a `Tainted: P OE` kernel (proprietary NVIDIA modules loaded alongside i915 —
+   consistent with this being an Optimus hybrid-GPU machine). Checked frequency: fired exactly ONCE
+   across the whole session (`grep -c "cut here"` = 1) — real, but too rare on its own to explain
+   jank recurring every 2-3 seconds throughout hours of use.
+2. **The more promising lead: KWin's own compositor logging a real GPU-resource-allocation
+   failure, recurring throughout the ENTIRE session, in irregular bursts**: `GL_INVALID_VALUE in
+   glTexStorage2D(width, height or depth < 1)` → `Invalid framebuffer status: "GL_FRAMEBUFFER_
+   INCOMPLETE_ATTACHMENT"` → `Failed to create an offscreen framebuffer`, all three lines together,
+   16 times across the session (`journalctl --user -b 0`), clustered irregularly (e.g. 3 times
+   within 40 seconds around 04:23:56-04:24:34, then quiet for ~7 minutes, then more) — a pattern
+   shape consistent with genuinely intermittent, not periodic, jank. This is KWin's COMPOSITOR
+   itself — the thing directly responsible for painting every window including Fabulor's — failing
+   to allocate a GPU offscreen framebuffer it needs (very plausibly for a blur effect, given how
+   heavily this desktop's own effects and this app's own `visual_area`/backdrop blur mechanisms
+   lean on offscreen render targets), which would plausibly force a fallback path, a skipped frame,
+   or a visible hitch exactly matching what's been reported for months.
+
+### Where this leaves things — genuinely promising, not yet actionable
+
+**Neither lead has been investigated further or acted on** — this entry is diagnosis, not a fix,
+consistent with tonight's own working pattern. The KWin offscreen-framebuffer failure is the
+stronger, more frequent, more directly plausible lead of the two and is the natural next-session
+starting point: it is NOT a Fabulor bug (it's the system compositor, external to this codebase
+entirely) but it could very plausibly explain visible jank in Fabulor specifically, since Fabulor's
+own panels are among the most blur/effect-heavy surfaces on this desktop. Concrete next steps, not
+yet started:
+- Search for this exact KWin error text (`Failed to create an offscreen framebuffer` +
+  `GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT` on Intel i915/Optimus hardware) against known KDE/Mesa bug
+  reports — this looks like the kind of thing that would already have a tracked upstream issue.
+- Check KWin's own debug console (`org.kde.KWin.showDebugConsole()` via D-Bus, `Effects` tab) for
+  which effect(s) are active when this error fires — blur is the natural suspect given this app's
+  own heavy reliance on it, but not yet confirmed.
+- Check whether disabling KWin's blur effect system-wide (Settings > Desktop Effects, separate from
+  Fabulor's own in-app blur toggle) changes the frequency of this specific log line — a real,
+  checkable experiment, not yet run.
+- Consider whether Mesa/i915 driver version, or the specific Optimus/PRIME configuration on this
+  machine, is implicated — this is genuinely more of a system/distro-level question than an
+  application one at this point.
+
+**Methodology notes worth keeping for reuse:**
+- Real per-frame video PTS extraction (`ffprobe -show_entries frame=pts_time`) is a solid, cheap,
+  no-new-privilege way to get ground-truth frame timing independent of the app under test — but
+  keep in mind it inherits whatever the RECORDER's own encoding introduces; cross-check the
+  BASELINE median against the expected frame interval before trusting the tail.
+- `trace-cmd`/ftrace needed a real system package install (`trace-cmd`) and root (`sudo`) for
+  `/sys/kernel/debug/tracing` — a genuine, confirmed-with-Pryme-first system change, not a quiet
+  side effect.
+- `intel_crtc_flip_done` not firing at all on this kernel is itself informative, not a dead end —
+  `intel_plane_update_arm`'s own `frame=`/`scanline=` fields are a valid substitute ground-truth
+  signal when the "expected" event doesn't fire.
+- A background monitoring command (`nvidia-smi dmon`) started earlier in a long session can
+  silently keep running and contaminate a LATER, unrelated measurement — confirmed via `pgrep`
+  directly rather than assumed stopped. Always verify a background process actually exited before
+  treating a "clean environment" test as clean.
+- `/sys/class/drm/card*/gt_cur_freq_mhz` (Intel iGPU) is world-readable, no root/new package needed,
+  and is a fast, cheap way to rule GPU-render-saturation in or out before reaching for anything
+  heavier (kernel tracing, `intel_gpu_top`, etc.).
+
+---
+
+## 2026-09-25 — `StatsPanel.eventFilter` occlusion guard shipped: confirmed real win for Stats-sourced opens, plus an honest unexplained anomaly
+
+**Direct follow-up to the root-cause entry immediately below.** Implemented the guard the root-cause
+entry proposed, traced the specific risk Pryme asked about first ("what is the downside, what is
+the risk?"), then verified the fix with real measurement rather than assuming it worked.
+
+### Risk trace, before writing any code
+
+`StatsPanel.eventFilter`'s ENTIRE body (36 lines) exists to dismiss the "Reset all stats" 7-second
+confirmation on a stray key/click. Checked directly: that confirmation already has an independent
+hard-timeout `QTimer` (`_on_reset_stats`, `7000ms` `singleShot` → `_cancel_reset_stats`) that fires
+regardless of the event filter — so silencing the filter while Book Detail occludes Stats cannot
+strand the confirmation permanently; worst case it stays visibly armed up to 7s longer than a
+legitimate dismiss input would have taken, and that input could never legitimately reach Stats'
+widgets while occluded and Book Detail holds real Qt focus anyway. Risk assessed as low and
+effectively closed, not just small — see the conversation for the full trace.
+
+### The fix
+
+Same shape as the Tags occlusion-guard fix (`tag_manager.py`'s `eventFilter`, shipped earlier this
+session for a correctness reason): an early-return at the very top of `StatsPanel.eventFilter`
+when `book_detail_panel.isVisible()`, using the existing
+`getattr(getattr(self, '_panel_manager', None), 'book_detail_panel', None)` access pattern already
+used twice elsewhere in this same file. `tests/test_stats_panel_occlusion_guard.py` mirrors the
+existing Tags guard's test shape.
+
+### A real methodology gotcha, hit while trying to measure the guard directly
+
+First verification attempt monkeypatched `StatsPanel.eventFilter` at the CLASS level after the
+panel was already open — this produced 0 recorded calls, which read at first like the guard was
+somehow suppressing 100% of dispatch (implausible) rather than what it actually was: **PySide6
+binds the C++-side event-filter callback to the method resolved at `installEventFilter()` call
+time, not re-resolved per dispatched event** — a class-level reassignment after installation is
+silently invisible to Qt's own dispatch. Patching the live INSTANCE's `eventFilter` attribute
+directly (`sp.eventFilter = wrapped`) worked correctly and gave real counts. Worth remembering for
+any future attempt to instrument a `QObject.eventFilter` after it's already installed: patch the
+instance, not the class.
+
+### Verification — two independent full A/B runs, 270 cycles each
+
+Both runs used the exact same (uncommitted at the time) code, different random seeds
+(`after-guard`, seed 1 — same seed as the `heavy-load-v4` baseline being compared against;
+`after-guard-v2`, seed 4). **Stats-sourced Book Detail opens are consistently, repeatably faster
+with the guard**, closely reproduced across both independent runs (median wall-clock, ms):
+
+| mode | before (heavy-load-v4) | after-guard | after-guard-v2 |
+|---|---|---|---|
+| transparent/stats | 463.7 | 405.7 (−58.0) | 412.6 (−51.2) |
+| frosty/stats | 376.2 | 354.9 (−21.3) | 356.1 (−20.2) |
+| opaque/stats | 368.3 | 347.8 (−20.5) | 350.1 (−18.2) |
+
+This is a real win, largest in Transparent mode (where Stats' own live, unsuppressed paint work —
+the mechanism the earlier cProfile entry found — is presumably now competing with less event-filter
+overhead for the same CPU budget).
+
+### An honest, unresolved anomaly found in the same two runs
+
+**Library- and Tags-sourced opens — a code path this guard never touches at all — also came out
+consistently SLOWER in both after-guard runs**, by a similar margin in both (+11 to +44ms), never
+recovering to the `heavy-load-v4` baseline:
+
+| mode | before (heavy-load-v4) | after-guard | after-guard-v2 |
+|---|---|---|---|
+| transparent/library | 317.1 | 335.6 (+18.4) | 328.4 (+11.3) |
+| transparent/tags | 331.2 | 369.4 (+38.1) | 374.9 (+43.7) |
+| frosty/library | 326.0 | 340.4 (+14.4) | 344.5 (+18.5) |
+| frosty/tags | 331.2 | 362.4 (+31.2) | 358.4 (+27.2) |
+| opaque/library | 322.9 | 346.6 (+23.7) | 342.5 (+19.6) |
+| opaque/tags | 327.6 | 354.2 (+26.7) | 356.7 (+29.1) |
+
+Ruled out directly rather than assumed away: thermal throttling (CPU at 48°C, not throttled),
+memory pressure (8Gi available via reclaimable buff/cache, swap essentially untouched), and a
+stray competing process (`ps aux` clean before and during both runs). No confirmed cause found —
+candidates considered but not verified: cumulative effect of running many consecutive Book Detail
+opens within one long-lived `MainWindow` process (an unbounded cache growing across the session —
+see the existing "Pending Debt" note on `_cover_cache` having no eviction policy — though this
+would equally affect the `heavy-load-v4` baseline run, which was also a single long-lived process
+of the same total cycle count, so this candidate doesn't cleanly explain a baseline-vs-after-guard
+DIFFERENCE); some environmental factor on this one machine not yet identified. **Pryme's own call,
+consistent with this project's measurement discipline: keep the guard regardless** — it structurally
+cannot cause a slowdown in code it never touches, so the Stats-specific improvement stands on its
+own logic even with this separate question left open. Flagged here plainly rather than smoothed
+over or silently dropped from the record.
+
+---
+
+## 2026-09-25 — Why Stats-sourced Book Detail opens cost more: two app-wide `QApplication` event filters stay fully installed and running the whole time Book Detail is open over it
+
+**Direct continuation of the entry immediately below** ("Book Detail backdrop-mode A/B test"),
+picking up its own stated next step: what specifically inside Stats' own panel accounts for the
+measured ~50-150ms open-cost gap versus Library/Tags, independent of backdrop mode.
+
+### `StatsRowDelegate.paint()` checked first, ruled out as the dominant cost
+
+`stats_panel.py:1046(paint)` (24 calls, 0.031s in the Frosty/Stats cProfile sample) does
+construct fresh `QFont`/`QFontMetrics` objects on every single row paint (`QFont(option.font)`,
+`QFont(title_font)` for `author_font`, four separate `QFontMetrics(...)` constructions — none
+cached across rows or across repaints) — a real, fixable inefficiency, but at 24 calls / 0.031s
+total it is nowhere near the dominant cost in either dump. Not the answer to "why Stats costs
+more," even though it's real waste worth fixing on its own merits (see TODO.md).
+
+### The real mechanism: `installEventFilter(QApplication.instance())`, not narrowly scoped
+
+Checked directly, not inferred: `LibraryPanel` installs its own event filter narrowly —
+`self._list_view.viewport().installEventFilter(self)` (`library.py:719`) — so it only ever
+receives events actually destined for that one widget. `StatsPanel.eventFilter`
+(`stats_panel.py:4884-4890`) and `TagManagerWidget.eventFilter` (`tag_manager.py:929/1703/1750`)
+both instead call `QApplication.instance().installEventFilter(self)`, on `showEvent`/removed on
+`hideEvent` — meaning while either panel is genuinely visible, its filter receives and must check
+EVERY SINGLE Qt event delivered ANYWHERE in the entire app. `ui/hover_tracker.py`'s
+`ScrollHoverTracker`/`GridHoverTracker` (used by both Stats' row list and Tags' thumbnail grid)
+install the SAME way (`hover_tracker.py:139/361`).
+
+Because Book Detail occludes (raises above) rather than hides its underlay — the same
+"showEvent()d but not actually visible to the user" state this session's earlier Tags
+focus-stealing bug depended on, see the entry further below — Stats' `showEvent`/`hideEvent`
+pairing never fires while Book Detail sits on top of it, so its `QApplication`-wide filter stays
+fully installed and fully live for the panel's whole open duration, taxing every one of Book
+Detail's own internally-generated events (paint, mouse-tracking, focus, the slide animation's
+`valueChanged` ticks) on top of whatever it would already process for itself.
+
+**RETRACTED (2026-09-25, caught while tracing risk for a possible fix, not live-reported): the
+"Stats pays it twice over / installs TWO app-wide filters" claim immediately below was wrong.**
+Checked directly by re-reading the actual Frosty/Stats cProfile dump line-by-line rather than
+trusting the earlier summary: it contains ONLY `stats_panel.py:4892(eventFilter)` (5,388 calls) —
+`hover_tracker.py:368` never appears in it at all. That line came from a DIFFERENT dump (Tags'),
+conflated with Stats' own while writing the original version of this entry. **`StatsRowListView`
+does not use `hover_tracker.py`** — it drives its own `_hovered_row` directly via
+`mouseMoveEvent`/`entered` (`stats_panel.py:948-1536`), a per-widget mechanism with no
+`QApplication`-wide filter of its own. `hover_tracker.py`'s `ScrollHoverTracker`/`GridHoverTracker`
+are used ONLY by Tags (`tag_manager.py`'s `_row_hover`/`_thumb_hover`), confirmed by
+`grep -rn "hover_tracker\|ScrollHoverTracker\|GridHoverTracker" src/fabulor/ui/stats_panel.py`
+returning zero hits.
+
+**Corrected picture**: Stats installs exactly ONE app-wide filter (`StatsPanel.eventFilter`
+itself); Tags installs TWO (`TagManagerWidget`'s own + whichever of `ScrollHoverTracker`/
+`GridHoverTracker` is currently active); Library installs zero. Stats' single filter still
+processes 5,388 calls in the sampled dump — more than Tags' combined two-filter total in ITS own
+dump (1301 + 1288 = 2589) — so **Stats' one filter alone is doing more raw dispatch work than
+Tags' two filters combined**, meaning "number of app-wide filters installed" does not fully
+explain the ordering by itself; `StatsPanel.eventFilter`'s own per-call cost or a difference in
+how much event traffic Book Detail's Stats-tab content generates versus its Tags-tab content are
+both still open, unexamined candidates. This is a genuine, only-partially-resolved question, not
+settled by the filter-count theory alone — flagged honestly rather than smoothed over.
+
+Library installs ZERO app-wide filters while visible — its own filter is viewport-scoped, so it
+costs nothing extra while occluded. Confirmed directly, not assumed:
+`grep -c "QApplication.instance().installEventFilter"` returns 0 in `library.py`, vs. 1 in
+`stats_panel.py`, 3 in `tag_manager.py`, 2 in `hover_tracker.py` — all real, all app-wide.
+
+### Not yet fixed — this entry is diagnosis, not a shipped change
+
+Per this session's own working pattern (write up, then decide whether/how to act), no code change
+has been made here. The Tags occlusion-guard fix from earlier this session (an early-return in
+`TagManagerWidget.eventFilter` when `book_detail_panel.isVisible()`) is the PROVEN shape of the
+right fix for this exact class of problem — it already exists for TAGS, for a CORRECTNESS reason
+(focus-stealing), but was never extended to `StatsPanel.eventFilter` or ported to `hover_tracker.py`
+for the COST reason documented here. See TODO.md for the concrete next-step pointer.
+
+**Scope.** Direct follow-up to the paint-suppression work below. Pryme's own framing going in:
+"Transparent mode has no jank suppression at all, so if paint suppression genuinely helps felt
+smoothness, Transparent should read worse than Frosty/Opaque in a real A/B." Built a real harness
+(`tools/book_detail_backdrop_ab_test.py`) that drives the REAL running app via real simulated Qt
+input (not direct method calls — Pryme's explicit design call, so the click-to-open path is also
+exercised, not just the panel-open cost) across a 3 backdrop-mode × 3 open-source (Library/Stats/
+Tags) matrix, jumbling cell order each pass, reading the existing `[PANEL-TIMING]`/
+`[PANEL-PAINT]`/`[BOOKDETAIL-PROFILE]` instrumentation already shipped for exactly this purpose
+(see the entry below). Two full statistical passes (heavy-load and cold-idle, 270 cycles/~90
+minutes real wall-clock each) plus one small cProfile-enabled diagnostic pass (27 opens) were
+run and are the load-bearing data this entry summarizes.
+
+### Three real bugs found IN THE HARNESS, each initially misread as an app bug — full trail matters for reuse
+
+This is the harness's own debugging history, kept in detail because each failure mode is a real,
+reusable lesson for any future "drive the real app + read its real log" harness on this codebase,
+not just noise to skip past:
+
+1. **Missing `setup_logging()` call.** The harness imported `MainWindow` directly, skipping
+   `main.py`'s own startup sequence — the `fabulor` root logger therefore had no handler at all,
+   so every `[PANEL-TIMING]` line was silently discarded even though every open genuinely
+   succeeded (confirmed via `book_detail_panel.isVisible()`). Read as "every single click
+   mysteriously fails" before being traced to this. Fixed by calling `setup_logging()` explicitly,
+   matching `main.py`'s exact sequence (before `QApplication`, before `MainWindow`).
+2. **`QApplication.sendEvent` unreliability for two of the three sources' click paths.** Library's
+   real interaction is `Qt.CustomContextMenu`'s own press→`customContextMenuRequested` internal
+   translation; Stats' `StatsRowListView.mousePressEvent` is a plain Python override but sits
+   behind `QAbstractScrollArea`'s viewport-forwarding layer; both confirmed empirically (a live
+   isolation probe) to NOT reliably reach their real handler via a raw synthetic
+   `QMouseEvent(Press)`/`(Release)` posted through `sendEvent` — `sendEvent` returns `True`
+   ("accepted") while nothing downstream actually fires. Tags' `_TagBookThumb.mousePressEvent` (a
+   plain `QWidget`, no scroll-area layer) worked reliably via `sendEvent` for ~87 real opens before
+   ALSO failing intermittently under sustained load (see bug 3). Fixed for all three sources the
+   same pragmatic way: call the real Python-level handler directly
+   (`customContextMenuRequested.emit(pos)` for Library, `view.mousePressEvent(press)` for Stats,
+   `thumb.mousePressEvent(press)` for Tags) — still exercises the real handler and everything
+   genuinely under test downstream of it (`open_book_detail`, the real animation, the real paint);
+   only Qt's own internal event-to-signal/viewport-forwarding step is skipped, which was never
+   part of what this harness measures.
+3. **A stale `LogTailer` file handle across log rotation — the deepest and most consequential of
+   the three, and the one that read most convincingly as a REAL APP bug before being traced.**
+   `fabulor`'s `RotatingFileHandler` (`logger_setup.py`) rotates at 2MB; a full 270-cycle run's own
+   `[PANEL-TIMING]`/debug volume genuinely crosses that threshold mid-run. The harness's
+   `LogTailer` opened `fabulor.log` ONCE at script start and read via `readlines()` on that same
+   handle forever — after a rotation renames the file to `fabulor.log.1` and opens a fresh
+   `fabulor.log`, the stale handle keeps reading from the OLD (now-orphaned) inode, which never
+   receives another write, so `readlines()` silently returns nothing FOREVER from that point.
+   Confirmed directly: `fabulor.log.1` was exactly 2097089 bytes (≈2MB) at almost precisely the
+   timestamp every subsequent open in that run started reading as a timeout — and the real log,
+   read independently, showed the real app continuing to open/close Book Detail correctly the
+   whole time, across every source and mode, with no interruption at all. **This is worth keeping
+   as a general lesson**: a data source that goes silent under sustained load reads exactly like
+   the thing under test breaking down, and the failure pattern (works fine at first, then every
+   single subsequent measurement fails, uniformly, regardless of which variable is being varied)
+   is the tell that the OBSERVER broke, not the observed system — a real instance of this file's
+   own "never substitute a plausible explanation for a checked one" rule, caught by checking file
+   sizes and cross-referencing the real log rather than accepting "the app degraded under load" as
+   the answer. Fixed by making `LogTailer` rotation-aware: `os.stat(path).st_ino` checked on every
+   `read_new_lines()` call, transparently reopening from byte 0 of the new file on a detected
+   inode change.
+
+A fourth, smaller robustness gap in the harness's OWN retry logic (not a data-correctness bug, but
+a real amplifier of bug 2/3's symptoms before they were root-caused) is worth recording too: the
+per-open `try/except` originally `continue`d on a failed open WITHOUT ever attempting a recovery
+close, so one genuinely stuck open left Book Detail's real state unreconciled going into the next
+attempt — once this happened, every subsequent cell for the REST OF THE ENTIRE RUN also failed
+(167 consecutive timeouts observed in one affected run), a cascade that made an isolated,
+already-fixed bug look unfixed. Fixed with an unconditional best-effort recovery close in a
+`finally`-shaped block regardless of how the open resolved, plus a 3-consecutive-failure
+per-cell abort (skip the rest of that one cell, keep going) rather than letting one stuck state
+silently consume the whole remaining run.
+
+### The final, trustworthy dataset (540 real cycles: 270 heavy-load + 270 cold-idle, zero errors either pass)
+
+Backdrop mode moves wall-clock only modestly, and mostly for Stats specifically (Frosty/Opaque
+somewhat faster than Transparent there: ~370-464ms vs ~417-464ms depending on load condition —
+Library and Tags show almost no mode-driven difference at all, 317-367ms across every mode in
+both passes). System load itself (heavy Chatterbox/Vivaldi/VS Code activity vs. genuinely idle,
+post-cooldown) moved wall-clock LESS than run-to-run noise — several cells were actually a few ms
+SLOWER idle than under heavy load, ruling out "it's slow because of contention with other
+processes" as an explanation for anything measured tonight.
+
+**The one variable that moved the number consistently, in every mode, under every load
+condition**: which panel Book Detail opened FROM. Stats-sourced opens ran ~368-464ms; Library- and
+Tags-sourced opens ran ~317-367ms — a real, repeatable ~50-150ms gap, present regardless of
+backdrop mode or system load. Pryme's own framing, once this was reported: **this is the original
+report that started the whole investigation** — "Book details panel opens slower in Stats" — now
+independently rediscovered and confirmed with hard numbers by a test built to answer a completely
+different question.
+
+### The cProfile pass — Frosty and Transparent are slow over Stats for TWO DIFFERENT reasons, not a contradiction
+
+A small (27-open) `FABULOR_BOOKDETAIL_PROFILE=1` pass was run specifically to find WHAT costs more
+for Stats-sourced opens, not just confirm THAT it does. A real correction happened mid-investigation
+worth keeping on record: a first Stats-sourced cProfile dump was pulled and showed
+`_apply_transport_bar_blur_full`/`frost_panel_backdrop`/`_grab_and_blur` costing ~0.16s (vs. ~0.065s
+for a Library-sourced sample) — but this sample was WRONGLY assumed to be representative of Stats
+generally. Pryme caught the real problem directly: "this goes against the test run numbers, no? It
+found that backdrop mode didn't affect the sluggishness" — if the grab/blur cost were the dominant
+Stats cost and it's skipped entirely for Transparent mode (per the A/B-plan fix earlier this
+session), Transparent/Stats should have been the FASTEST of the three modes, not the slowest, per
+the statistical dataset above. Checking which CELL that dump actually belonged to (by cross-
+referencing the Stats-panel-open timestamp against the run's own printed cell order) showed it was
+genuinely from the **Frosty**/Stats cell, not Transparent — the two modes were never in conflict; two
+different real dumps, from two different cells, both slow, for two different mechanistic reasons:
+
+- **Frosty (and, by the same mechanism, Opaque) over Stats**: `_grab_and_blur`'s `main_window.grab()`
+  has to composite through Stats' own ALREADY-ACTIVE `visual_area` blur effect (`ClippedBlurEffect`,
+  left running underneath per `_book_detail_frost_rect`'s own documented design — Stats/Tags are
+  90%-width panels whose live blur stays up while Book Detail is open, unlike Library which is
+  opaque and has no such effect at all). This is a real, structural, ALREADY-DOCUMENTED architectural
+  cost (`_book_detail_frost_rect`'s own docstring), not a bug — it's just genuinely more expensive to
+  grab-and-recomposite a live-blurred region than an opaque one.
+- **Transparent over Stats**: no grab/blur step runs at all (correctly skipped, confirmed absent
+  from this cell's own dump) — the cost here is real, unsuppressed LIVE PAINT of Stats' own widget
+  tree during the slide (matches the statistical pass's 27-36ms/460-790-call paint numbers exactly):
+  `QLabel.paintEvent` (314 calls), `StatsPanel`'s own row-delegate `paint()` (24 calls, 0.031s in
+  this sample), `layout().activate()` (0.037s) all appear as real, load-bearing costs that simply
+  don't exist in a Library-sourced open's dump.
+
+**Both point at the same root, by two different paths**: Stats' own widget tree and panel
+architecture cost more to render/composite than Library's or Tags' does, REGARDLESS of which
+backdrop-mode mechanism is asked to deal with it — a static grab pays for it once as extra
+compositing-through-blur cost; a live, unsuppressed paint pays for it every frame as real widget
+paint cost. Neither mode "solves" Stats' underlying cost; they just move where it's paid.
+
+**Not yet investigated**: exactly WHAT inside Stats' own widget tree specifically (StatsRowDelegate?
+the tab widget itself? the History/Stats tab switch?) accounts for the render-cost gap versus
+Library/Tags — Pryme's own explicit call was to write this finding up FIRST, before digging
+further. See TODO.md for the next-session pointer.
+
+---
+
+## 2026-09-23/24 — Book Detail slide paint-suppression: real paint-cost win, four live-found regressions fixed, mechanism now complete
+
+**Scope.** Direct follow-up to the sluggishness investigation below, which ended inconclusive on
+the app-wide symptom but found one concrete, measured, unconditional cost via a new paint-level
+probe (`_wire_paint_probe`, added that same investigation): during Book Detail's slide-in/out
+(~300ms, `QPropertyAnimation` on the panel's `pos`), Qt repaints every descendant widget on every
+position tick — individual `QLabel`s in the stats grid painted 25-195 times in one slide, far more
+than Library/Stats (a single delegate-painted `QListView`, not many individually-repainted
+children). Across two sessions, four real regressions were found and fixed live (each one
+root-caused via targeted diagnostic logging or direct live comparison, never guessed) before the
+mechanism was confirmed working end-to-end. **Status: mechanism complete, commits `c640885`,
+`991d71c`, `8a6b064`** — see the "Resolution" section below for the final two fixes and current
+state.
+
+### The mechanism, final shape
+
+`PanelManager._wire_slide_paint_suppression` (`panels.py`): at `anim.start()`, grabs a `QPixmap` of
+the fully-populated real panel, shows it in a lightweight `QLabel` proxy raised above the (still
+visible, still moving) real panel, `setUpdatesEnabled(False)`s the real panel for the animation's
+duration, and follows the proxy's position to the real panel's via the animation's own
+`valueChanged` signal (no new timer, no polling — rides a signal Qt already fires). At `finished`,
+re-enables the real panel's updates and hides the proxy. The real panel's `isVisible()`/`.pos()` are
+never touched by this mechanism at any point — load-bearing, since `PanelManager.active_full_panel()`
+and `is_any_full_panel_visible()` both read `book_detail_panel.isVisible()` directly and are relied
+on app-wide for shortcut/overlay gating (see "First design attempt, and why it was rejected" below).
+
+### First design attempt, rejected before any code shipped
+
+The very first draft of this design hid the real panel during the slide and swapped to the proxy,
+matching a naive "double-buffer" intuition. An independent review (a second Claude instance,
+explicitly asked to critique the plan before implementation) caught the `active_full_panel()`/
+`is_any_full_panel_visible()` dependency described above — hiding the real panel for ~300ms would
+have made those report "Book Detail is not open" for the whole slide, a real, app-wide behavioral
+regression, not a hypothetical. The shipped design (keep the real panel visible/positioned
+throughout, suppress only its paint) was chosen specifically to avoid this — see the plan file
+(`~/.claude/plans/ticklish-greeting-harbor.md` at time of writing, since relocated/reused across
+sessions per this repo's own plan-file convention) for the full first-draft-vs-final comparison.
+
+### Regression 1 (live-reported, screenshots not needed): opaque-then-alpha-pop
+
+Shipped, then Pryme reported: the panel slides in opaque, then its translucent/blurred background
+"pops in" once settled — jarring, confirmed NOT present before this session's change, in BOTH
+Transparent and Frosty backdrop modes. Root cause, confirmed via code reading: Book Detail's
+`rgba(bg_main, panel_opacity_hover)` background (`WA_StyledBackground`, `get_stats_stylesheet`) is
+genuinely translucent — it blends against whatever's ALREADY in the window's backing store behind
+it at paint time. The OLD live-repainting slide blended naturally against the live underlay
+showing through; `QWidget.grab()` renders the panel in ISOLATION, so the grabbed pixmap's wash
+blends against nothing (flatly opaque) until the panel's own live paint (or the existing
+`frost_panel_backdrop`, Frosty-mode-only, settle-only) resumed.
+
+**First attempted fix — WRONG, reverted same session.** Grabbed the underlay directly (no
+hide/show needed — confirmed the real panel sits off-screen at this exact moment) and composited
+the wash onto it, for the OPEN direction only. Screenshots (Pryme sent several) showed this shipped
+a WORSE bug: the composited pixmap never had Book Detail's own real CONTENT (cover, title, stats,
+tags) painted into it — the proxy showed a tinted, EMPTY backdrop for the whole slide, real content
+only appearing once settled.
+
+**Pryme's correction, which is the actual fix:** the background was never supposed to slide at
+all — it should be STATIC, exactly matching `frost_panel_backdrop`'s own already-documented
+behavior ("STATIC while the panel is open, an accepted tradeoff"). The real fix has nothing to do
+with the proxy's pixmap: `self._apply_transport_bar_blur_full(self.book_detail_panel)` (the
+existing frost/wash mechanism) now ALSO fires at slide-START (`_start_book_detail_entry`, before
+`anim.start()`), not only from `_on_book_detail_slide_finished`. With that static backdrop layer
+established immediately, the proxy needs nothing but the panel's own real content — reverted back
+to a plain, unmodified `panel.grab()` for BOTH directions, identical to the very first
+(pre-any-correction) version. No open/close asymmetry survives in the shipped design.
+
+Considered explicitly and NOT done: reusing `_grab_and_blur`'s hide/show-coupled wrapper for an
+underlay grab at this new call site. That primitive (`transport_bar_blur.py:2153`) carries
+substantial, dated fixes for cursor-override/mouse-transparency/focus-strand side effects of hiding
+an ALREADY-OPEN, interactive panel — none of which were built or verified against this new,
+never-before-exercised moment (open-start, panel still off-screen). Reusing it without
+re-verifying every one of those assumptions would have been exactly the kind of unchecked reuse
+this codebase's own fragile-area history (see CLAUDE.md's whole "Critical Architecture Rules"
+section) warns against.
+
+### Regression 2 (live-reported, same session, immediately after fixing #1): still abrupt, "could be present from the start, overlaid by a second one at settle"
+
+Moving the frost call to open-start did NOT visibly fix the pop — Pryme still saw an abrupt
+change at settle. Pryme's own diagnostic instinct, offered directly rather than waiting for more
+instrumentation: "It could be that it is present in the beginning, overlays another one after the
+slide is done" — i.e. not "backdrop absent then appears" but "backdrop present-but-wrong, then a
+SECOND, different backdrop replaces it." This reframing was correct and led directly to the real
+bug, found via targeted `[FROST-DEBUG]` logging (geometry + pixmap-null state at both call sites,
+added specifically to get real data rather than a fourth guess):
+
+```
+OPEN-START call DONE: frost_geometry=QRect(-300, 24, 300, 508)   <- WRONG, off to the side
+SETTLE call DONE:     frost_geometry=QRect(0, 24, 300, 508)      <- correct
+```
+
+Root cause: `frost_panel_backdrop` (`transport_bar_blur.py`) computed the frost child's
+PANEL-LOCAL geometry via `panel.mapFrom(self.main_window, rect_in_main_window.topLeft())` — this
+derives the local offset from the panel's CURRENT on-screen position. Correct for every
+PRE-EXISTING call site (always fired at slide-finish, panel already at its rest position `x=0`).
+Wrong for the NEW open-start call: at that moment the panel sits at `x=panel_w` (off-screen,
+per `_start_book_detail_entry`'s own `.move(panel_w, ...)` before `.show()`), so `mapFrom` computed
+the local offset against that off-screen position — `main_window`-space `x=0` minus panel's own
+`x=300` landed the frost at panel-local `x=-300`, invisible (off to the side, clipped by the
+panel's own bounds) until the settle-time call recomputed it correctly against the panel's now-real
+`x=0` position. Two genuinely different frosts, the second replacing the first — exactly Pryme's
+own diagnosis, confirmed by the logged numbers, not just accepted on faith.
+
+**Fixed** by computing the local offset against Book Detail's KNOWN, FIXED rest position
+`(0, 32)` — a hardcoded duplicate of `_start_book_detail_entry`'s own `book_detail_panel_y`
+constant (panels.py doesn't currently expose it as a shared named constant either; noted as a
+minor follow-up, not urgent) — instead of the panel's live, possibly-off-screen geometry. Verified
+against the ALREADY-CORRECT settle-time numbers before shipping, not just plausible-looking math:
+`56 (frost rect's y) - 32 (rest y) = 24`, exactly matching the settle-time log's own
+`frost_geometry=QRect(0, 24, ...)` — confirms the formula reproduces the known-good result, not a
+coincidence.
+
+Re-tested live after this fix: `[FROST-DEBUG]` now shows OPEN-START and SETTLE producing IDENTICAL
+geometry (`QRect(0, 24, 270, 498)` for both), and Pryme confirmed: "Promising." — the abrupt
+backdrop pop is fixed.
+
+### Structural gap found immediately after, still OPEN (why this ships as WIP)
+
+Testing further, Pryme found a third, related but distinct symptom: the frost rect deliberately
+EXCLUDES a right-hand gutter (preserved live/sharp over the 90%-width Stats/Tags-underlay case,
+per `_book_detail_frost_rect`'s own extensive pre-existing comment — NOT something this session
+touched) and the area above the progress bar (`top=56`, `_BOOK_DETAIL_FROST_TOP_UNDER_PROGRESS`).
+Those regions were always meant to show LIVE underlay content through Book Detail's translucency,
+never frosted. But the proxy's single static `panel.grab()`, taken once at open-start, freezes
+those live regions too — same "pops in later" shape as regressions 1 and 2, just in territory the
+frost mechanism never claimed to cover in the first place. Pryme's own framing, confirming this is
+not a new bug from tonight's timing changes: "The issue is the same shape as before. Those sections
+show up later all of a sudden" — i.e. this always happened (a live-repainting panel kept those
+areas live throughout; a frozen-pixmap proxy structurally cannot), just newly visible/noticed once
+the OTHER two pops were fixed and stopped masking it.
+
+**Not yet investigated as of this commit.** The likely direction (not yet attempted): the proxy
+may need to be more than a single flat grab — e.g. excluding the gutter/progress-bar regions from
+what gets frozen, similar in spirit to how `_book_detail_frost_rect` already excludes them from
+what gets frosted, so those regions keep showing the live underlay through the proxy the same way
+they do once the real panel resumes painting. Exact mechanism not designed yet — do not assume the
+frost rect's own exclusion logic can be trivially reused, since the frost and the proxy are
+different widgets solving different problems (frost = the STATIC translucent backdrop; proxy =
+the panel's own MOVING content). Pryme's explicit instruction, verbatim: "Investigate a targeted
+fix... This is showing promise and could work" — continue from here, not revert.
+
+### New, unrelated observation, not yet investigated
+
+Pryme, same session: "Details open jankier over the dummy tag (84 books). A tag with a few books,
+clean." — Book Detail's open feels worse specifically when opened from/for a heavily-tagged
+context (~84 books) vs. a lightly-tagged one. Not yet connected to anything in this thread or the
+inconclusive sluggishness investigation below; flagged in TODO.md as a fresh lead for next session,
+not yet traced to a mechanism.
+
+### Resolution (2026-09-24, same thread continued)
+
+Two more real regressions were found and fixed live, closing out the structural gap this entry
+originally left open:
+
+- **Recent-history row overlap.** Pryme reported the previous book's recent-history rows visibly
+  overlapping the new book's on open, and a bold double-paint flash when reopening the SAME book.
+  Root cause: `_RecentHistoryWidget.set_data` (`book_detail_panel.py`) removed stale rows via
+  `deleteLater()` only — which SCHEDULES destruction for the next event-loop tick, so a widget
+  taken out of the layout was still alive and paintable at the exact moment the slide's
+  synchronous `panel.grab()` fired, right after `load_book()` populated the new book's rows. Fixed
+  by `hide()`ing stale rows immediately/synchronously, alongside (not instead of) the existing
+  `deleteLater()` — `hide()` stops painting right now without changing when actual destruction
+  happens. Commit `991d71c`.
+- **Gutter exclusion reading as a late pop.** The remaining "same shape of bug" symptom Pryme
+  flagged (progress-bar/gutter areas "show up later all of a sudden") traced to
+  `_book_detail_frost_rect`'s pre-existing, deliberate gutter exclusion (2026-08-14, kept a
+  90%-width underlay's own right-hand gutter live/unblurred) — previously masked by the frost only
+  ever appearing at slide-finish; moving it to open-start (this thread's own earlier fix) made the
+  gutter's un-frosted state visible for the WHOLE slide instead of a brief flash. Pryme's own
+  resolution, after weighing the tradeoff directly: blur the gutter immediately like everywhere
+  else (it doesn't animate, so nothing is lost by including it in the static frost) — but
+  EXPLICITLY do NOT extend the same treatment to the progress-bar area, since that region
+  genuinely animates during playback and freezing it in the STATIC (whole-open-duration) frost
+  would make its fill visibly jump on close. The progress-bar exclusion was already narrower than
+  the gutter's (only the proxy freezes it, for the ~300ms slide — the static frost never covered
+  it), and Pryme confirmed that narrower, brief freeze is acceptable as-is ("It wouldn't even
+  visibly progress for minutes in most cases"). `_book_detail_frost_rect` now returns full window
+  width in both underlay branches; the `top`/progress-bar exclusion is untouched. Commit `991d71c`.
+
+Both confirmed fixed live by Pryme before committing. `[FROST-DEBUG]` diagnostic logging removed
+(`8a6b064`) — the geometry bug it was added to diagnose is confirmed fixed and no longer needs
+live re-verification.
+
+**Status: this thread's paint-suppression work is now functionally complete.** The one remaining
+open item is unrelated to the mechanism itself — Pryme's observation that "Details open jankier
+over the dummy tag (84 books). A tag with a few books, clean" (see the section above) has not been
+investigated at all yet; that's a fresh lead for a future session, not a continuation of this fix.
+
+### What's left in the tree
+
+11 new tests (`tests/test_book_detail_slide_paint_suppression.py`), full suite green throughout
+every iteration of this fix across two days. Commits: `c640885` (the mechanism + first two live
+fixes), `991d71c` (recent-history overlap + gutter exclusion), `8a6b064` (diagnostic-logging
+cleanup).
+
+---
+
 ## 2026-09-22/23 — General app sluggishness investigation: every code-level hypothesis tested and ruled out; intermittent, present as far back as bisected, cause NOT found
 
 **Scope.** Continuation of the same-session "general app slowness" thread from earlier (see the

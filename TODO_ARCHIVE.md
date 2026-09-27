@@ -2041,3 +2041,125 @@ order these entries had in TODO.md before the split (2026-07-30).
   system at all (confirmed directly this session — `_kbdnav_active_panel_key` only recognizes
   settings/speed/sleep/sprint/stats), a pre-existing gap rather than a regression, explicitly
   deferred to a future session per Pryme's own call ("Fix Stats first, Book Detail later").
+
+- **[2026-09-25, CLOSED — root cause found and fixed] Library List mode's slide was janky at every
+  historical checkpoint tested; the earlier same-night bisect couldn't distinguish "inherent
+  structural cost" from "always been inefficient" (no regression boundary to find either way). The
+  tractable next step it left behind — wire `_wire_paint_probe` to `library_panel_animation`
+  specifically while in List mode and read what's actually expensive — is what closed it.**
+  Measured across all five view modes (live, `_wire_paint_probe`, already wired unconditionally):
+  `QListView`'s own paint cost dominates every mode's slide, but List mode is 2-3x every grid mode
+  — 149-187ms of `QListView` paint on OPEN (125-135ms on close) against a ~300-355ms nominal slide,
+  vs. 51-90ms for 1-per-row/2-per-row/3-per-row/Square. Root cause: the same structural mechanism
+  CLAUDE.md already documents for Book Detail's own slide (a widget that moves gets its full
+  content repainted by Qt on every position tick) — List mode's dense, per-row delegate painting
+  makes each of those repaints far more expensive than a grid mode's cover-thumbnail cells.
+
+  **Design went through an independent review before any code was written**, which is what caught
+  what would otherwise have been three shipped bugs. First draft (grab the viewport at CLOSE,
+  cache the pixmap, reuse it as a static proxy at the NEXT open) was rejected: `Off` hover-fade mode
+  has no timer/flag to detect a held hover, so a close-time grab there could freeze a highlight with
+  nothing to wait on; a fingerprint meant to catch staleness (row count/view mode/sort) missed real
+  cases reachable via Book Detail while Library is closed (metadata edits, exclusion, theme); the
+  deferred-grab lifecycle had an unguarded reopen-during-pending-grab race. Revised to grab at
+  OPEN-START instead — right when content is already current, so nothing can go stale by
+  construction — with hover suppressed for that one grab (confirmed live, ~25-38ms steady-state
+  cost, against the 149-187ms it removes from the slide). A second review round caught three more
+  real bugs before shipping: the hover-suppress flag needed to be set on the delegate INSTANCE, not
+  the `BookDelegate` CLASS (an instance attribute of the same name silently shadows a class
+  attribute — the class-level assignment would have done nothing, and the bug would have been very
+  easy to miss); `setUpdatesEnabled(False)` needed to target the VIEWPORT specifically, not the
+  `QListView` itself (which would also freeze the frame/scrollbar, neither of which the proxy
+  covers); and the proxy's teardown needed to be idempotent and owned by BOTH the open-finish path
+  AND `_close_library_flow`, so a close landing in the gap between the open animation finishing and
+  its 16ms settle callback — or a stuck `finished` connection that never fires at all — can't strand
+  an orphaned proxy.
+
+  **A real visual bug survived that whole review process and was only caught live, by Pryme, after
+  shipping**: on a process's FIRST-EVER Library open only, the panel visibly shifted ~1-2px
+  vertically right at the handoff from the frozen proxy to the live list. Root cause: List mode's
+  `_apply_view_mode` computes a top-margin correction from `viewport().height() % row_h`, and
+  `LibraryPanel.showEvent` already had a PRE-EXISTING, unrelated fix (`QTimer.singleShot(0, ...)`,
+  documented in its own comment, originally written for Square mode's identical remainder math) for
+  the fact that the very first show's viewport height reads wrong before Qt has settled real layout
+  — the correction is deliberately deferred one event-loop tick to run after that settles. The
+  open-start grab, being synchronous, was racing that exact correction on a process's first open
+  only; every subsequent open was already confirmed clean (the correction had already run once and
+  stayed settled). Diagnosed with a temporary live geometry probe (comparing `viewport().geometry()`
+  at grab-time vs. handoff-time) rather than guessed — two earlier fix attempts based on plausible-
+  sounding Qt mechanisms (`library_panel.layout().activate()`, `QListView.updateGeometries()`) were
+  both tried live and BOTH measured to have zero effect before the actual cause was found; neither
+  was assumed to have worked without checking. Fixed by giving `LibraryPanel` a
+  `_first_show_geometry_settled` flag (set `True` at the end of that same pre-existing deferred
+  callback) and having `_start_library_entry` defer its OWN grab by the same one tick, but ONLY
+  when that flag is still `False` — every open after a process's first stays on the synchronous,
+  zero-added-latency fast path. This introduced one more real gap, caught before it could ship by
+  reasoning through the change rather than waiting for a live report: a close issued inside that
+  narrow first-open deferral window would have seen `library_panel_animation.state()` still
+  `Stopped` (nothing had called `.start()` yet) and slipped past `_close_library_flow`'s existing
+  guard, starting a close-slide from the wrong assumed start position. Fixed with a dedicated
+  `_library_entry_animation_pending` flag — deliberately NOT reusing `_is_animating`, which stays
+  `True` for library_panel's entire open transition including the stuck-`finished`-connection
+  scenario the close-side teardown must remain able to recover from; reusing it would have blocked
+  that recovery path for the rest of the session, not just this one narrow gap.
+
+  Live-confirmed by Pryme across all three of the scenarios most likely to break something this
+  broad: theme changes while Library is closed, scan-location removal, and un-excluding a book —
+  each independently traced through the actual code path (`_on_book_metadata_saved`,
+  `_on_excluded_book_restored`, `LibraryController._on_remove_location`) to confirm they all update
+  `LibraryPanel`'s model synchronously, at the moment of the change, never deferred to Library's
+  next open — so the open-start grab is guaranteed to always read current state. 17 new tests
+  (`tests/test_library_list_slide_paint_suppression.py`), covering hover suppression in both fade
+  modes (including a mid-fade-out trail on a non-hovered row, not just a held hover), proxy
+  placement via `mapTo` (not the viewport's raw, locally-scoped geometry), both exception-fallback
+  paths (a `grab()` failure and a failure after the proxy was already created and stored), the
+  first-open deferral itself, and the close-during-deferral-window guard. 733/733 full suite passes.
+  Full design and review trail (both rejected drafts, both review rounds, the exact hover-suppression/geometry-race reasoning) is captured in this NOTES.md entry above — no separate design doc persists outside the session that produced it.
+
+- **[2026-09-25, CLOSED — commit `5b5995b`] Continuous ~90% CPU while Stats' Timeline tab is open.**
+  Root cause (found earlier the same night): `TasselOverlay`'s idle sway timer called
+  `self.update()` unconditionally every 33ms, and because the widget is non-opaque inside
+  `stats_time_tab`'s `WA_StyledBackground` region, EVERY tick forced Qt to repaint the whole
+  region — including `HourlyHeatmap`/`StreakGrid`'s own expensive `paintEvent`, even when neither
+  actually changed. A first fix attempt gave the grids `WA_OpaquePaintEvent` and CRASHED with a
+  real SIGSEGV, tied via `coredumpctl` to one of the grids' own in-flight `QPropertyAnimation`s
+  ticking — reverted, root cause of the crash itself never diagnosed. Deliberately not
+  re-attempted this time; chose a structurally different, lower-risk fix instead per Pryme's own
+  call, avoiding `WA_OpaquePaintEvent` entirely: **throttle the tassel's own repaint rate rather
+  than touching the grids' paint contract.**
+
+  Idle sway's entire motion range is `IDLE_AMP = 1.0px` — most individual 33ms ticks were already
+  moving the sway by a sub-pixel amount, paying the full expensive cascade for a visually
+  imperceptible change. Fix: a new `_IDLE_TICK_MS` (150ms) interval used while idle, with the
+  SAME `_sway_timer` switching to the original fast `_TICK_MS` (33ms) for as long as a kick (the
+  real, visible ~6px click-triggered swing) is actively decaying, then dropping back to
+  idle-slow once its envelope clears. `_idle_phase`'s per-tick step is scaled by the interval
+  ratio so the sway's real-world period (~3.5s/cycle) stays correct regardless of which rate is
+  currently ticking. Three more call sites had to agree on which interval is current: the
+  constructor (starts idle-slow), `showEvent`'s resume (must honor `_kick_active`, which
+  deliberately survives the transport-bar blur grab's ~64ms hide/show churn — see that method's
+  own docstring), and `set_show_tassel`'s re-enable (always resumes idle-slow, since it
+  unconditionally clears kick state first). 10 new tests
+  (`tests/test_tassel_overlay_sway_rate.py`).
+
+  **Measurement discipline note, worth keeping for future perf work on this codebase**: the FIRST
+  live comparison (Streak ~1.0% at a since-abandoned 180ms candidate, vs. the documented ~90%
+  baseline) looked like a dramatic, clean win and was nearly written up as such — it was a bad
+  sample. Two separate measurement problems compounded: (1) `ps`'s `%CPU` column is a CUMULATIVE
+  average since the process started, not an instantaneous rate — every reading taken with it
+  (including the original ~90% baseline claim) was distorted, worse for longer-running processes;
+  switched to a correct instantaneous sampler (`/proc/[pid]/stat` deltas over a short window,
+  matching `top`'s own method) partway through. (2) Even with the correct method, a single ~1%
+  Streak sample at 180ms turned out to be a genuine outlier — a controlled, same-process A/B
+  (150ms vs. 180ms, Streak and Heatmap, freshly relaunched process for each condition) instead
+  found **BOTH intervals land in the same ~18-31% band for both grids** (Streak ~29-31%, Heatmap
+  ~18-22%, at both 150ms and 180ms) — the earlier ~1% was noise, not a real effect of the
+  interval. A third data point at an extreme `_IDLE_TICK_MS=2000` (near-off) measured ~15% for
+  Streak — confirming the throttle genuinely helps (roughly half of the 150ms figure) but also
+  surfacing a real, separate ~15% floor the tassel fix cannot touch, most likely
+  `StatsPanel.eventFilter`'s own already-documented app-wide event-filter cost (see the "Book
+  Detail slide paint-suppression" TODO.md thread) — a different, already-tracked issue, not a
+  residual of this one. **150ms shipped** (equivalent to 180ms, and far smoother visually than
+  2000ms's near-static sway) — Pryme's own call, confirmed by the numbers rather than assumed.
+  Net result: ~90% sustained CPU while Stats' Timeline tab is open, before → ~18-31% after,
+  correctly and repeatably measured.
