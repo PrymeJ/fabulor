@@ -1,3 +1,73 @@
+## Tags panel count display, Book Detail tag-cap message, Audio tab EQ On/Off toggle — 2026-10-01/02
+
+Background: three separate, unrelated pieces of work across two days. (1) A TODO item questioning
+whether Tags should migrate to Stats' model/delegate pattern before adding a tag count — answered
+(no migration needed, see `review/Investigation_261001_tags_model_delegate_feasibility.md`), then
+the display feature itself shipped. (2) The 5-band EQ (shipped 2026-09-18, see the section below)
+had no way to compare processed vs. unprocessed audio without manually zeroing every band — added
+an On/Off toggle, dimmed (not hidden) when Off so the 5 bands stay a stable visual reference.
+Commits `3679af7` (Tags), `2172695` (EQ toggle + layout).
+
+### Tags panel count display
+- [ ] Settings → Library → Tag management (or wherever the Tags panel opens from) shows "N/50"
+  next to the "Tag management" header, reflecting the current number of distinct tags
+- [ ] Adding or deleting a tag updates the count immediately on the next panel refresh
+- [ ] At exactly 50 tags, the count reads "50/50" and renders distinctly (bold/accent color) from
+  a lower count
+
+### Book Detail: tag-cap message
+- [ ] With exactly 50 distinct tags already in the library, open a book's Tags tab and try adding
+  a brand-new (51st) tag — the add is rejected (existing red-border flash on the field still
+  fires), AND a sticky message appears below the tag-add field ("50 tag limit reached. Delete a
+  tag to add a new one.")
+- [ ] The message stays visible for as long as the panel stays open — it does NOT disappear after
+  the red-border flash's own ~800ms timeout
+- [ ] Close the panel and reopen it (same book or a different one) — the message is gone
+- [ ] While the message is showing, delete a tag chip that is the ONLY book carrying some other
+  tag (freeing a global slot) — the message disappears immediately, without needing to close and
+  reopen the panel
+- [ ] While the message is showing, delete a tag chip that is NOT the last copy of its tag
+  anywhere (the global count stays at 50) — the message stays showing
+- [ ] Adding a tag that's REJECTED for a different reason (already on this book, or this book
+  already has 5 tags) still shows only the existing red-border flash, not the cap message
+
+### Audio tab: Stereo/Mono + Channel swap merged row
+- [ ] Settings → Audio: "Stereo / Mono" header and "Channel swap" header share one row, Channel
+  swap right-aligned (same shape as Look tab's Chapter notches/Animation line)
+- [ ] The Stereo/Mono buttons and the Normal/Swapped buttons share one row below, with Channel
+  swap's buttons pushed to the right by the stretch between them
+- [ ] Arrow-key Up/Down from this row treats it as ONE stop (both button groups together), not two
+  separate stops — confirm Left/Right or Tab still reaches both groups' buttons correctly
+
+### Audio tab: Equalizer On/Off toggle
+- [ ] A new "Off / On" button row appears directly under the "Equalizer" header, above the first
+  (100Hz) band — default is Off on a fresh install/reset
+- [ ] With EQ Off, all 5 band sliders AND their freq labels ("100"/"300"/"1K"/"3K"/"8K") appear
+  visibly dimmed, not hidden — the layout does not jump/resize when toggling
+- [ ] With EQ Off, dragging a band slider with the mouse does nothing (no value change, no visible
+  interaction)
+- [ ] With EQ Off, right-clicking a band slider does not reset it
+- [ ] With EQ Off, arrow-key/Tab navigation skips over the 5 dimmed bands entirely, landing
+  directly on L/R balance from Channel swap's row (and vice versa going backward)
+- [ ] Switching EQ to On restores full brightness/interactivity to all 5 bands and labels
+  immediately
+- [ ] With EQ On, dragging a band audibly changes playback; with EQ Off, the same saved gain value
+  has NO audible effect, confirming the player actually receives 0.0 for every band while Off
+
+### Audio tab: Reset to defaults vs. the EQ toggle
+- [ ] Starting from every setting at its default (EQ Off, all gains 0, voice/mono/swap off,
+  balance centered): "Reset to defaults" is hidden
+- [ ] Turn EQ On alone (no gain changes) — Reset to defaults STAYS HIDDEN
+- [ ] Turn EQ back Off — still hidden
+- [ ] Drag a single EQ band to a non-zero value while EQ is On — Reset to defaults APPEARS
+- [ ] With that gain still non-zero, turn EQ Off — Reset to defaults DISAPPEARS (the audio is
+  effectively back to default with EQ off, regardless of the stored gain)
+- [ ] Turn EQ back On (gain still non-zero, untouched) — Reset to defaults REAPPEARS
+- [ ] Click Reset to defaults — EQ toggle returns to Off, all 5 gains return to 0dB, voice/mono/
+  swap/balance all return to default, and the button itself hides again
+- [ ] With EQ Off and a non-zero gain still saved underneath, touch an unrelated setting (e.g.
+  Voice boost On) — Reset to defaults appears (for the voice-boost change, independent of EQ)
+
 ## Resuming a book left at its own EOF — 2026-09-21 Session 1
 
 Background: TODO.md's "Resuming an M4B after unfinishing it freezes the app" investigation, ten

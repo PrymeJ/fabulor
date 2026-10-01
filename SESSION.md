@@ -1,3 +1,60 @@
+## Session Summary — 2026-10-02 Session 1 — Spans 2026-10-01/02: resolved the Tags panel model/delegate feasibility question and shipped its count display + cap message, then added an On/Off toggle to the 5-band Equalizer so an A/B comparison doesn't require manually zeroing every band.
+
+**Tags panel: count display + feasibility investigation (2026-10-01).** A TODO.md item flagged
+that both the tag list and the per-tag book grid are widget-per-item — the same shape Stats moved
+away from in its 2026-08-05/09 model/delegate migration — and asked whether that should be
+addressed before adding a planned "N/50 tags" count display. Investigated and answered in
+`review/Investigation_261001_tags_model_delegate_feasibility.md`: no migration needed. The tag list
+is hard-capped at 50 rows by `db.add_book_tag`, so widget-per-row costs nothing worth fixing at
+today's scale — migrate only if that cap is ever raised. The per-tag book grid has no cap, but its
+widget-per-cell shape carries a large, already-working 2-D keyboard/mouse-nav system (hover
+trackers, sibling-widget focus rings, hand-rolled row/col arrow nav) with no clean delegate
+equivalent — not a good trade unless a tag is ever seen applied to hundreds of books. Shipped the
+display feature directly against the current architecture: the tag list shows "N/50" next to its
+header (`TagManagerWidget.refresh()`, derived from the already-fetched tag list, no extra query).
+
+**Book Detail: tag-cap message.** `db.add_book_tag` was widened from a bare bool to a reason string
+(`"ok"`/`"book_limit"`/`"global_limit"`/`"duplicate"`/`"empty"`) so Book Detail's add-tag flow can
+tell the global-cap rejection apart from a per-book-limit or duplicate rejection — the only
+existing caller. Hitting the global cap shows a sticky message under the tag-add field, separate
+from the field's existing momentary red-border flash: it stays up for as long as the panel is open,
+cleared only on the next `load_book` (never mid-slide, per Pryme's explicit requirement). Removing
+a tag re-checks the global count, but only while that message is already showing — a freed slot
+(e.g. deleting a tag's last remaining book) is only worth noticing when the user is currently
+blocked by it. Wording and font size went through one live round of Pryme's own tuning after the
+first pass. Commits `9977c71` (feasibility docs), `3679af7` (feature), `cf67795` (archived the now-
+closed TODO entry, with the artifact-hosted ship-triage page updated to match).
+
+**Audio tab: Equalizer On/Off toggle (2026-10-02).** The 5-band EQ (shipped 2026-09-18) had no way
+to quickly A/B processed vs. unprocessed audio — the only option was manually zeroing every band.
+Discussed as a design question first: Pryme was weighing a book-based EQ override (deferred to next
+session, see below) and, within that, whether the toggle should hide or dim the 5 bands when Off.
+Landed on dimming (`QGraphicsOpacityEffect` on each slider AND its freq label — `ClickSlider` is
+fully custom-painted and never reads `isEnabled()`, confirmed by reading `paintEvent` before
+assuming `setEnabled` alone would do anything visible), so the bands stay a stable visual reference
+and the A/B toggle doesn't jump the layout. `setEnabled(False)` blocks drag/wheel/right-click-reset
+input while Off and removes the sliders from arrow-key navigation (`settings_tab_button_rows`'s
+`_navigable` gate already checks `isEnabled()`, so no panels.py change was needed). `sync_player`
+sends `0.0` for every band's gain while Off, regardless of the band's own stored value, so the
+player genuinely stops applying the chain rather than just visually suggesting it's off.
+
+Two rounds of live feedback refined the Reset-to-defaults interaction specifically: (1) turning EQ
+On alone, with every band still at 0dB, must NOT reveal "Reset to defaults" — only an actual
+setting change should; (2) a saved non-zero gain only counts as "dirty" while EQ is On — with it
+Off, the bands have zero effect on playback regardless of their stored values, so a book is already
+at its default audio in practice, and the button should hide. Turning EQ back On against those same
+untouched gains immediately re-dirties it. Final logic: `gains_dirty = eq_on and any(nonzero gain)`,
+folded into the same `is_default` check that already covered voice/mono/swap/balance. Also merged
+Stereo/Mono and Channel swap onto one row (Channel swap right-aligned via a middle stretch, same
+shape as Look tab's Chapter notches/Animation line) to free a row's worth of vertical space for the
+new toggle — unlike that pair, Channel swap's visibility never depends on Stereo/Mono's state, it's
+simply relocated. Commit `2172695`.
+
+**Deferred to next session, by Pryme's own call:** a book-based EQ override (and the broader
+question of whether per-book should also extend to voice boost/balance/swap) — discussed at length
+but no design decided yet beyond "Book Detail gets its own tab with room for a full EQ section" and
+"global settings must visibly show when a book-level override exists." Not started.
+
 ## Session Summary — 2026-09-26 Session 1 — Extended `_wire_paint_probe` with per-tab/underlay context for Book Detail/Stats measurements, then chased three live-reported Book Detail bugs to real fixes: a duration-bleed across books, a cover/tab-row layout race, and — the big one — a silent scanner truthiness bug that had been dropping duration data (and, for one book, 4 of 5 VT parts) for real, valid, untagged audio files.
 
 **Measurement work first, at Pryme's request** ("We'll get the measurements for opening the book
