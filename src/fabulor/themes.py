@@ -5240,6 +5240,11 @@ def get_stats_stylesheet(theme_name="default"):
         QLineEdit#tag_add_field:focus {{
             border: 1px solid {t['accent']};
         }}
+        QLabel#tag_cap_message {{
+            color: #E8735A;
+            font-size: 13px;
+            padding: 2px 2px 0px 2px;
+        }}
         QPushButton#tag_add_btn {{
             background-color: {t['accent']};
             color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
@@ -5312,6 +5317,15 @@ def get_tags_stylesheet(theme_name="default"):
             font-size: 14px;
             margin-top: 10px;
             color: {t['accent_light']};
+        }}
+        QLabel#tag_list_count {{
+            font-size: 12px;
+            margin-top: 10px;
+            color: {t['text']};
+        }}
+        QLabel#tag_list_count[at_cap="true"] {{
+            color: {t['accent_light']};
+            font-weight: bold;
         }}
         /* See the stats_book_day_row note above — same tracker, same reason.
            The resting background was previously a :!hover rule; it is the base

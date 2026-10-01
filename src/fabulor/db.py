@@ -1473,18 +1473,23 @@ class LibraryDB:
             ).fetchall()
         return [r[0] for r in rows]
 
-    def add_book_tag(self, book_path: str, tag: str, book_id: int | None = None) -> bool:
-        """Returns False if tag already exists on this book, per-book limit reached, or global tag limit reached."""
+    def add_book_tag(self, book_path: str, tag: str, book_id: int | None = None) -> str:
+        """Returns "ok" on success, else the specific rejection reason: "empty" (blank after
+        strip), "book_limit" (this book already has 5 tags), "global_limit" (50 distinct tags
+        already exist and this would be a 51st), or "duplicate" (already on this book, or a
+        UNIQUE-constraint race). Book Detail's add-tag flow needs to tell "global_limit" apart
+        from the other reasons (to show its own cap message, not just a generic red flash) —
+        see book_detail_panel.py's _on_add_tag."""
         tag = tag.strip().lower()[:20]
         if not tag:
-            return False
+            return "empty"
         with self._get_conn() as conn:
             count = conn.execute(
                 "SELECT COUNT(*) FROM book_tags WHERE book_path=?",
                 (book_path,)
             ).fetchone()[0]
             if count >= 5:
-                return False
+                return "book_limit"
             # Only enforce global limit for new tags not already in use
             is_new_tag = conn.execute(
                 "SELECT COUNT(*) FROM book_tags WHERE tag=?", (tag,)
@@ -1494,7 +1499,7 @@ class LibraryDB:
                     "SELECT COUNT(DISTINCT tag) FROM book_tags"
                 ).fetchone()[0]
                 if global_count >= 50:
-                    return False
+                    return "global_limit"
             try:
                 conn.execute(
                     "INSERT INTO book_tags (book_id, book_path, tag) VALUES (?, ?, ?)",
@@ -1504,9 +1509,9 @@ class LibraryDB:
                     "INSERT OR IGNORE INTO tags (name) VALUES (?)",
                     (tag,)
                 )
-                return True
+                return "ok"
             except Exception:
-                return False  # UNIQUE constraint hit
+                return "duplicate"  # UNIQUE constraint hit
 
     def remove_book_tag(self, book_id: int, tag: str) -> None:
         with self._get_conn() as conn:

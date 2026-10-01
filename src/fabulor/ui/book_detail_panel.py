@@ -728,6 +728,19 @@ class BookDetailPanel(QWidget):
         tag_input_row.addWidget(add_tag_btn)
         outer.addWidget(self._tag_input_widget)
 
+        # Global-tag-cap message (2026-10-02) — separate from the field's existing red-border
+        # flash (_on_add_tag's generic rejection feedback, still fires for every rejection
+        # reason including this one). Persists for as long as the cap is actually hit, unlike
+        # the flash: cleared only in load_book (next open) or on close, never mid-slide — see
+        # _set_tag_cap_message's own docstring for why this needs its own flag rather than just
+        # checking label visibility.
+        self._tag_cap_message = QLabel("50 tag limit reached. Delete a tag to add a new one.")
+        self._tag_cap_message.setObjectName("tag_cap_message")
+        self._tag_cap_message.setWordWrap(True)
+        self._tag_cap_message.hide()
+        outer.addWidget(self._tag_cap_message)
+        self._tag_cap_message_showing = False
+
         outer.addStretch()
 
         self._tag_manager_btn = QPushButton("Tag management")
@@ -1120,21 +1133,46 @@ class BookDetailPanel(QWidget):
         tag = self._tag_input.text().strip().lower()
         if not tag or not self._book_path:
             return
-        added = self.db.add_book_tag(self._book_path, tag, book_id=self._book_data['id'])
-        if added:
+        reason = self.db.add_book_tag(self._book_path, tag, book_id=self._book_data['id'])
+        if reason == "ok":
             self._tag_completer_model.setStringList([])
             self._tag_input.clear()
             self._rebuild_tag_chips()
+            self._set_tag_cap_message(False)
             self.tags_changed.emit()
         else:
             self._tag_input.setStyleSheet("border: 1px solid red;")
             from PySide6.QtCore import QTimer
             QTimer.singleShot(800, lambda: self._tag_input.setStyleSheet(""))
+            if reason == "global_limit":
+                self._set_tag_cap_message(True)
+
+    def _set_tag_cap_message(self, showing: bool) -> None:
+        """Shows/hides the persistent "50 tag limit reached" message — separate from the
+        field's own momentary red-border flash, which fires on every rejection reason and
+        clears itself after 800ms regardless. This message is sticky: once shown, it stays
+        up until load_book (next panel open) or close explicitly clear it — never auto-hides
+        on its own timer, and never while the panel is mid-slide (the caller only ever flips
+        this outside that window: load_book runs before the slide starts, and the real cap
+        state can only change — via _on_remove_tag's own re-check below — while the panel is
+        already fully open and idle). _tag_cap_message_showing is the flag _on_remove_tag
+        reads to decide whether its extra re-check below needs to run at all."""
+        if showing == self._tag_cap_message_showing:
+            return
+        self._tag_cap_message_showing = showing
+        self._tag_cap_message.setVisible(showing)
 
     def _on_remove_tag(self, tag: str):
         if self._book_path:
             self.db.remove_book_tag(self._book_data['id'], tag)
             self._rebuild_tag_chips()
+            # Only worth checking while the cap message is actually showing — removing a tag
+            # can free up a global slot (if this book held the LAST copy of some OTHER tag),
+            # but that's only relevant to re-check if the user is currently blocked by it.
+            # Cheap query either way (COUNT(DISTINCT tag)), but there's no reason to run it on
+            # every ordinary tag removal.
+            if self._tag_cap_message_showing and self.db.get_unique_tag_count() < 50:
+                self._set_tag_cap_message(False)
             self.tags_changed.emit()
 
     def _tag_chip_is_clickable(self, tag: str) -> bool:
@@ -1360,6 +1398,7 @@ class BookDetailPanel(QWidget):
         # e.g. closed via the button, or the panel dismissed some other way — would otherwise
         # reappear here. Escape while the field is focused also clears it (see eventFilter).
         self._tag_input.clear()
+        self._set_tag_cap_message(False)
         self._context = context
         # Snapshot of the library's search field text at the moment this panel opened (library
         # context only matters here — see _rebuild_tag_chips/_rebuild_tag_display). Used to make

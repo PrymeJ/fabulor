@@ -632,9 +632,19 @@ class TagManagerWidget(QWidget):
         list_layout.setContentsMargins(10, 0, _TAG_SCROLLBAR_EDGE_GAP, 10)
         list_layout.setSpacing(10)
 
+        header_row = QHBoxLayout()
+        header_row.setSpacing(0)
+
         header = QLabel("Tag management")
         header.setObjectName("settings_header")
-        list_layout.addWidget(header)
+        header_row.addWidget(header)
+        header_row.addStretch()
+
+        self._tag_count_label = QLabel("")
+        self._tag_count_label.setObjectName("tag_list_count")
+        header_row.addWidget(self._tag_count_label)
+
+        list_layout.addLayout(header_row)
 
         self._tag_scroll = QScrollArea()
         self._tag_scroll.setWidgetResizable(True)
@@ -1006,6 +1016,14 @@ class TagManagerWidget(QWidget):
             self._tag_list_layout.insertWidget(
                 self._tag_list_layout.count() - 1, row
             )
+
+        # len(tags) IS the global unique-tag count — db.add_book_tag enforces the same
+        # 50 cap this displays against, so no separate get_unique_tag_count() query is
+        # needed; this list is already every tag that counts toward that cap.
+        self._tag_count_label.setText(f"{len(tags)}/50")
+        self._tag_count_label.setProperty("at_cap", "true" if len(tags) >= 50 else "false")
+        self._tag_count_label.style().unpolish(self._tag_count_label)
+        self._tag_count_label.style().polish(self._tag_count_label)
 
         # Force an immediate re-check of what's under the cursor against the
         # BRAND-NEW row widgets just built above — see ScrollHoverTracker.resync's
