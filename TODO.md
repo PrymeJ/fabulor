@@ -9,26 +9,29 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
 
 ## Summary index
 
-### Book-based Equalizer override — design not yet decided
-- [2026-10-02] FEAT: a per-book EQ override, discussed at length but not designed. Pryme's framing:
-  not all books need an EQ, and the ones that do won't all need the same one, so a single global EQ
-  (shipped 2026-09-18, On/Off toggle added 2026-10-02) isn't enough on its own. Open questions,
-  none decided yet:
-  - **Scope**: EQ only, or also voice boost/balance/channel swap? Leaning EQ-only — voice boost/
-    mono/swap are listener-hardware properties that shouldn't reset per book, balance is borderline,
-    EQ is the one that's genuinely a property of a specific recording's mix/tone.
-  - **Fallback model**: book override falls back to the global default when unset, mirroring the
-    existing `speed_{path}`/`default_speed` pattern (`config.py`) already proven for per-book speed.
-  - **UI placement**: ruled out a Global/Book scope switch at the top of the Audio tab. Leaning
-    toward Book Detail gaining its own tab (confirmed to have room) with a toggle + the same 5-band
-    layout as Settings > Audio, rather than making the Settings tab context-dependent on whichever
-    book happens to be loaded. Still needs: how Settings > Audio visibly indicates an override
-    exists for the current book (a dependency this creates even under the "Book Detail owns the
-    override" framing — the global tab still needs to show when it's been superseded).
-  - **On/Off toggle**: the global toggle's dimmed-not-hidden shape (see TODO_ARCHIVE.md /
-    SESSION.md 2026-10-02) was explicitly discussed as a precedent for the per-book toggle too, not
-    yet confirmed.
-  Not started — needs a dedicated design session before implementation.
+### Book-based Equalizer override — placement decided, rest not yet designed
+- [2026-10-02, placement decided same day] FEAT: a per-book EQ override. Pryme's framing: not all
+  books need an EQ, and the ones that do won't all need the same one, so a single global EQ
+  (shipped 2026-09-18, On/Off toggle added 2026-10-02) isn't enough on its own.
+  - **UI placement — DECIDED**: Book Detail gets its own EQ tab/section (confirmed to have room),
+    separate from Settings > Audio's EQ, which stays purely global and untouched by which book is
+    loaded. Pryme's own reasoning: this keeps Settings > Audio's EQ meaning fixed (no Global/Book
+    switch, no context-dependent tab) while still letting the global EQ stay Off everywhere EXCEPT
+    specific books that need their own override — no ambiguous shared-state UI either way.
+  - **Still open — scope**: EQ only, or also voice boost/balance/channel swap? Leaning EQ-only —
+    voice boost/mono/swap are listener-hardware properties that shouldn't reset per book, balance is
+    borderline, EQ is the one that's genuinely a property of a specific recording's mix/tone.
+  - **Still open — fallback model**: book override falls back to the global default when unset,
+    mirroring the existing `speed_{path}`/`default_speed` pattern (`config.py`) already proven for
+    per-book speed. Not yet confirmed this is right for EQ specifically.
+  - **Still open — on/off toggle shape**: the global toggle's dimmed-not-hidden shape (see
+    TODO_ARCHIVE.md / SESSION.md 2026-10-02) was floated as a precedent for the per-book toggle too,
+    not yet confirmed it's the right fit for Book Detail's tighter layout.
+  - **Still open, now that Settings > Audio's EQ is confirmed separate**: does Book Detail's EQ tab
+    need its own visible indicator when a book has NO override set (i.e., is just inheriting the
+    global default) vs. has its own override active? Not discussed yet.
+  Not started — needs a dedicated design session for the remaining open points before
+  implementation.
 
 ### Two open observations from 2026-09-25/26, neither confirmed enough to act on yet
 - **A real SIGSEGV crash, cause NOT pinned down, not yet reproduced a second time.**
