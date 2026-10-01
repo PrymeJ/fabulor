@@ -5,6 +5,26 @@ list scannable. Kept, not deleted, per the project's normal practice of not thro
 that isn't fully duplicated in NOTES.md/SESSION.md/a commit message. Order is the same relative
 order these entries had in TODO.md before the split (2026-07-30).
 
+- **[2026-09-17, architecture question resolved 2026-10-01, feature shipped 2026-10-02, CLOSED]
+  Tags panel: count display and widget-per-row architecture.** Original ask: show "N/50 tags" next
+  to the tag list header, and warn when the list is already at 50 and the user tries to add
+  another, plus check whether that display feature should wait on a Stats-style model/delegate
+  migration first (both the tag list and the per-tag book grid are widget-per-item, the shape Stats
+  moved away from in its 2026-08-05/09 migration). Feasibility investigated and answered —
+  `review/Investigation_261001_tags_model_delegate_feasibility.md`: no refactor needed at today's
+  scale (the tag list is hard-capped at 50 rows by `db.add_book_tag`; the book grid has no cap but
+  carries a large, already-working 2-D keyboard/mouse-nav system with no clean delegate equivalent,
+  not a good trade unless a tag is ever seen applied to hundreds of books). Shipped directly against
+  the current widget-per-row architecture: the tag list now shows "N/50" next to its header
+  (`TagManagerWidget.refresh()`, derived from the already-fetched tag list, no extra query); `db.
+  add_book_tag` was widened from a bare bool to a reason string ("ok"/"book_limit"/"global_limit"/
+  "duplicate"/"empty") so Book Detail's tag-add flow can tell the global-cap rejection apart from
+  the other two; hitting the cap there shows a sticky message under the tag-add field (separate from
+  its existing momentary red-border flash), staying up for as long as the panel is open and cleared
+  only on the next `load_book` (never mid-slide); removing a tag re-checks the global count, but
+  only while that message is already showing, since a freed slot is only worth noticing when the
+  user is currently blocked by it. Commits `9977c71` (feasibility docs), `3679af7` (feature).
+
 - **[2026-07-01, investigated 2026-09-22, CLOSED as not confirmed — original claim superseded by
   real timing data] "Book Detail slide-in feels less smooth from Library than from Stats."**
   Measured directly with a temporary env-gated `[PANEL-TIMING]` probe (`FABULOR_PANEL_TIMING=1`,

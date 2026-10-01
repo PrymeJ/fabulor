@@ -734,20 +734,6 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
   already-correct fixed-theme values once those exist, not designed from scratch. Blocked on that
   manual fixed-theme pass landing first.
 
-### Tags panel: count display
-- [2026-09-17, architecture question resolved 2026-10-01] FEAT: show "N/50 tags" at the top right of
-  the tag list, and when the list is already at 50 and the user tries to add another, show a real
-  notification in addition to the existing red-field-edge indication. The architecture question this
-  entry originally raised (both the tag list and the per-tag book grid are widget-per-item, like
-  Stats before its 2026-08-05/09 model/delegate migration) has been investigated and answered — see
-  `review/Investigation_261001_tags_model_delegate_feasibility.md`. **Verdict: no refactor needed
-  first.** The tag list is hard-capped at 50 rows (`db.add_book_tag`), so widget-per-row costs
-  nothing worth fixing at today's scale; migrate it to a model/delegate pair only if/when that cap
-  is actually raised. The per-tag book grid has no cap but carries a large, already-working 2-D
-  keyboard/mouse-nav system with no clean delegate equivalent — not a good trade, leave as-is unless
-  real usage shows a tag applied to hundreds of books. This entry is now just the display feature,
-  implementable directly against the current widget-per-row list.
-
 ### Listening Sprint backward-seek compensation doesn't net forward+backward excursions
 - [2026-08-11] The pure tick-to-tick `_last_known_pos` diff in `SprintPanel.update_sprint_state`
   can't tell a genuine rewind from "seeked forward then came back" — seeking forward 20 minutes then
