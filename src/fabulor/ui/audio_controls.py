@@ -1,7 +1,14 @@
 import math
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QGraphicsOpacityEffect
 from PySide6.QtCore import Qt
 from .controls import ClickSlider
+
+# ClickSlider is fully custom-painted (see controls.py's paintEvent) and never reads
+# isEnabled() — dimming it needs an explicit post-composite opacity effect, not just
+# setEnabled(). 0.35 is a starting value, not measured against anything in this app yet
+# (other QGraphicsOpacityEffect uses here are fade-animation endpoints, 0.0/1.0, not a
+# static "dimmed but still legible" level) — tune live against the real panel background.
+_EQ_DIMMED_OPACITY = 0.35
 
 # Matches app.py's _BALANCE_ARROW_STEP (not imported directly — app.py imports FROM this
 # module, so importing back would risk a circular import). Used as both the arrow-key step
@@ -19,7 +26,10 @@ class AudioSettingsTab(QWidget):
         self.voice_buttons = {}
         self.mono_buttons = {}
         self.swap_buttons = {}
+        self.eq_enable_buttons = {}
         self.eq_sliders = {}
+        self.eq_opacity_effects = {}
+        self.eq_label_opacity_effects = {}
 
         self._setup_ui()
         self.update_visuals()
@@ -42,33 +52,39 @@ class AudioSettingsTab(QWidget):
         voice_row.addStretch()
         layout.addLayout(voice_row)
 
-        # --- Stereo / Mono ---
+        # --- Stereo / Mono + Channel Swap ---
+        # Merged onto one row, Channel swap right-aligned via a middle stretch — same shape
+        # as Look tab's "Chapter notches / Animation" line (notches_header_row/notches_row in
+        # main_window_builders.py), which panels.settings_tab_button_rows() already documents
+        # as "two logical groups sharing ONE layout are deliberately ONE row." Unlike that
+        # pair, Channel swap's visibility never depends on Stereo/Mono's state — it's simply
+        # placed to the right, freeing a full header+button row of vertical space for the
+        # Equalizer's own new On/Off toggle below.
+        mono_swap_header_row = QHBoxLayout()
         mono_header = QLabel("Stereo / Mono")
         mono_header.setObjectName("settings_header")
-        layout.addWidget(mono_header)
-        mono_row = QHBoxLayout()
+        mono_swap_header_row.addWidget(mono_header)
+        mono_swap_header_row.addStretch()
+        swap_header = QLabel("Channel swap")
+        swap_header.setObjectName("settings_header")
+        mono_swap_header_row.addWidget(swap_header)
+        layout.addLayout(mono_swap_header_row)
+
+        mono_swap_row = QHBoxLayout()
         for mode in ["Stereo", "Mono"]:
             btn = QPushButton(mode)
             btn.setObjectName("pattern_button")
             btn.clicked.connect(lambda _, m=mode: self._update_setting("mono", m == "Mono"))
-            mono_row.addWidget(btn)
+            mono_swap_row.addWidget(btn)
             self.mono_buttons[mode] = btn
-        mono_row.addStretch()
-        layout.addLayout(mono_row)
-
-        # --- Channel Swap ---
-        swap_header = QLabel("Channel swap")
-        swap_header.setObjectName("settings_header")
-        layout.addWidget(swap_header)
-        swap_row = QHBoxLayout()
+        mono_swap_row.addStretch()
         for state in ["Normal", "Swapped"]:
             btn = QPushButton(state)
             btn.setObjectName("pattern_button")
             btn.clicked.connect(lambda _, s=state: self._update_setting("swap", s == "Swapped"))
-            swap_row.addWidget(btn)
+            mono_swap_row.addWidget(btn)
             self.swap_buttons[state] = btn
-        swap_row.addStretch()
-        layout.addLayout(swap_row)
+        layout.addLayout(mono_swap_row)
 
         # --- Equalizer ---
         # Order is Voice/Stereo/Swap/EQ/Balance (not importance order, which would put EQ
@@ -78,6 +94,23 @@ class AudioSettingsTab(QWidget):
         eq_header = QLabel("Equalizer")
         eq_header.setObjectName("settings_header")
         layout.addWidget(eq_header)
+
+        # On/Off toggle, default Off — dims (never hides) the 5 bands below when Off, so an
+        # A/B comparison is a single click on this row rather than a layout jump. The 5 bands
+        # stay in place and keep their own saved gains either way; Off only stops them being
+        # SENT to the player (see sync_player/apply_audio_processing below) — right-clicking a
+        # band to reset it, or dragging one, both still work while Off, exactly like editing a
+        # muted track.
+        eq_enable_row = QHBoxLayout()
+        for state in ["Off", "On"]:
+            btn = QPushButton(state)
+            btn.setObjectName("pattern_button")
+            btn.clicked.connect(lambda _, s=state: self._update_setting("eq_enabled", s == "On"))
+            eq_enable_row.addWidget(btn)
+            self.eq_enable_buttons[state] = btn
+        eq_enable_row.addStretch()
+        layout.addLayout(eq_enable_row)
+
         # Each band's QHBoxLayout is added directly to the tab's own top-level layout below
         # (not nested inside a shared QVBoxLayout wrapper) — panels.settings_tab_button_rows()
         # only walks ONE level of the tab's layout looking for a QHBoxLayout-of-widgets or a
@@ -114,6 +147,11 @@ class AudioSettingsTab(QWidget):
             # seek-to-position on the transport sliders); these 5 EQ sliders simply
             # weren't connecting it to anything before, so the click was silently inert.
             slider.rightClicked.connect(lambda _ratio, k=freq: self._reset_eq_band(k))
+            # Dimming lives on an effect, not the widget's own paint — see _EQ_DIMMED_OPACITY.
+            opacity_effect = QGraphicsOpacityEffect(slider)
+            opacity_effect.setOpacity(1.0)
+            slider.setGraphicsEffect(opacity_effect)
+            self.eq_opacity_effects[freq] = opacity_effect
             eq_row.setSpacing(4)
             eq_row.addWidget(slider, stretch=1, alignment=Qt.AlignmentFlag.AlignVCenter)
             freq_label = QLabel(label)
@@ -129,6 +167,10 @@ class AudioSettingsTab(QWidget):
             # 2026-09-19: "the right side has more space than the left").
             freq_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             eq_row.addWidget(freq_label, alignment=Qt.AlignmentFlag.AlignVCenter)
+            label_opacity_effect = QGraphicsOpacityEffect(freq_label)
+            label_opacity_effect.setOpacity(1.0)
+            freq_label.setGraphicsEffect(label_opacity_effect)
+            self.eq_label_opacity_effects[freq] = label_opacity_effect
             layout.addLayout(eq_row)
             # Kept tight between EQ rows specifically (was eq_rows.setSpacing(2) before
             # flattening) — the top-level tab layout has no explicit setSpacing anywhere
@@ -190,6 +232,7 @@ class AudioSettingsTab(QWidget):
         if kind == "voice": self.config.set_voice_boost_enabled(value)
         elif kind == "mono": self.config.set_mono_enabled(value)
         elif kind == "swap": self.config.set_channels_swapped(value)
+        elif kind == "eq_enabled": self.config.set_eq_enabled(value)
         self.update_visuals()
         self.sync_player()
 
@@ -215,6 +258,7 @@ class AudioSettingsTab(QWidget):
         self.config.set_voice_boost_enabled(False)
         self.config.set_mono_enabled(False)
         self.config.set_channels_swapped(False)
+        self.config.set_eq_enabled(False)
         self.config.set_balance(0.0)
         self.balance_slider.setValue(0)
         for freq, slider in self.eq_sliders.items():
@@ -225,16 +269,17 @@ class AudioSettingsTab(QWidget):
 
     def sync_player(self):
         if self.player:
+            eq_on = self.config.get_eq_enabled()
             self.player.apply_audio_processing(
                 voice_boost=self.config.get_voice_boost_enabled(),
                 mono=self.config.get_mono_enabled(),
                 swap=self.config.get_channels_swapped(),
                 balance=self.config.get_balance(),
-                eq_100=self.config.get_eq_gain_100(),
-                eq_300=self.config.get_eq_gain_300(),
-                eq_1000=self.config.get_eq_gain_1000(),
-                eq_3000=self.config.get_eq_gain_3000(),
-                eq_8000=self.config.get_eq_gain_8000(),
+                eq_100=self.config.get_eq_gain_100() if eq_on else 0.0,
+                eq_300=self.config.get_eq_gain_300() if eq_on else 0.0,
+                eq_1000=self.config.get_eq_gain_1000() if eq_on else 0.0,
+                eq_3000=self.config.get_eq_gain_3000() if eq_on else 0.0,
+                eq_8000=self.config.get_eq_gain_8000() if eq_on else 0.0,
             )
 
     def update_visuals(self):
@@ -257,15 +302,37 @@ class AudioSettingsTab(QWidget):
         self.balance_slider.style().unpolish(self.balance_slider)
         self.balance_slider.style().polish(self.balance_slider)
 
-        for slider in self.eq_sliders.values():
+        eq_on = self.config.get_eq_enabled()
+        for s, btn in self.eq_enable_buttons.items():
+            btn.setProperty("selected", "true" if (s == "On" if eq_on else s == "Off") else "false")
+            btn.style().unpolish(btn); btn.style().polish(btn)
+
+        # Dimmed (never hidden) while Off, so the 5 bands stay a stable visual reference for
+        # A/B comparison instead of the layout jumping on every toggle — see the toggle row's
+        # own comment above. Dimming is via QGraphicsOpacityEffect (ClickSlider is fully
+        # custom-painted and never reads isEnabled() — see _EQ_DIMMED_OPACITY). setEnabled
+        # also blocks drag/wheel/right-click-reset input while Off and removes the slider from
+        # arrow-key navigation (panels.settings_tab_button_rows' _navigable gates on
+        # isEnabled()) — consistent with every other disabled control in the app, even though
+        # this is the first ClickSlider to use setEnabled(False) at all.
+        for freq, slider in self.eq_sliders.items():
+            slider.setEnabled(eq_on)
+            opacity = 1.0 if eq_on else _EQ_DIMMED_OPACITY
+            self.eq_opacity_effects[freq].setOpacity(opacity)
+            self.eq_label_opacity_effects[freq].setOpacity(opacity)
             slider.style().unpolish(slider)
             slider.style().polish(slider)
 
         balance = self.config.get_balance()
         eq_gains = [getattr(self.config, f"get_eq_gain_{freq}")() for freq in self.eq_sliders]
+        # Gains only count as "dirty" while eq_on is True — while Off they have zero effect on
+        # playback (sync_player sends 0.0 to the player regardless of the stored value), so a
+        # book with saved gains but EQ Off is, in practice, already at its default audio.
+        # Turning EQ back On with those same gains still saved immediately re-dirties it, since
+        # `eq_on` gates the whole check — no separate "eq_on by itself" branch is needed.
+        gains_dirty = eq_on and any(not math.isclose(g, 0.0, abs_tol=0.01) for g in eq_gains)
         is_default = (
-            not voice and not mono and not swap
+            not voice and not mono and not swap and not gains_dirty
             and math.isclose(balance, 0.0, abs_tol=0.01)
-            and all(math.isclose(g, 0.0, abs_tol=0.01) for g in eq_gains)
         )
         self.reset_audio_btn.setVisible(not is_default)

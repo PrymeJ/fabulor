@@ -341,6 +341,12 @@ class Config:
     def set_balance(self, value):
         self.settings.setValue("balance", float(value))
 
+    def get_eq_enabled(self):
+        return self.settings.value("eq_enabled", "false") == "true"
+
+    def set_eq_enabled(self, enabled):
+        self.settings.setValue("eq_enabled", str(enabled).lower())
+
     def get_eq_gain_100(self):
         return self._safe_float("eq_gain_100", 0.0)
 
