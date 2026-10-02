@@ -14,10 +14,19 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
   books need an EQ, and the ones that do won't all need the same one, so a single global EQ
   (shipped 2026-09-18, On/Off toggle added 2026-10-02) isn't enough on its own.
   - **UI placement — DECIDED**: Book Detail gets its own EQ tab/section (confirmed to have room),
-    separate from Settings > Audio's EQ, which stays purely global and untouched by which book is
-    loaded. Pryme's own reasoning: this keeps Settings > Audio's EQ meaning fixed (no Global/Book
-    switch, no context-dependent tab) while still letting the global EQ stay Off everywhere EXCEPT
-    specific books that need their own override — no ambiguous shared-state UI either way.
+    separate from Settings > Audio's EQ. Pryme's own reasoning: this keeps Settings > Audio's EQ
+    meaning fixed (no Global/Book switch, no context-dependent tab) while still letting the global
+    EQ stay Off everywhere EXCEPT specific books that need their own override — no ambiguous
+    shared-state UI either way.
+  - **Settings > Audio's superseded-indicator — DECIDED.** The sliders there always stay global
+    and fully EDITABLE (tinkering still sets a new global default, which will apply to every book
+    with no override) — but while the currently-loaded book has its own active override, they get
+    DIMMED (not disabled) plus an inline note near the Equalizer header naming that specific book
+    ("This book has its own EQ — see Book Detail"), so moving a global slider with no audible
+    effect reads as "shadowed by this book's override," not as "the EQ feature is broken." Settled
+    directly from Pryme's own observed failure mode: without ANY indicator, a user would tinker
+    with Settings > Audio while a book override is active, hear nothing change, and reasonably
+    conclude the EQ is broken rather than correctly shadowed.
   - **Still open — scope**: EQ only, or also voice boost/balance/channel swap? Leaning EQ-only —
     voice boost/mono/swap are listener-hardware properties that shouldn't reset per book, balance is
     borderline, EQ is the one that's genuinely a property of a specific recording's mix/tone.
