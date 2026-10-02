@@ -35,10 +35,10 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
     current book), connected in `main_window_builders.py`. This was mistaken, briefly, for evidence
     the two-tab design itself was too complex ("a plain Global/Book toggle would be simpler") —
     re-tested after the fix confirmed it was a wiring gap, not a design flaw.
-  Implemented on branch `feature/book-based-eq`. Remaining before merge: broader live verification
-  pass (book removal/switch edge cases, theming, keyboard nav on the new tab's controls — none of
-  this has had a dedicated TESTING.md checklist written yet), and a decision on whether to also add
-  a TESTING.md section before merging to main.
+  Implemented on branch `feature/book-based-eq`, with a TESTING.md checklist now in place
+  ("Book-based EQ+balance override" section). Remaining before merge: actually work through that
+  checklist live, and a separate, unrelated L/R balance issue (found during this session, confirmed
+  reproducible on `main`, not caused by this feature) to fix once back on `main`.
 
 ### Two open observations from 2026-09-25/26, neither confirmed enough to act on yet
 - **A real SIGSEGV crash, cause NOT pinned down, not yet reproduced a second time.**
