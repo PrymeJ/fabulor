@@ -4534,6 +4534,12 @@ def get_settings_stylesheet(theme_name="default"):
         QWidget#settings_panel[kbdnav="true"] #reset_audio_btn:focus:hover {{
             background: {t.get('focus_audio_tab_reset', t['accent_light'])};
         }}
+        QLabel#audio_superseded_label {{
+            color: {t['accent_light']};
+            font-size: 12px;
+            font-style: italic;
+            padding: 2px 2px 4px 2px;
+        }}
         #balance_slider, #eq_slider_100, #eq_slider_300, #eq_slider_1000, #eq_slider_3000, #eq_slider_8000 {{
             qproperty-bg_color: "{_audio_slider_bg_hex(t)}";
             qproperty-fill_color: "{t['slider_chapter_fill']}";
@@ -5284,6 +5290,22 @@ def get_stats_stylesheet(theme_name="default"):
         QPushButton#tag_manager_nav_btn[keyboard_selected="true"] {{
             background: {t['accent']};
             color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
+        }}
+        /* Book Detail's EQ tab (2026-10-02) — mirrors Settings > Audio's own slider rule
+           (#balance_slider, #eq_slider_*) verbatim but under book_eq_* object names, since
+           this tab's sliders are separate widget instances editing a different config row
+           (per-book override vs. global). #eq_freq_label is deliberately SHARED with the
+           global tab's freq labels (same text, same role) — not duplicated here. */
+        #book_eq_balance_slider, #book_eq_slider_100, #book_eq_slider_300, #book_eq_slider_1000,
+        #book_eq_slider_3000, #book_eq_slider_8000 {{
+            qproperty-bg_color: "{_audio_slider_bg_hex(t)}";
+            qproperty-fill_color: "{t['slider_chapter_fill']}";
+        }}
+        QLabel#book_eq_state_label {{
+            color: {t['accent_light']};
+            font-size: 13px;
+            font-weight: bold;
+            padding-bottom: 4px;
         }}
     """
 

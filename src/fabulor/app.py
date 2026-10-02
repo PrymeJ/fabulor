@@ -1586,6 +1586,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.session_recorder.close()
         self.current_file = ""
         self._current_book = None
+        if self.audio_tab:
+            self.audio_tab.set_current_book(None)
         # Per-book state: a pause armed on the removed book must not carry into
         # whatever book is selected next — see _on_book_selected_from_library.
         self._last_pause_timestamp = None
@@ -2230,6 +2232,15 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self.library_panel.refresh()
         self.tags_panel.refresh_books()
 
+    def _on_book_audio_settings_changed(self) -> None:
+        """Book Detail's EQ tab edits the OPEN book's override directly, so this is always the
+        currently-loaded book — but re-derive from self.current_file rather than assuming, in
+        case that ever stops being true. Re-syncs Settings > Audio (the superseded dim+note) and
+        the player (a Custom override, or a fresh Off, must apply immediately, not just the next
+        time the book is reloaded)."""
+        if self.audio_tab:
+            self.audio_tab.set_current_book(self.current_file)
+
     def _on_tag_filter_requested(self, tag: str) -> None:
         self.panel_manager._close_book_detail_flow()
         self.panel_manager._open_library_flow()
@@ -2737,7 +2748,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         speed = saved_speed if saved_speed is not None else self.config.get_default_speed()
         self._set_speed(speed, save=False)
         if self.audio_tab:
-            self.audio_tab.sync_player()
+            self.audio_tab.set_current_book(self.current_file)
 
     def _hide_popups(self):
         """Closes any open floating menus."""

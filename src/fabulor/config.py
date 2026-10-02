@@ -377,6 +377,66 @@ class Config:
     def set_eq_gain_8000(self, value):
         self.settings.setValue("eq_gain_8000", float(value))
 
+    # Per-book EQ+balance override (2026-10-02). Three states, NOT a plain on/off mirror of the
+    # global toggle — "inherit whatever Settings > Audio currently has" and "force off for this
+    # book regardless of global" are genuinely different and both needed:
+    #   "global" (default/absent — no row exists at all until a book's mode is ever touched,
+    #             same "None means use default" shape as get_book_speed below) — this book plays
+    #             with Settings > Audio's current eq_enabled/gains/balance, live; no book-local
+    #             values are read at all in this state.
+    #   "off"    — this book never gets EQ/balance processing, even if global is On. A real
+    #             per-book override, stored and read regardless of global's own state.
+    #   "custom" — this book uses its OWN gains/balance (set_book_eq_gain_*/set_book_balance
+    #             below), ignoring Settings > Audio entirely.
+    def get_book_eq_mode(self, file_path):
+        val = self.settings.value(f"eq_mode_{file_path}")
+        return val if val in ("global", "off", "custom") else "global"
+
+    def set_book_eq_mode(self, file_path, mode):
+        self.settings.setValue(f"eq_mode_{file_path}", mode)
+
+    def get_book_balance(self, file_path):
+        val = self.settings.value(f"balance_{file_path}")
+        return float(val) if val is not None else None
+
+    def set_book_balance(self, file_path, value):
+        self.settings.setValue(f"balance_{file_path}", float(value))
+
+    def get_book_eq_gain_100(self, file_path):
+        val = self.settings.value(f"eq_gain_100_{file_path}")
+        return float(val) if val is not None else None
+
+    def set_book_eq_gain_100(self, file_path, value):
+        self.settings.setValue(f"eq_gain_100_{file_path}", float(value))
+
+    def get_book_eq_gain_300(self, file_path):
+        val = self.settings.value(f"eq_gain_300_{file_path}")
+        return float(val) if val is not None else None
+
+    def set_book_eq_gain_300(self, file_path, value):
+        self.settings.setValue(f"eq_gain_300_{file_path}", float(value))
+
+    def get_book_eq_gain_1000(self, file_path):
+        val = self.settings.value(f"eq_gain_1000_{file_path}")
+        return float(val) if val is not None else None
+
+    def set_book_eq_gain_1000(self, file_path, value):
+        self.settings.setValue(f"eq_gain_1000_{file_path}", float(value))
+
+    def get_book_eq_gain_3000(self, file_path):
+        val = self.settings.value(f"eq_gain_3000_{file_path}")
+        return float(val) if val is not None else None
+
+    def set_book_eq_gain_3000(self, file_path, value):
+        self.settings.setValue(f"eq_gain_3000_{file_path}", float(value))
+
+    def get_book_eq_gain_8000(self, file_path):
+        val = self.settings.value(f"eq_gain_8000_{file_path}")
+        return float(val) if val is not None else None
+
+    def set_book_eq_gain_8000(self, file_path, value):
+        self.settings.setValue(f"eq_gain_8000_{file_path}", float(value))
+
     def get_chapter_digit_mode(self):
         return self.settings.value("chapter_digit_mode", "by_name")
 

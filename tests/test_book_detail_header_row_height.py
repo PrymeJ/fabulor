@@ -37,10 +37,11 @@ class _BareBookDetailPanel(BookDetailPanel):
     def __init__(self):
         from PySide6.QtWidgets import QWidget
         QWidget.__init__(self)
-        # _build_ui constructs a CoverPanel(db=self.db, ...) but never calls anything on it
-        # (that only happens via CoverPanel.load_book, which this test never calls) — a bare
-        # placeholder is sufficient.
+        # _build_ui constructs a CoverPanel(db=self.db, ...) and a BookEqualizerTab(config=
+        # self.config, ...) but never calls anything on either (that only happens via their own
+        # load_book, which this test never calls) — bare placeholders are sufficient.
         self.db = object()
+        self.config = object()
         self._theme = {}
         self._is_archived = False
         self._is_excluded = False
