@@ -608,6 +608,19 @@ class ExcludedBooksPopup(QListWidget):
         super().focusInEvent(event)
         if not self.count():
             return
+        # A click on a row's eye button (NoFocus itself, see _eye_btn's own setFocusPolicy
+        # comment) still delivers a mouse press to this QListWidget's viewport underneath,
+        # which Qt's StrongFocus default turns into a genuine focusInEvent for the WHOLE widget
+        # — with reason MouseFocusReason, not the keyboard-driven Tab/Backtab this "always land
+        # on row 0" behavior exists for. Forcing row 0 here hijacked the click: the list visibly
+        # scrolled to the top and revealed row 0's eye instead of the row actually clicked,
+        # even though the clicked button's own `clicked` signal (captured by closure over the
+        # correct path) still fired and restored the right book — confirmed live 2026-10-02
+        # (Pryme: clicking a bottom-row eye scrolls the list to the top; the SAME book then
+        # needs a second click, or any other row's click works normally once already focused).
+        # Mouse-driven focus-in must leave currentRow()/scroll position alone entirely.
+        if event.reason() == Qt.FocusReason.MouseFocusReason:
+            return
         if self.currentRow() != 0:
             self.setCurrentRow(0)  # fires currentRowChanged -> _on_current_row_changed
         else:
