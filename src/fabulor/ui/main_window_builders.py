@@ -765,6 +765,7 @@ def build_book_detail_panel(mw):
     mw.book_detail_panel.history_deleted.connect(mw.library_panel.refresh)
     mw.book_detail_panel.metadata_saved.connect(mw._on_book_metadata_saved)
     mw.book_detail_panel.tags_changed.connect(mw._on_book_tags_changed)
+    mw.book_detail_panel.audio_settings_changed.connect(mw._on_book_audio_settings_changed)
     mw.tags_panel.tag_changed.connect(mw.stats_panel._on_tag_changed)
     mw.tags_panel.detail_requested.connect(
         lambda path: mw.panel_manager.open_book_detail({"path": path}, tab="stats", context='tags')
@@ -1264,7 +1265,7 @@ def build_library_tab(mw):
 
 
 def build_audio_tab(mw):
-    mw.audio_tab = AudioSettingsTab(mw.player, mw.config, mw)
+    mw.audio_tab = AudioSettingsTab(mw.player, mw.config, db=mw.db, parent=mw)
     mw.tabs.addTab(mw.audio_tab, "Audio")
 
 

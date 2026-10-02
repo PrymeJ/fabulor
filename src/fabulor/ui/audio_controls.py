@@ -1,6 +1,6 @@
 import math
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QGraphicsOpacityEffect
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from .controls import ClickSlider
 
 # ClickSlider is fully custom-painted (see controls.py's paintEvent) and never reads
@@ -19,10 +19,18 @@ _SLIDER_WHEEL_STEP = 5
 
 class AudioSettingsTab(QWidget):
     """Handles the UI and logic for audio processing settings (normalization, boost, etc.)."""
-    def __init__(self, player, config, parent=None):
+    def __init__(self, player, config, db=None, parent=None):
         super().__init__(parent)
         self.player = player
         self.config = config
+        self.db = db
+        # The currently-loaded book's path, for resolving its EQ+balance mode (2026-10-02) — this
+        # tab has no other way to know which book is playing (Player itself tracks no path; only
+        # MainWindow.current_file does). None means no book loaded (e.g. empty library), in which
+        # case there is nothing to supersede and this tab behaves exactly as the pure-global
+        # version always did. Set via set_current_book(), called from MainWindow alongside every
+        # other sync_player() call site.
+        self._current_book_path = None
         self.voice_buttons = {}
         self.mono_buttons = {}
         self.swap_buttons = {}
@@ -33,6 +41,15 @@ class AudioSettingsTab(QWidget):
 
         self._setup_ui()
         self.update_visuals()
+
+    def set_current_book(self, book_path: str | None) -> None:
+        """Called by MainWindow on every book load/switch (and on removal, with None) — the one
+        place this tab learns which book's EQ+balance override, if any, supersedes the global
+        settings shown here. Re-derives visuals (the superseded dim+note) and re-syncs the player
+        immediately, since switching books can change which gains/balance actually apply."""
+        self._current_book_path = book_path
+        self.update_visuals()
+        self.sync_player()
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
@@ -94,6 +111,22 @@ class AudioSettingsTab(QWidget):
         eq_header = QLabel("Equalizer")
         eq_header.setObjectName("settings_header")
         layout.addWidget(eq_header)
+
+        # Superseded-indicator (2026-10-02) — shown only while the currently-loaded book has its
+        # own EQ+balance override active (mode "off" or "custom" — see _book_override_active
+        # below). ONE note covers both EQ and balance, placed above the EQ bands, because they
+        # share a single per-book mode (one 3-state toggle on Book Detail's EQ tab governs both,
+        # per the decided scope) — not two independent overrides needing two notes. Named after
+        # Pryme's own observed failure mode: without this, tinkering with the global sliders while
+        # a book override is active produces no audible change and reads as "the EQ is broken"
+        # rather than "correctly shadowed by this book." Text only — no icon, matching every other
+        # plain state label in this app. Hidden by default; update_visuals() owns both its text
+        # and visibility, and also dims the balance slider below alongside the 5 EQ bands.
+        self.audio_superseded_label = QLabel("")
+        self.audio_superseded_label.setObjectName("audio_superseded_label")
+        self.audio_superseded_label.setWordWrap(True)
+        self.audio_superseded_label.hide()
+        layout.addWidget(self.audio_superseded_label)
 
         # On/Off toggle, default Off — dims (never hides) the 5 bands below when Off, so an
         # A/B comparison is a single click on this row rather than a layout jump. The 5 bands
@@ -211,6 +244,9 @@ class AudioSettingsTab(QWidget):
         self.balance_slider.valueChanged.connect(self._on_balance_changed)
         # Right-click resets to centered — same mechanism as the EQ bands above (2026-09-22).
         self.balance_slider.rightClicked.connect(lambda _ratio: self.balance_slider.setValue(0))
+        self.balance_opacity_effect = QGraphicsOpacityEffect(self.balance_slider)
+        self.balance_opacity_effect.setOpacity(1.0)
+        self.balance_slider.setGraphicsEffect(self.balance_opacity_effect)
         layout.addWidget(self.balance_slider)
 
         layout.addSpacing(10)
@@ -267,19 +303,61 @@ class AudioSettingsTab(QWidget):
         self.sync_player()
         self.update_visuals()
 
+    def _book_override_mode(self) -> str:
+        """"global" (no override, or no book loaded) / "off" / "custom" for the currently-loaded
+        book. The sole place this tab reads get_book_eq_mode — every other method goes through
+        this or _book_override_active, never the config call directly, so "no book loaded" only
+        needs handling once."""
+        if self._current_book_path is None:
+            return "global"
+        return self.config.get_book_eq_mode(self._current_book_path)
+
+    def _book_override_active(self) -> bool:
+        """True while the loaded book is shadowing the global EQ+balance settings shown on this
+        tab (mode "off" or "custom") — drives the superseded dim+note. "global" mode is NOT an
+        override: the book is transparently inheriting whatever this tab already shows, so there
+        is nothing to flag."""
+        return self._book_override_mode() in ("off", "custom")
+
+    def _resolve_effective_audio(self) -> dict:
+        """What should actually reach the player right now, resolving the current book's
+        Global/Off/Custom EQ+balance mode against this tab's own global values. Voice boost/mono/
+        swap are never book-overridable (see TODO.md's scope decision) and always come straight
+        from config. Returns a dict matching apply_audio_processing's EQ+balance kwargs."""
+        mode = self._book_override_mode()
+        if mode == "off":
+            return {"balance": 0.0, "eq_100": 0.0, "eq_300": 0.0, "eq_1000": 0.0,
+                    "eq_3000": 0.0, "eq_8000": 0.0}
+        if mode == "custom":
+            path = self._current_book_path
+            return {
+                "balance": self.config.get_book_balance(path) or 0.0,
+                "eq_100": self.config.get_book_eq_gain_100(path) or 0.0,
+                "eq_300": self.config.get_book_eq_gain_300(path) or 0.0,
+                "eq_1000": self.config.get_book_eq_gain_1000(path) or 0.0,
+                "eq_3000": self.config.get_book_eq_gain_3000(path) or 0.0,
+                "eq_8000": self.config.get_book_eq_gain_8000(path) or 0.0,
+            }
+        # "global" — same logic sync_player always had: EQ gains are zeroed when the GLOBAL
+        # toggle is off, independent of any book mode (which is "global" here by definition).
+        eq_on = self.config.get_eq_enabled()
+        return {
+            "balance": self.config.get_balance(),
+            "eq_100": self.config.get_eq_gain_100() if eq_on else 0.0,
+            "eq_300": self.config.get_eq_gain_300() if eq_on else 0.0,
+            "eq_1000": self.config.get_eq_gain_1000() if eq_on else 0.0,
+            "eq_3000": self.config.get_eq_gain_3000() if eq_on else 0.0,
+            "eq_8000": self.config.get_eq_gain_8000() if eq_on else 0.0,
+        }
+
     def sync_player(self):
         if self.player:
-            eq_on = self.config.get_eq_enabled()
+            effective = self._resolve_effective_audio()
             self.player.apply_audio_processing(
                 voice_boost=self.config.get_voice_boost_enabled(),
                 mono=self.config.get_mono_enabled(),
                 swap=self.config.get_channels_swapped(),
-                balance=self.config.get_balance(),
-                eq_100=self.config.get_eq_gain_100() if eq_on else 0.0,
-                eq_300=self.config.get_eq_gain_300() if eq_on else 0.0,
-                eq_1000=self.config.get_eq_gain_1000() if eq_on else 0.0,
-                eq_3000=self.config.get_eq_gain_3000() if eq_on else 0.0,
-                eq_8000=self.config.get_eq_gain_8000() if eq_on else 0.0,
+                **effective,
             )
 
     def update_visuals(self):
@@ -307,21 +385,39 @@ class AudioSettingsTab(QWidget):
             btn.setProperty("selected", "true" if (s == "On" if eq_on else s == "Off") else "false")
             btn.style().unpolish(btn); btn.style().polish(btn)
 
-        # Dimmed (never hidden) while Off, so the 5 bands stay a stable visual reference for
-        # A/B comparison instead of the layout jumping on every toggle — see the toggle row's
-        # own comment above. Dimming is via QGraphicsOpacityEffect (ClickSlider is fully
-        # custom-painted and never reads isEnabled() — see _EQ_DIMMED_OPACITY). setEnabled
-        # also blocks drag/wheel/right-click-reset input while Off and removes the slider from
-        # arrow-key navigation (panels.settings_tab_button_rows' _navigable gates on
-        # isEnabled()) — consistent with every other disabled control in the app, even though
-        # this is the first ClickSlider to use setEnabled(False) at all.
+        # Superseded-indicator (2026-10-02) — a book override (mode "off"/"custom") shadows the
+        # global EQ+balance shown here. Deliberately does NOT name the book: an earlier version
+        # quoted the title directly in the note, which could wrap to 2-3 lines for a long title
+        # and push the Reset button down (live screenshot, 2026-10-02) — the user already knows
+        # which book is loaded, so naming it back adds width-dependent fragility for no real
+        # information gain. Fixed phrasing stays one line at this panel's width regardless of
+        # which book is open. The toggle/band controls stay ENABLED throughout (only dimmed when
+        # the global toggle is Off, below) — editing the global settings while superseded is
+        # still a legitimate thing to do (it changes the default every OTHER book, and this
+        # book's own "Global" mode if ever switched back to it).
+        overridden = self._book_override_active()
+        if overridden:
+            self.audio_superseded_label.setText("This book has its own EQ. You can change it in Book Detail.")
+            self.audio_superseded_label.show()
+        else:
+            self.audio_superseded_label.hide()
+
+        # Dimmed while the GLOBAL toggle is Off, OR while a book override shadows these controls
+        # — either way, nothing happening here is driving current playback right now. Dimming is
+        # via QGraphicsOpacityEffect (ClickSlider is fully custom-painted and never reads
+        # isEnabled() — see _EQ_DIMMED_OPACITY). setEnabled is tied to the GLOBAL toggle alone
+        # (eq_on), NOT to the override — the controls stay genuinely editable while superseded
+        # (see the comment above), just visually de-emphasized via opacity only, no setEnabled.
+        opacity = 1.0 if (eq_on and not overridden) else _EQ_DIMMED_OPACITY
         for freq, slider in self.eq_sliders.items():
             slider.setEnabled(eq_on)
-            opacity = 1.0 if eq_on else _EQ_DIMMED_OPACITY
             self.eq_opacity_effects[freq].setOpacity(opacity)
             self.eq_label_opacity_effects[freq].setOpacity(opacity)
             slider.style().unpolish(slider)
             slider.style().polish(slider)
+        self.balance_opacity_effect.setOpacity(opacity)
+        self.balance_slider.style().unpolish(self.balance_slider)
+        self.balance_slider.style().polish(self.balance_slider)
 
         balance = self.config.get_balance()
         eq_gains = [getattr(self.config, f"get_eq_gain_{freq}")() for freq in self.eq_sliders]
@@ -336,3 +432,198 @@ class AudioSettingsTab(QWidget):
             and math.isclose(balance, 0.0, abs_tol=0.01)
         )
         self.reset_audio_btn.setVisible(not is_default)
+
+
+class BookEqualizerTab(QWidget):
+    """Book Detail's EQ+balance tab (2026-10-02) — per-book override of Settings > Audio's
+    global EQ+balance (voice boost/mono/swap are NOT book-overridable, see TODO.md's scope
+    decision). A 3-state mode, not a plain on/off mirror of the global toggle:
+      "global" — this book inherits whatever Settings > Audio currently has, live. No book-local
+                 gains/balance are read in this state (config.get_book_eq_mode defaults here).
+      "off"    — this book never gets EQ/balance processing, even if global is On.
+      "custom" — this book uses its OWN gains/balance, set directly on the 5 bands/slider below.
+    Visually mirrors AudioSettingsTab's EQ+balance section (same gradient styles, dimming
+    mechanism, wheel step) rather than sharing widget instances — the two tabs edit different
+    config rows and need independent slider state.
+    """
+    audio_settings_changed = Signal()  # this book's mode/gains/balance changed; see load_book
+
+    def __init__(self, config, parent=None):
+        super().__init__(parent)
+        self.config = config
+        self._book_path = None
+        self.mode_buttons = {}
+        self.eq_sliders = {}
+        self.eq_opacity_effects = {}
+        self.eq_label_opacity_effects = {}
+        self._setup_ui()
+        self.update_visuals()
+
+    def _setup_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 10, 10, 10)
+
+        # State label — plain text, no icon, matching every other state label in this app (see
+        # TODO.md's "Book Detail's own state indicator — DECIDED" entry). update_visuals() owns
+        # its text; it is never hidden (unlike Settings > Audio's superseded note, which only
+        # appears conditionally) — there is always exactly one of three states to report here.
+        self.state_label = QLabel("")
+        self.state_label.setObjectName("book_eq_state_label")
+        self.state_label.setWordWrap(True)
+        layout.addWidget(self.state_label)
+
+        mode_row = QHBoxLayout()
+        for mode in ["Global", "Off", "Custom"]:
+            btn = QPushButton(mode)
+            btn.setObjectName("pattern_button")
+            btn.clicked.connect(lambda _, m=mode: self._on_mode_clicked(m))
+            mode_row.addWidget(btn)
+            self.mode_buttons[mode] = btn
+        mode_row.addStretch()
+        layout.addLayout(mode_row)
+
+        layout.addSpacing(6)
+        eq_header = QLabel("Equalizer")
+        eq_header.setObjectName("settings_header")
+        layout.addWidget(eq_header)
+
+        eq_freqs = [("100", "100"), ("300", "300"), ("1000", "1K"), ("3000", "3K"), ("8000", "8K")]
+        for eq_i, (freq, label) in enumerate(eq_freqs):
+            eq_row = QHBoxLayout()
+            slider = ClickSlider(Qt.Horizontal)
+            slider.setObjectName(f"book_eq_slider_{freq}")
+            slider.center_mark = True
+            slider.snap_to_center = True
+            slider.fill_from_center = True
+            slider.gradient_style = "eq"
+            slider.wheel_step = _SLIDER_WHEEL_STEP
+            slider.setRange(-60, 60)
+            slider.setValue(0)
+            slider.setFixedHeight(10)
+            slider.setFocusPolicy(Qt.FocusPolicy.TabFocus)
+            slider.valueChanged.connect(lambda v, k=freq: self._on_eq_changed(k, v))
+            slider.rightClicked.connect(lambda _ratio, k=freq: self._reset_eq_band(k))
+            opacity_effect = QGraphicsOpacityEffect(slider)
+            opacity_effect.setOpacity(1.0)
+            slider.setGraphicsEffect(opacity_effect)
+            self.eq_opacity_effects[freq] = opacity_effect
+            eq_row.setSpacing(4)
+            eq_row.addWidget(slider, stretch=1, alignment=Qt.AlignmentFlag.AlignVCenter)
+            freq_label = QLabel(label)
+            freq_label.setObjectName("eq_freq_label")
+            freq_label.setFixedWidth(16)
+            freq_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            eq_row.addWidget(freq_label, alignment=Qt.AlignmentFlag.AlignVCenter)
+            label_opacity_effect = QGraphicsOpacityEffect(freq_label)
+            label_opacity_effect.setOpacity(1.0)
+            freq_label.setGraphicsEffect(label_opacity_effect)
+            self.eq_label_opacity_effects[freq] = label_opacity_effect
+            layout.addLayout(eq_row)
+            if eq_i < len(eq_freqs) - 1:
+                layout.addSpacing(2)
+            self.eq_sliders[freq] = slider
+
+        balance_header = QLabel("L/R balance")
+        balance_header.setObjectName("settings_header")
+        layout.addWidget(balance_header)
+        self.balance_slider = ClickSlider(Qt.Horizontal)
+        self.balance_slider.setObjectName("book_eq_balance_slider")
+        self.balance_slider.center_mark = True
+        self.balance_slider.snap_to_center = True
+        self.balance_slider.fill_from_center = True
+        self.balance_slider.gradient_style = "balance"
+        self.balance_slider.wheel_step = _SLIDER_WHEEL_STEP
+        self.balance_slider.setRange(-100, 100)
+        self.balance_slider.setValue(0)
+        self.balance_slider.setFixedHeight(12)
+        self.balance_slider.setFixedWidth(140)
+        self.balance_slider.setFocusPolicy(Qt.FocusPolicy.TabFocus)
+        self.balance_slider.valueChanged.connect(self._on_balance_changed)
+        self.balance_slider.rightClicked.connect(lambda _ratio: self.balance_slider.setValue(0))
+        self.balance_opacity_effect = QGraphicsOpacityEffect(self.balance_slider)
+        self.balance_opacity_effect.setOpacity(1.0)
+        self.balance_slider.setGraphicsEffect(self.balance_opacity_effect)
+        layout.addWidget(self.balance_slider)
+
+        layout.addStretch()
+
+    def load_book(self, book_path: str | None) -> None:
+        """Called from BookDetailPanel.load_book, same shape as CoverPanel.load_book — loads
+        this book's saved mode/gains/balance (or the "global"/0.0 defaults for a book whose EQ
+        has never been touched) and repaints every control. Does NOT emit
+        audio_settings_changed — that signal is for a user-driven CHANGE while this tab is open
+        on a specific book, not for the load itself."""
+        self._book_path = book_path
+        if book_path is not None:
+            gains = {freq: getattr(self.config, f"get_book_eq_gain_{freq}")(book_path)
+                     for freq in self.eq_sliders}
+            balance = self.config.get_book_balance(book_path)
+        else:
+            gains = {freq: None for freq in self.eq_sliders}
+            balance = None
+        for freq, slider in self.eq_sliders.items():
+            slider.blockSignals(True)
+            slider.setValue(int((gains[freq] or 0.0) * 10))
+            slider.blockSignals(False)
+        self.balance_slider.blockSignals(True)
+        self.balance_slider.setValue(int((balance or 0.0) * 100))
+        self.balance_slider.blockSignals(False)
+        self.update_visuals()
+
+    def _on_mode_clicked(self, mode: str) -> None:
+        if self._book_path is None:
+            return
+        self.config.set_book_eq_mode(self._book_path, mode.lower())
+        self.update_visuals()
+        self.audio_settings_changed.emit()
+
+    def _on_eq_changed(self, freq_key, value):
+        if self._book_path is None:
+            return
+        getattr(self.config, f"set_book_eq_gain_{freq_key}")(self._book_path, value / 10.0)
+        # Editing a band only makes sense, and only has any effect, in Custom mode — but it does
+        # NOT auto-promote Global/Off into Custom. The user drags a slider with an explicit mode
+        # already chosen; silently switching modes out from under that choice would be a second,
+        # surprising side effect of what looks like a plain value edit. If the mode is NOT
+        # Custom, the dragged value is still saved (so it's there if Custom is picked later) but
+        # has no audible effect and update_visuals' dimming will reflect that immediately.
+        self.update_visuals()
+        self.audio_settings_changed.emit()
+
+    def _reset_eq_band(self, freq_key):
+        self.eq_sliders[freq_key].setValue(0)
+
+    def _on_balance_changed(self, value):
+        if self._book_path is None:
+            return
+        self.config.set_book_balance(self._book_path, value / 100.0)
+        self.update_visuals()
+        self.audio_settings_changed.emit()
+
+    def update_visuals(self):
+        mode = self.config.get_book_eq_mode(self._book_path) if self._book_path else "global"
+        for m, btn in self.mode_buttons.items():
+            btn.setProperty("selected", "true" if m.lower() == mode else "false")
+            btn.style().unpolish(btn); btn.style().polish(btn)
+
+        state_text = {
+            "global": "Using the global EQ",
+            "off": "EQ off for this book",
+            "custom": "Custom EQ for this book",
+        }[mode]
+        self.state_label.setText(state_text)
+
+        # Dimmed (not disabled) in every mode except Custom — in Global/Off, these sliders are
+        # not what's driving playback (Global defers to Settings > Audio; Off silences
+        # everything regardless of slider position), but they stay fully draggable/resettable so
+        # a value can be prepared before switching to Custom, same "stays a stable reference,
+        # never a layout jump" reasoning as the global EQ's own On/Off dimming.
+        opacity = 1.0 if mode == "custom" else _EQ_DIMMED_OPACITY
+        for freq, slider in self.eq_sliders.items():
+            self.eq_opacity_effects[freq].setOpacity(opacity)
+            self.eq_label_opacity_effects[freq].setOpacity(opacity)
+            slider.style().unpolish(slider)
+            slider.style().polish(slider)
+        self.balance_opacity_effect.setOpacity(opacity)
+        self.balance_slider.style().unpolish(self.balance_slider)
+        self.balance_slider.style().polish(self.balance_slider)

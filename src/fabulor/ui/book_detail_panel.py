@@ -153,6 +153,7 @@ class BookDetailPanel(QWidget):
     tag_filter_requested = Signal(str)
     open_tag_manager_requested = Signal()
     cover_error = Signal(str)  # a cover-add failed (too large, unreadable, save/DB failure)
+    audio_settings_changed = Signal()  # this book's EQ/balance mode or values changed (EQ tab)
 
     def __init__(self, db, config, parent=None):
         super().__init__(parent)
@@ -487,12 +488,17 @@ class BookDetailPanel(QWidget):
         self._cover_panel.active_cover_changed.connect(self._refresh_header_cover)
         self._cover_panel.cover_error.connect(self.cover_error.emit)
 
+        from .audio_controls import BookEqualizerTab
+        self._eq_tab = BookEqualizerTab(config=self.config, parent=self)
+        self._eq_tab.audio_settings_changed.connect(self.audio_settings_changed.emit)
+
         self.tabs = QTabWidget()
         self.tabs.setObjectName("stats_tabs")
         self.tabs.addTab(self._build_stats_tab(), "Stats")
         self.tabs.addTab(self._build_history_tab(), "History")
         self.tabs.addTab(self._build_metadata_tab(), "Tags")
         self.tabs.addTab(self._cover_panel, "Cover")
+        self.tabs.addTab(self._eq_tab, "EQ")
         self.tabs.currentChanged.connect(self._on_tab_changed)
         # 3px fixed push (confirmed live via tools/history_tab_geometry_probe.py, 2026-08-12):
         # the History tab's row list viewport is 273px against a fixed 27px row height —
@@ -1475,6 +1481,7 @@ class BookDetailPanel(QWidget):
         self._select_tab_by_name(tab)
 
         self._cover_panel.load_book(self._book_path)
+        self._eq_tab.load_book(self._book_path)
         self._refresh_stats()
         self._remove_btn.setVisible(not self._is_excluded and not self._is_archived)
         self._ghost_label.setVisible(self._is_excluded)
@@ -1818,7 +1825,7 @@ class BookDetailPanel(QWidget):
         super().keyPressEvent(event)
 
     def _cycle_tab(self, direction: int):
-        """Left/Right: cycles Stats -> History -> Tags -> Cover, wrapping both ways. Reuses
+        """Left/Right: cycles Stats -> History -> Tags -> Cover -> EQ, wrapping both ways. Reuses
         QTabWidget.setCurrentIndex — the exact mechanism a mouse click on a tab header already
         triggers (currentChanged -> _on_tab_changed fires identically either way)."""
         count = self.tabs.count()
