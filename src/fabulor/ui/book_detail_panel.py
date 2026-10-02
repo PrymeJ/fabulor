@@ -323,7 +323,7 @@ class BookDetailPanel(QWidget):
         self._confirm_remove_label.setCursor(Qt.CursorShape.PointingHandCursor)
         self._confirm_remove_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self._confirm_remove_label.clicked.connect(self._on_confirm_remove)
-        self._confirm_remove_label.setVisible(False)
+        self._confirm_remove_label.setWordWrap(False)
 
         self._remove_btn = QToolButton()
         self._remove_btn.setObjectName("remove_book_btn")
@@ -374,12 +374,18 @@ class BookDetailPanel(QWidget):
         _cfc_layout.addStretch()
         _cfc_layout.addWidget(self._confirm_finished_label)
 
-        dur_save_row = QHBoxLayout()
+        # Stacked (not side-by-side) so _confirm_remove_label owns the FULL row width when
+        # shown, rather than sharing it with _duration_label's reserved (retain-size-when-
+        # hidden) width — the latter shape clipped the confirm text, worse the longer the
+        # duration string was, since _duration_label still claimed its own natural width even
+        # while hidden. Mirrors the narrator/finished-confirm QStackedLayout above.
+        dur_save_row = QStackedLayout()
         dur_save_row.setContentsMargins(0, 0, 0, 0)
-        dur_save_row.setSpacing(4)
+        dur_save_row.setStackingMode(QStackedLayout.StackingMode.StackOne)
         dur_save_row.addWidget(self._duration_label)
-        dur_save_row.addStretch()
         dur_save_row.addWidget(self._confirm_remove_label)
+        dur_save_row.setCurrentWidget(self._duration_label)
+        self._dur_save_stack = dur_save_row
 
         # Narrator slot: a QStackedLayout so the narrator and the finished-confirm
         # label each own the FULL row width when current (an HBox split made the
@@ -2691,8 +2697,8 @@ class BookDetailPanel(QWidget):
         if self._confirming_remove:
             return
         self._confirming_remove = True
-        self._duration_label.setVisible(False)
         self._confirm_remove_label.setVisible(True)
+        self._dur_save_stack.setCurrentWidget(self._confirm_remove_label)
         self._remove_btn.setCursor(Qt.CursorShape.ArrowCursor)
         color = self._theme.get("accent", "#888888")
         pixmap = load_themed_icon("trash.svg", color, 16, 0.35)
@@ -2714,6 +2720,7 @@ class BookDetailPanel(QWidget):
     def _cancel_remove(self) -> None:
         self._confirming_remove = False
         self._confirm_remove_label.setVisible(False)
+        self._dur_save_stack.setCurrentWidget(self._duration_label)
         # Unconditional setVisible(True) here (pre-2026-09-26) re-showed the label whenever
         # remove-confirm was dismissed, regardless of whether the CURRENT book actually has a
         # duration. setVisible(False) never clears text, so a book with a genuinely missing

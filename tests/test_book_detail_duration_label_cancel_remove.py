@@ -42,6 +42,17 @@ class _FakeTimer:
         pass
 
 
+class _FakeStack:
+    """Stands in for the real QStackedLayout _cancel_remove/_on_remove_clicked switch between
+    _duration_label and _confirm_remove_label — only records the last widget made current."""
+
+    def __init__(self):
+        self.current = None
+
+    def setCurrentWidget(self, widget):
+        self.current = widget
+
+
 class _FakeHost:
     """Supplies exactly what _cancel_remove / _update_duration_label read or write on self."""
 
@@ -63,6 +74,7 @@ class _FakeHost:
         self._remove_cancel_timer = _FakeTimer()
         self._theme = {}
         self.update_remove_btn_icon_calls = 0
+        self._dur_save_stack = _FakeStack()
 
     def _update_remove_btn_icon(self, hover: bool = False):
         # _cancel_remove's icon reset — unrelated to the duration-label bug this file pins,
