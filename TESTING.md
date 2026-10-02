@@ -17,62 +17,67 @@ to this feature (reproducible on `main`, pre-existing) — deferred to be fixed 
 not part of this checklist.
 
 ### Book Detail: EQ tab placement and basics
-- [ ] Open any book's detail panel — a new "EQ" tab appears immediately after "Cover" (tab order:
+- [X] Open any book's detail panel — a new "EQ" tab appears immediately after "Cover" (tab order:
   Stats, History, Tags, Cover, EQ)
-- [ ] On a book whose EQ has never been touched, the tab shows "Using the global EQ", the "Global"
+- [X] On a book whose EQ has never been touched, the tab shows "Using the global EQ", the "Global"
   mode button is selected, and all 5 bands + L/R balance are visibly dimmed (not hidden)
-- [ ] The 5 bands and L/R balance slider are still draggable/right-click-resettable while dimmed in
+- [X] The 5 bands and L/R balance slider are still draggable/right-click-resettable while dimmed in
   Global mode (dimming is visual only — not a disabled state)
-- [ ] Switching mode to "Off" updates the state label to "EQ off for this book"; bands/balance stay
+- [X] Switching mode to "Off" updates the state label to "EQ off for this book"; bands/balance stay
   dimmed
-- [ ] Switching mode to "Custom" updates the state label to "Custom EQ for this book"; bands/
+- [X] Switching mode to "Custom" updates the state label to "Custom EQ for this book"; bands/
   balance are no longer dimmed (full brightness/opacity)
-- [ ] Switching between Global/Off/Custom repeatedly updates the mode-button "selected" highlight
+- [X] Switching between Global/Off/Custom repeatedly updates the mode-button "selected" highlight
   correctly every time (never two buttons highlighted, never none)
 
 ### Book Detail: EQ tab playback behavior
-- [ ] With this book's mode set to "Custom" and a non-zero gain/balance set, playback audibly
+- [X] With this book's mode set to "Custom" and a non-zero gain/balance set, playback audibly
   reflects those values — dragging a band changes the sound in real time
-- [ ] With this book's mode set to "Off", playback has NO EQ/balance processing regardless of what
+- [X] With this book's mode set to "Off", playback has NO EQ/balance processing regardless of what
   Settings > Audio's global toggle/sliders currently hold (even if global is On with non-zero
   gains)
-- [ ] With this book's mode set to "Global", playback reflects whatever Settings > Audio currently
+- [X] With this book's mode set to "Global", playback reflects whatever Settings > Audio currently
   has — toggling the GLOBAL EQ On/Off while this book (in Global mode) is playing audibly changes
   the sound live, with no need to reopen Book Detail
-- [ ] Right-clicking a Custom-mode band resets just that band to 0dB; right-clicking the Custom-
+- [X] Right-clicking a Custom-mode band resets just that band to 0dB; right-clicking the Custom-
   mode balance slider resets it to centered — same mechanics as the global tab's equivalents
 
 ### Settings > Audio: superseded-indicator
-- [ ] With the loaded book's mode at "Global" (default/untouched), Settings > Audio's EQ section
+- [X] With the loaded book's mode at "Global" (default/untouched), Settings > Audio's EQ section
   shows NO superseded note, and the global EQ+balance sliders are at full opacity (subject only to
   the existing global EQ On/Off dimming, unrelated to this feature)
-- [ ] Switch the loaded book's mode to "Off" in Book Detail, then open Settings > Audio — a one-
+- [X] Switch the loaded book's mode to "Off" in Book Detail, then open Settings > Audio — a one-
   line note appears near the Equalizer header reading "This book has its own EQ — change it in
   Book Detail." and the global EQ bands + L/R balance slider are dimmed
-- [ ] Switch the loaded book's mode to "Custom" instead — same note and dimming appear
-- [ ] The note never names the book and stays on ONE line regardless of how long the book's title
+- [X] Switch the loaded book's mode to "Custom" instead — same note and dimming appear
+- [X] The note never names the book and stays on ONE line regardless of how long the book's title
   is (confirm with a deliberately long title) — it must never wrap to 2-3 lines or push "Reset to
   defaults" out of position
-- [ ] With Settings > Audio already open and showing the superseded note, switch to a DIFFERENT
-  book (still in Off/Custom mode) — the note stays showing (still true for the new book); switch to
-  a book in Global mode — the note disappears immediately, without needing to close/reopen Settings
-- [ ] While superseded, the global EQ bands/balance slider in Settings > Audio remain fully
+- [X] With Settings > Audio open and showing the superseded note for the currently-loaded book,
+  switch the LOADED book to a different one (still in Off/Custom mode) WITHOUT closing Settings —
+  the note stays showing for the new book; switch to a book in Global mode — the note disappears
+  immediately, without needing to close/reopen Settings (Book Detail does not need to be open for
+  this — switching books from the Library, the chapter list, etc. while Settings stays open is
+  enough)
+- [X] While superseded, the global EQ bands/balance slider in Settings > Audio remain fully
   draggable and right-click-resettable (dimming is visual only, not disabled) — editing them still
   changes the GLOBAL default, audible immediately for any OTHER book currently in Global mode
-- [ ] Remove/unload the currently-playing book entirely (e.g. via the Library's remove flow) while
+- [X] Remove/unload the currently-playing book entirely (e.g. via the Library's remove flow) while
   Settings > Audio is open and showing the superseded note — the note clears (no book is loaded, so
   nothing can be superseded)
 
 ### Handoff regression (the bug found and fixed this session)
-- [ ] Set a book's mode to "Custom" with a non-zero gain, WITHOUT closing Book Detail — open
-  Settings > Audio (or just switch to its tab if already open) — the superseded note and dimming
-  appear immediately, with no need to reload the book or restart the app
-- [ ] With that same book still loaded, switch its mode back to "Global" in Book Detail — open/
-  switch to Settings > Audio again — the note and dimming are gone immediately
-- [ ] With a book in "Custom" mode, drag one of its bands to a new value — if Settings > Audio
-  happens to be open at the same time, nothing there needs to change (the note/dimming already
-  reflect "Custom", regardless of which specific values); but the PLAYER's audible output must
-  update immediately on that drag, without reloading the book
+Book Detail and Settings can never both be open at once (one-overlay-at-a-time — see CLAUDE.md),
+so every check below is sequential: do the Book Detail step, close it, THEN open Settings > Audio
+to check the result — never "both panels open simultaneously."
+- [ ] Set a book's mode to "Custom" with a non-zero gain in Book Detail, close Book Detail, then
+  open Settings > Audio — the superseded note and dimming appear immediately, with no need to
+  reload the book or restart the app
+- [ ] With that same book still loaded, reopen Book Detail and switch its mode back to "Global",
+  close Book Detail, then open Settings > Audio again — the note and dimming are gone immediately
+- [ ] With a book in "Custom" mode, drag one of its bands to a new value in Book Detail, close
+  Book Detail — the PLAYER's audible output must already reflect the new value (it updates live
+  while Book Detail is still open, not just on close), without reloading the book
 
 ## Tags panel count display, Book Detail tag-cap message, Audio tab EQ On/Off toggle — 2026-10-01/02
 

@@ -9,6 +9,21 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
 
 ## Summary index
 
+### Book Detail: "Confirm to exclude from the library" banner gets clipped
+- [2026-10-02] BUG, confirmed pre-existing on `main` (not caused by the book-based EQ work — found
+  while testing that feature on its own branch, confirmed to reproduce before the branch's changes
+  too). `dur_save_row` (`book_detail_panel.py`, `_build_header` area) is a plain `QHBoxLayout`:
+  `[_duration_label][stretch][_confirm_remove_label]`. `_confirm_remove_label` ("Confirm to exclude
+  from the library") has no word-wrap/elide and no guaranteed minimum width of its own — it only
+  gets whatever space is left in the row after `_duration_label`'s own natural width. A longer
+  duration string (e.g. "9:27:58" vs. a shorter book's duration) eats into that shared space, and
+  the confirm label is silently clipped at the row's right edge with no ellipsis, no wrap, nothing
+  — live screenshots show it cut mid-word ("...xclude from the library"). Severity scales with how
+  long the duration text happens to be for whichever book is open. Needs a fix that gives
+  `_confirm_remove_label` either its own reserved width independent of `_duration_label`'s content,
+  or an elide/wrap policy so a tight fit degrades gracefully instead of clipping silently. Deferred
+  — Pryme's own call, fix once back on `main` (not blocking the EQ branch).
+
 ### Book-based Equalizer override — implemented, pending final live verification (`feature/book-based-eq`)
 - [2026-10-02, design decided and implementation landed same day] FEAT: a per-book EQ + balance
   override, on top of the global EQ (shipped 2026-09-18, On/Off toggle added 2026-10-02).
