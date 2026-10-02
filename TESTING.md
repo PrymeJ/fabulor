@@ -2992,6 +2992,15 @@ Applies to **every** text input in the app: Book Detail metadata fields, library
 - [ ] With master On (any sub-toggle): type a real search, click a tag/author/narrator/year filter (field now shows the clicked value), quit the app WITHOUT closing the library panel first, relaunch: field shows the ORIGINAL TYPED text on restart, not the clicked filter's value (fixed 2026-07-18 — see NOTES.md)
 - [ ] Same as above but with nothing typed first (only a click-filter applied before exit-with-panel-open): field is empty on restart, not the clicked filter's value
 
+### Book Detail exclude-confirm banner width (2026-10-02)
+- [x] Open Book Detail on a book with a LONG duration string (e.g. 9h+) → click the trash/exclude
+  icon → "Confirm to exclude from the library" renders in full, not clipped mid-word (confirmed
+  live: Pryme — "Banner is fixed")
+- [ ] Same, on a book with a SHORT duration string (e.g. under 1h) — confirm text still renders
+  identically (regression check: the fix must not depend on duration length at all anymore)
+- [ ] Cancel the confirm (wait 7s, or click away) → duration label reappears with its own correct
+  text, not stuck showing the confirm text or blank
+
 ## Excluded Books (Settings → Library)
 
 - [ ] Section invisible (zero space) when no books are excluded
@@ -3010,6 +3019,10 @@ Applies to **every** text input in the app: Book Detail metadata fields, library
 - [ ] Click outside the list while expanded: collapses back to 3 rows (does not hide the list entirely)
 - [ ] Switch tabs while expanded: list becomes hidden/clipped immediately (no fade, no flash on the new tab)
 - [ ] Restore a book via its row's hover-reveal eye icon: row slides out, book reappears in the library/grid
+- [x] **[2026-10-02]** With 4+ excluded books (list expanded or scrolled so the target row is NOT
+  row 0): click a row's eye icon that is below the first row — the list does NOT scroll/jump back
+  to row 0 on the click; the clicked row's own book is the one restored (confirmed live: Pryme —
+  "Worked correctly")
 - [ ] Restore the 4th-from-last book (count goes 4→3): list immediately collapses to 3 rows and the arrow drops to dimmed/inert — does not stay stuck expanded at 7 rows
 - [ ] Restore books down to exactly 1 left (e.g. 2→1): box stays at the fixed 3-row collapsed height — does not shrink to 1 row
 - [ ] Restore the last remaining excluded book (1→0): list and the "Excluded books" header/count line both disappear immediately — no leftover empty box or stale count text

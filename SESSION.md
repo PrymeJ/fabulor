@@ -1,3 +1,49 @@
+## Session Summary — 2026-10-02 Session 2 — Merged the book-based EQ override feature to `main`, then fixed two pre-existing (EQ-unrelated) UI bugs surfaced during its live testing: the Book Detail exclude-confirm banner getting clipped by a long duration string, and clicking an Excluded Books row's eye button scrolling the whole list back to row 0 instead of restoring the clicked row.
+
+**Merge (`feature/book-based-eq` → `main`, `f74fcc0`).** All TESTING.md checklist items for the
+book-based EQ+balance override were confirmed live by Pryme the previous session; ran the full
+pytest suite clean on the branch, merged with `--no-ff`, ran it clean again on `main`, then deleted
+the now-merged branch. See TODO_ARCHIVE.md for the full feature summary (moved there this session,
+since it had stayed in TODO.md past the point the feature actually shipped).
+
+**Book Detail: exclude-confirm banner clipping (`eccadbe`).** `dur_save_row`
+(`book_detail_panel.py`) was a plain `QHBoxLayout`: `[_duration_label][stretch]
+[_confirm_remove_label]`. `_confirm_remove_label` ("Confirm to exclude from the library") had no
+reserved width of its own — `_duration_label`'s retain-size-when-hidden policy kept reserving its
+own natural width even while hidden (confirming remove hides `_duration_label`), squeezing the
+confirm label into whatever was left and clipping it mid-word for books with a long duration
+string. Fixed by switching `dur_save_row` to a `QStackedLayout` — the same pattern the file already
+uses for narrator-vs-finished-confirm — so the confirm label owns the full row width when shown
+instead of sharing it. Confirmed this was pre-existing on `main`, not caused by the EQ branch, by
+reproducing it before the branch's changes too. Live-verified by Pryme: "Banner is fixed."
+
+**Excluded Books: eye-button click scrolling the list to row 0 (`4456bb9`).** While testing the
+banner fix, Pryme found a second, unrelated bug: clicking a row's eye button to restore a book
+visually scrolled the whole Excluded Books list up to the top instead of acting on the clicked row
+— reproducible specifically when the clicked row sits below the first few. The restore itself still
+happened correctly (a second click, or clicking any row once the list already had focus, "worked"),
+which is what made it read as a focus/scroll bug rather than a broken restore action. Root cause:
+`_eye_btn` is `NoFocus` itself (deliberately — see its own 2026-09-05 comment about every row's eye
+otherwise becoming its own Tab stop), but clicking it still delivers a mouse press to the
+`QListWidget` viewport underneath, and Qt's `StrongFocus` default on `QListWidget` turns that press
+into a genuine `focusInEvent` for the WHOLE popup, with reason `MouseFocusReason`.
+`ExcludedBooksPopup.focusInEvent` unconditionally forced `currentRow()` back to 0 on every entry —
+correct and necessary for keyboard (Tab) entry from "Persist search filter" above it (see that
+method's own long-standing comment), but wrong for a mouse click already targeting a specific row's
+button. Fixed with one additional early-return: skip the row-0 reset when
+`event.reason() == Qt.FocusReason.MouseFocusReason`. New `tests/test_excluded_books_popup_focus.py`
+(2 tests, real `QFocusEvent`s with each reason — this is a genuine Qt focus-handling question that
+only a live `QFocusEvent` can answer, not something inferable from reading the code alone).
+Live-verified by Pryme: "Worked correctly."
+
+**Docs.** TODO.md: removed the now-closed exclude-banner entry and the now-merged book-based-EQ
+entry (both moved to TODO_ARCHIVE.md with commit hashes), replaced the EQ entry with a narrower open
+item for the still-unresolved L/R balance report Pryme found during the EQ branch's own testing and
+explicitly deferred ("I'll load more books to look into it... not yet actionable" — no repro yet,
+do not start investigating until one comes back). TESTING.md: no new checklist needed — both fixes
+were small, mechanically-verified-live bug fixes rather than new features, and the EQ feature's own
+checklist was already fully checked off in the prior session.
+
 ## Session Summary — 2026-10-02 Session 1 — Spans 2026-10-01/02: resolved the Tags panel model/delegate feasibility question and shipped its count display + cap message, then added an On/Off toggle to the 5-band Equalizer so an A/B comparison doesn't require manually zeroing every band.
 
 **Tags panel: count display + feasibility investigation (2026-10-01).** A TODO.md item flagged

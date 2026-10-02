@@ -5,6 +5,55 @@ list scannable. Kept, not deleted, per the project's normal practice of not thro
 that isn't fully duplicated in NOTES.md/SESSION.md/a commit message. Order is the same relative
 order these entries had in TODO.md before the split (2026-07-30).
 
+- **[2026-10-02, CLOSED] Excluded Books: clicking a row's eye button scrolled the list back to
+  row 0 instead of restoring the clicked row.** `_eye_btn` is `NoFocus` itself, but clicking it
+  still delivers a mouse press to the `QListWidget` viewport underneath, which Qt's `StrongFocus`
+  default turns into a genuine `focusInEvent` for the whole popup, reason `MouseFocusReason`.
+  `ExcludedBooksPopup.focusInEvent` unconditionally forced `currentRow()` to 0 on every entry —
+  correct for keyboard (Tab) entry, wrong for a mouse click, which visibly scrolled the list to the
+  top and revealed row 0's eye instead of the row actually clicked (the clicked button's own
+  `clicked` signal, closed over the correct path, still restored the right book — so a second click
+  on the same book, or any other row once focus was already held, "worked"). Fixed by skipping the
+  row-0 reset when `event.reason() == Qt.FocusReason.MouseFocusReason`. New
+  `tests/test_excluded_books_popup_focus.py` (2 tests, real `QFocusEvent`s with each reason).
+  Commit `4456bb9`.
+
+- **[2026-10-02, CLOSED] Book Detail: "Confirm to exclude from the library" banner gets clipped.**
+  `dur_save_row` (`book_detail_panel.py`) was a plain `QHBoxLayout`:
+  `[_duration_label][stretch][_confirm_remove_label]`. `_confirm_remove_label` had no reserved
+  width of its own — it only got whatever space was left after `_duration_label`'s own natural
+  width, and `_duration_label`'s retain-size-when-hidden policy kept reserving that width even
+  while hidden (confirming remove hides `_duration_label`). A longer duration string ate into the
+  shared space and clipped the confirm text mid-word, with no ellipsis or wrap — severity scaled
+  with the duration string's length. Confirmed pre-existing on `main`, unrelated to the book-based
+  EQ work it was found alongside. Fixed by switching `dur_save_row` to a `QStackedLayout` (mirrors
+  the existing narrator/finished-confirm pattern elsewhere in the same file), so
+  `_confirm_remove_label` owns the full row width when shown instead of sharing it. Commit
+  `eccadbe`.
+
+- **[2026-09-17 design question / 2026-09-18 EQ toggle / 2026-10-01-02 implementation, CLOSED,
+  merged to `main`] Book-based Equalizer + balance override.** A per-book EQ + balance override on
+  top of the global EQ (shipped 2026-09-18, On/Off toggle added 2026-10-02). EQ + balance are
+  per-book-overridable; voice boost/mono/swap stay global-only. Book Detail gained its own "EQ" tab
+  (placed immediately after "Cover"); Settings > Audio's EQ+balance stay purely global, untouched by
+  which book is loaded. 3-state mode per book — Global (inherits live global settings) / Off (no
+  processing regardless of global) / Custom (book's own 5 gains + balance) — via
+  `config.get_book_eq_mode`/`set_book_eq_mode` and `get_book_eq_gain_*`/`get_book_balance`, mirroring
+  `speed_{path}`'s existing per-book-override shape. Settings > Audio shows a superseded-indicator
+  (a one-line note, deliberately not naming the book — an earlier version quoted the title and
+  wrapped to 2-3 lines for long titles — plus dimming of the global EQ+balance sliders) whenever the
+  loaded book's mode is Off or Custom, so editing sliders with no audible effect doesn't read as
+  broken. Book Detail's own EQ tab shows a plain state label above its 3-state toggle. A real wiring
+  bug was found and fixed during live testing: `BookEqualizerTab.audio_settings_changed` was defined
+  and emitted but nothing in `app.py`/`main_window_builders.py` ever connected it to anything, so a
+  mode/gain change in Book Detail never reached Settings > Audio or the player until the book was
+  reloaded — this was briefly mistaken for evidence the two-tab design itself was too complex, but
+  turned out to be a plain missing connection (`MainWindow._on_book_audio_settings_changed`, wired in
+  `main_window_builders.py`), not a design flaw. Built on branch `feature/book-based-eq`, with a full
+  TESTING.md checklist written and checked off live by Pryme before merge; merged to `main` via
+  `f74fcc0`, branch deleted after. A separate, unrelated L/R balance issue was found during this same
+  testing pass and deliberately NOT bundled into this entry — see the new open TODO.md item.
+
 - **[2026-09-17, architecture question resolved 2026-10-01, feature shipped 2026-10-02, CLOSED]
   Tags panel: count display and widget-per-row architecture.** Original ask: show "N/50 tags" next
   to the tag list header, and warn when the list is already at 50 and the user tries to add

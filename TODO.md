@@ -9,51 +9,13 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
 
 ## Summary index
 
-### Book Detail: "Confirm to exclude from the library" banner gets clipped
-- [2026-10-02] BUG, confirmed pre-existing on `main` (not caused by the book-based EQ work — found
-  while testing that feature on its own branch, confirmed to reproduce before the branch's changes
-  too). `dur_save_row` (`book_detail_panel.py`, `_build_header` area) is a plain `QHBoxLayout`:
-  `[_duration_label][stretch][_confirm_remove_label]`. `_confirm_remove_label` ("Confirm to exclude
-  from the library") has no word-wrap/elide and no guaranteed minimum width of its own — it only
-  gets whatever space is left in the row after `_duration_label`'s own natural width. A longer
-  duration string (e.g. "9:27:58" vs. a shorter book's duration) eats into that shared space, and
-  the confirm label is silently clipped at the row's right edge with no ellipsis, no wrap, nothing
-  — live screenshots show it cut mid-word ("...xclude from the library"). Severity scales with how
-  long the duration text happens to be for whichever book is open. Needs a fix that gives
-  `_confirm_remove_label` either its own reserved width independent of `_duration_label`'s content,
-  or an elide/wrap policy so a tight fit degrades gracefully instead of clipping silently. Deferred
-  — Pryme's own call, fix once back on `main` (not blocking the EQ branch).
-
-### Book-based Equalizer override — implemented, pending final live verification (`feature/book-based-eq`)
-- [2026-10-02, design decided and implementation landed same day] FEAT: a per-book EQ + balance
-  override, on top of the global EQ (shipped 2026-09-18, On/Off toggle added 2026-10-02).
-  - **Scope**: EQ + balance are per-book-overridable. Voice boost/mono/swap stay global-only.
-  - **UI placement**: Book Detail gained its own "EQ" tab, placed immediately after "Cover"
-    (`book_detail_panel.py`, `self.tabs.addTab(self._eq_tab, "EQ")`). Settings > Audio's EQ+balance
-    stay purely global, untouched by which book is loaded.
-  - **Mode**: 3-state Global / Off / Custom (`config.get_book_eq_mode`/`set_book_eq_mode`, per-book
-    keys mirroring `speed_{path}`'s existing shape). Global (default) inherits the live global
-    settings; Off forces no processing regardless of global; Custom uses the book's own 5 gains +
-    balance (`get_book_eq_gain_*`/`get_book_balance`).
-  - **Settings > Audio's superseded-indicator**: shipped as a one-line note ("This book has its
-    own EQ — change it in Book Detail.") plus dimming of the global EQ+balance sliders, shown
-    whenever the loaded book's mode is Off or Custom. Does NOT name the book — an earlier version
-    quoted the title directly and wrapped to 2-3 lines for long titles, pushing the Reset button
-    down; the fixed phrasing stays one line regardless of which book is open.
-  - **Book Detail's own state label**: a plain text line above the 3-state toggle ("Using the
-    global EQ" / "EQ off for this book" / "Custom EQ for this book").
-  - **Real bug found and fixed during live testing**: `BookEqualizerTab.audio_settings_changed`
-    was defined and wired up through `BookDetailPanel`, but nothing in `app.py`/
-    `main_window_builders.py` ever connected it to anything — changing a book's mode/gains in Book
-    Detail never reached Settings > Audio or the player until the book was reloaded. Fixed via
-    `MainWindow._on_book_audio_settings_changed` (re-syncs `audio_tab.set_current_book` with the
-    current book), connected in `main_window_builders.py`. This was mistaken, briefly, for evidence
-    the two-tab design itself was too complex ("a plain Global/Book toggle would be simpler") —
-    re-tested after the fix confirmed it was a wiring gap, not a design flaw.
-  Implemented on branch `feature/book-based-eq`, with a TESTING.md checklist now in place
-  ("Book-based EQ+balance override" section). Remaining before merge: actually work through that
-  checklist live, and a separate, unrelated L/R balance issue (found during this session, confirmed
-  reproducible on `main`, not caused by this feature) to fix once back on `main`.
+### L/R balance reported inconsistent across books (deferred by Pryme — not yet actionable)
+- [2026-10-01] BUG REPORT, not yet investigated. Found live while testing the book-based EQ
+  override (see TODO_ARCHIVE.md's now-closed entry) but confirmed unrelated to that feature —
+  reproducible on `main` independent of any per-book override. Pryme's own framing: "not present in
+  all books... I'll load more books to look into it" — he is narrowing the repro himself before
+  handing this back. No root cause identified yet; do not start investigating until a concrete
+  repro (which specific books, embedded M4B vs. VT vs. CUE) comes back.
 
 ### Two open observations from 2026-09-25/26, neither confirmed enough to act on yet
 - **A real SIGSEGV crash, cause NOT pinned down, not yet reproduced a second time.**
