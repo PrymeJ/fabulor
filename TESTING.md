@@ -70,12 +70,12 @@ not part of this checklist.
 Book Detail and Settings can never both be open at once (one-overlay-at-a-time — see CLAUDE.md),
 so every check below is sequential: do the Book Detail step, close it, THEN open Settings > Audio
 to check the result — never "both panels open simultaneously."
-- [ ] Set a book's mode to "Custom" with a non-zero gain in Book Detail, close Book Detail, then
+- [X] Set a book's mode to "Custom" with a non-zero gain in Book Detail, close Book Detail, then
   open Settings > Audio — the superseded note and dimming appear immediately, with no need to
   reload the book or restart the app
-- [ ] With that same book still loaded, reopen Book Detail and switch its mode back to "Global",
+- [X] With that same book still loaded, reopen Book Detail and switch its mode back to "Global",
   close Book Detail, then open Settings > Audio again — the note and dimming are gone immediately
-- [ ] With a book in "Custom" mode, drag one of its bands to a new value in Book Detail, close
+- [X] With a book in "Custom" mode, drag one of its bands to a new value in Book Detail, close
   Book Detail — the PLAYER's audible output must already reflect the new value (it updates live
   while Book Detail is still open, not just on close), without reloading the book
 
