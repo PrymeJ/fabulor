@@ -724,16 +724,6 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
   it — needs checking against `_cycle_metadata_field`/`_enter_edit_mode` in `book_detail_panel.py`).
 
 ### Theme-pass-adjacent items (batch logged 2026-09-17 — group with the eventual full theme pass)
-- [2026-09-17] Add an optional per-theme dict key providing two colors for the Speed/Sleep/Sprint
-  grid ramp buttons, to be done BEFORE the full theme pass (not after) since it changes what that
-  pass will actually be tuning. Relates to the existing "Some themes need a preset-ramp colour
-  override" entry (Theme color/data) — check whether this generalizes that entry's fix (a per-theme
-  ramp-endpoint override) rather than being a separate mechanism; if so, fold together rather than
-  building two overlapping override systems.
-- [2026-09-17] Check ramp-button-vs-label text contrast specifically when a cover-based theme is
-  selected (not just the fixed theme palette) — to be done BEFORE the full theme pass. Pryme's own
-  example: book cover "2666" produces a low-contrast case. Needs automated testing across a range of
-  real covers, not just the one example, to find the actual worst cases before designing a fix.
 - [2026-09-17] Book Detail's session-history row colors are wrong when a cover-based theme is
   selected — they need to be derived from the theme's background colors rather than using whatever
   they currently use, which apparently doesn't account for the cover-theme case. To be done AFTER
@@ -970,7 +960,6 @@ correctly — the contrast is what made these visible, so they are not regressio
 
 ### Theme color/data
 - [2026-07-07] Per-theme library color pass only covers A–S alphabetically (`library_bg`/`library_row_one`/`_two`/`library_item_hover_color`/`_alpha`/`library_title`/`_author`/`_narrator`/`_elapsed`/`_total`/`_percentage`/`library_slider_bg`/`_fill`/`library_input_bg`/`_text`) — letters T onward still need the same tuning pass (`ae4441c`)
-- [2026-07-28] Some themes need a preset-ramp colour override (known theme-data issue)
 - [2026-07-28] Three-state panel background shipped and working; clicking an option has perceptible lag
 - [2026-07-21] "Cover art based theme": hover should preview the cover-derived theme regardless
   of the current Off/With pool/Exclusive mode (right-click-to-activate-from-Off half fixed
@@ -1244,30 +1233,6 @@ isolation.
   measure it at some point to determine if it is responsive enough" — this needs a live-profiling
   pass to actually quantify current responsiveness before deciding whether it's a real regression
   worth chasing or was never as bad as the original report suggested; not scheduled yet.
-
-- **[2026-07-28] Some themes need a preset-ramp colour override — known theme-data issue, not a code
-  bug.** Exposed (not caused) by `fa6d301`, which replaced the Sleep/Speed alpha ramp with an honest
-  `bg_main` -> `accent` colour blend. The old alpha version composited against the cover art as well
-  as the panel, which incidentally lifted the low steps; the blend does not, so themes whose accent
-  and background are close in luminance, or whose midpoint is unflattering, now show it.
-  **Examples confirmed live by the user** (first three ramp steps of 13, computed against the real
-  theme dicts):
-    Gravity's Rainbow  bg #2B0052 -> accent #00FF00 : 30,75,58 / 28,90,53 / 25,105,48
-                       (purple to green passes through muddy olive; button text also goes
-                        light-on-light at the top of the ramp)
-    Plum Island        bg #1E2A2E -> accent #6A4A6A : 52,51,64 / 57,53,67 / 61,55,71
-                       (accent only ~40 units from bg — the whole ramp is compressed)
-    Blindsight         bg #141414 -> accent #3A6A8A : 31,45,55 / 33,50,62 / 36,55,69
-                       (same shape on near-black)
-  **Plan:** per-theme dict overrides for the ramp endpoints, so a theme can supply its own
-  ramp start/end rather than deriving both from `bg_main`/`accent`. `preset_ramp_rgb`
-  (`themes.py`) is the single place that reads them, and it already falls back cleanly on missing
-  keys (pinned by `tests/test_preset_ramp.py`). If the new keys are optional and only some themes
-  set them, check whether they belong in `_NO_BASE_INHERIT_KEYS` — see the CLAUDE.md rule, since
-  "The Color Purple" is the base every theme inherits unset keys from and a literal value there
-  would silently override every other theme's derived fallback.
-  Also worth deciding at the same time: `button_text` contrast, which is the other half of the
-  Gravity's Rainbow case — the ramp can be fixed and the label still be unreadable.
 
 - **[2026-07-28] SHIPPED and confirmed working (`3132be7`): three-state panel background —
   Transparent | Frosty glass | Opaque.** Design notes below are kept as reference, not as an

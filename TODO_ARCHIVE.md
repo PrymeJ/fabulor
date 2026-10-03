@@ -5,6 +5,42 @@ list scannable. Kept, not deleted, per the project's normal practice of not thro
 that isn't fully duplicated in NOTES.md/SESSION.md/a commit message. Order is the same relative
 order these entries had in TODO.md before the split (2026-07-30).
 
+- **[2026-10-03, CLOSED] Some themes need a preset-ramp colour override (`fa6d301`'s honest
+  `bg_main` -> `accent` blend exposed low-contrast ramps on themes whose accent/background are
+  close in luminance or hue) — AND the two 2026-09-17 theme-pass-adjacent items it generalized
+  into: a per-theme ramp-endpoint override key, and ramp-vs-label contrast specifically on
+  cover-based themes (Pryme's "2666" example).** Full session (`9ce41f2`..`d133eb1`, 2026-10-03):
+  `preset_ramp_rgb` boosts the dark end's brightness via a linear-RGB hue blend plus a separate
+  value-only floor boost; `ramp_text_colors` decides light-vs-dark ONCE for the whole ramp (never
+  per-step, after three rejected per-step designs — flat black/white, tinted per-step, per-step
+  direction+value sweep all flipped mid-ramp on some theme); new override keys
+  `preset_ramp_dark_end`/`preset_ramp_bright_end`/`preset_ramp_text_color`/`preset_ramp_text_hue`
+  for Pryme's own theme-by-theme tuning pass. `button_text_for_accent`'s direction-pick fixed
+  separately (pure black/white comparison, not hue-tinted candidates) for the same contrast
+  problem on 30 other call sites (Settings/Speed/Sleep/Sprint/Stats/Tags/Library's generic
+  QPushButton/tab rules) — fixed Blood Meridian/Fire and Blood's wrong-direction text, verified
+  zero regressions across all 62 themes. End of chapter/Set (Sleep/Sprint) folded into the ramp's
+  own text AND background color (`ramp_text_colors(...)[-1]`, a new
+  `_resolve_ramp_grid_button_style` helper) instead of running an independent, visibly-mismatched
+  calculation — reported live with 5 theme screenshots (Sunspear, Driftmark, Dorian Gray, Camorr,
+  Fire and Blood); `preset_ramp_grid_buttons_keep_default` opts three themes OUT of the background
+  fold-in (Gravity's Rainbow, Shade of the Evening, Driftmark) where the old gradient/flat-accent
+  look was judged better. Cover-art themes (`cover_theme.build_cover_theme`, unseeded per-launch
+  jitter) got their own separate contrast-safety track, closing the "2666" item specifically:
+  `ramp_text_colors(..., is_cover_theme=True)` keeps the ramp's text tinted and per-step-eased
+  instead of collapsing to black/white; `safe_ramp_hover_factor` pulls back the ramp's hover
+  highlight when it would tank contrast (found to also affect 19 of 62 NAMED themes, not
+  cover-art-exclusive); `darken_accent_pair` fixes the main transport speed button's hover
+  legibility on cover themes by darkening `accent`/`accent_light` together (two earlier attempts —
+  routing through `button_text_for_accent`, blending `accent_light` alone toward `accent` — were
+  both reverted live as either "losing its character" or making the hover highlight disappear
+  entirely). Calibrated against real books from Pryme's own library (`library.db`'s actual cover
+  thumbnails through `build_cover_theme`, many repeated jitter rolls per book, not single
+  snapshots) across several rounds of live relaunch-and-report. New tests:
+  `tests/test_button_text_for_accent.py`, `tests/test_cover_button_darkening.py`,
+  `tests/test_grid_button_fold_in.py`; extensive additions to `tests/test_preset_ramp.py`. Full
+  narrative: SESSION.md, 2026-10-03 Session 1.
+
 - **[2026-10-02, CLOSED] Excluded Books: clicking a row's eye button scrolled the list back to
   row 0 instead of restoring the clicked row.** `_eye_btn` is `NoFocus` itself, but clicking it
   still delivers a mouse press to the `QListWidget` viewport underneath, which Qt's `StrongFocus`

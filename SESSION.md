@@ -1,3 +1,132 @@
+## Session Summary — 2026-10-03 Session 1 — Full pass on the TODO.md "Preset-ramp color override needed for three low-contrast themes" item, which expanded into ramp background/text fixes, a new cover-art-themes-only contrast-safety track for the main transport button and ramp hover, and folding End of chapter/Set into the ramp's own colors across Sleep/Speed/Sprint.
+
+**Preset-ramp background brightness + text no-flip (earlier in session, before compaction).**
+`preset_ramp_rgb` (themes.py) now boosts the dark end's brightness via a linear-RGB hue blend plus a
+separate value-only floor boost (preserves the straight-line hue path, no "rainbow" artifacts through
+unrelated hues on wide bg/accent hue gaps), and resolves its bright end from
+`gradient_accent_start`/`gradient_accent_end` when set, else flat `accent`, via the new
+`_resolve_ramp_bright_end` helper (shared with `button_text_for_accent` so the two can't drift).
+`ramp_text_colors` decides light-vs-dark ONCE for the whole ramp (never per-step), easing VALUE
+continuously from that anchor and falling back to desaturation — guarantees zero mid-ramp flips,
+after three earlier per-step designs were tried and rejected live across the session (flat black/
+white: "I hope you won't leave them just white and black"; tinted per-step black/white: "this works
+well up to 2.50, then it goes black all of a sudden"; per-step direction+value sweep: still flipped
+on Violeta's purple accent, "aim for consistent dark or bright text anyway"). New override keys:
+`preset_ramp_dark_end`, `preset_ramp_bright_end`, `preset_ramp_text_color` (literal), `preset_ramp_
+text_hue` (hue only) — added specifically so Pryme's own theme-by-theme tuning pass (confirmed in
+progress throughout the session, alphabetically through all 62 themes) could hand-tune individual
+themes without needing code changes each time.
+
+**`button_text_for_accent`'s direction-pick fixed (`5da65d2`).** The generic `QPushButton`/tab/etc.
+rule across Settings/Speed/Sleep/Sprint/Stats/Tags/Library (30 call sites) had the same flat-text-vs-
+background contrast problem the ramp had, fixed earlier the same session — but its own direction-pick
+compared hue-TINTED white/black candidates, not pure extremes. On a red-hued `button_text` against a
+saturated red accent (Blood Meridian, Fire and Blood), the tinted "white" candidate was a pale salmon
+that lost to black by accident (black is untinted at val=0 regardless of hue), not because black was
+genuinely better. Fixed by deciding direction against pure `(255,255,255)`/`(0,0,0)` while leaving the
+subsequent hue-tinted value/desaturation search unchanged — verified via a full 62-theme sweep: zero
+regressions, 5 themes improved, 0 themes below the 4.5:1 floor (was 5). Deliberately NOT applied to
+`ramp_text_colors` (same tinted-candidate shape, but decides direction by averaging across a 13-step
+GRADIENT rather than one flat color) — re-verified the identical change there regresses three other
+themes (Not the Only Fruit, Red Rising, Sunspear), consistent with an EARLIER, broader attempt at this
+exact fix (tried mid-session, reverted the same session after it silently broke Dorian Gray/Blue
+Moranth: "You were supposed to change the End of chapter and Set buttons. You are doing the other way
+around").
+
+**A same-session override-key leak, found and reverted (pre-compaction).** An attempt to keep End of
+chapter/Set in sync with ramp tuning (Alzabo/Blindsight/Rivendell) by making `button_text_for_accent`
+also read `preset_ramp_bright_end`/`preset_ramp_text_color`/`preset_ramp_text_hue` shipped, then was
+found live to leak a theme's RAMP-SCOPED tuning into all 30 of that function's unrelated call sites —
+including the active Settings-tab text color ("What's the point of naming it preset_ramp_text_color if
+it will change other unrelated colors?"). Reverted to reading only `button_text`/`text_on_light_bg`/
+`text`/`accent`; confirmed via `git diff` that none of Pryme's own theme-dict edits were touched by the
+revert. `test_does_not_read_ramp_scoped_override_keys` pins this permanently.
+
+**End of chapter/Set: text, then background, folded into the ramp (`f4d8408`, `a12643f`, `2081482`,
+`d133eb1`).** These two buttons sit directly beside the 13/14-step ramp and used to run an entirely
+separate calculation (`button_text_for_accent` against flat `accent`) for their text, and the generic
+`QPushButton` rule's `accent_style` (a real gradient on themes with `gradient_accent_start/end`,
+unlike the always-flat ramp) for their background — both close enough to look like they should match
+the ramp and different enough to visibly not, reported with 5 theme screenshots (Sunspear, Driftmark,
+Dorian Gray, Camorr, Fire and Blood: "Not only Dorian Gray, actually... It was a deliberate decision
+when the code was written as I wanted to keep Driftmark's gradient colors"). Fixed in two parts: text
+now reads `ramp_text_colors(...)[-1]` directly (the ramp's own last-step color, deliberately `[-1]` not
+`[0]` so it folds in as the ramp's actual continuation); background now reads a new
+`_resolve_ramp_grid_button_style` helper (flat `_resolve_ramp_bright_end`, the SAME chain
+`preset_ramp_rgb`'s own brightest step uses) via a new `QPushButton#panel_grid_eoc_btn, QPushButton#
+panel_grid_set_btn` rule, with `set_custom_btn` gaining that objectName in both panels (previously
+unnamed). `preset_ramp_grid_buttons_keep_default` opts a theme OUT of the background fold-in — checked
+theme-by-theme live, three kept their old look: Gravity's Rainbow (a non-gradient flat-accent mismatch
+— its own `preset_ramp_bright_end` override never reached these buttons before this fix, found while
+tracing a SEPARATE cause of the same symptom on a theme with no gradient keys at all), Shade of the
+Evening, Driftmark. **Found and fixed a miss in the first pass**: the fold-in rule was added to
+`get_settings_stylesheet` (which styles the SETTINGS TAB's own panel, not Sleep's) and
+`get_sprint_stylesheet`, but Sleep has its OWN dedicated `get_sleep_stylesheet` function
+(`theme_manager.py`: `'sleep_panel': get_sleep_stylesheet(...)`) — missed entirely in the first commit,
+confirmed live when Dorian Gray/Sunspear/Camorr's Sleep panel still showed the old background after
+the app had genuinely restarted on the new code (ruled out staleness by checking process-start-vs-
+commit-time before accepting it as a real miss). `d133eb1` added the identical rule there too.
+
+**Cover-art themes get their own, separate contrast-safety track — three fixes, all gated on
+`isinstance(theme, dict)` so NAMED themes are provably byte-for-byte untouched throughout:**
+
+- `ramp_text_colors(theme, count, is_cover_theme=False)` (`57ce90e`, `f0964bf`). A cover-art theme
+  (`cover_theme.build_cover_theme`) never sets `button_text`/`text_on_light_bg` and produces a low-
+  saturation, mid-luminance ramp where the named-theme path's direction-pick reliably picked near-
+  black regardless of the actual cover's colors — reported live as "I tested 7 covers. They all made
+  the text resolve black." `is_cover_theme=True` runs the real per-step search in BOTH directions and
+  keeps whichever stays more saturated (not whichever has more raw contrast) — picking by contrast
+  alone reliably favored black purely because black is untinted at val=0. First version collapsed the
+  result to one flat color (mirroring the named-theme path's own no-flip design) — reverted after live
+  feedback asked for real per-step easing instead ("the ease-in spectrum is too narrow... the first
+  button can use a bit darker text and make its way up to current last button's text color"); the
+  per-step search is provably safe to return directly here (verified via a 200-cover/2-direction
+  randomized sweep: 0 non-monotonic sequences — each step's search moves outward from the same fixed
+  anchor, and the ramp's own background value only increases across the row). `_RAMP_TEXT_COVER_SAT_
+  FLOOR` (0.15) stops any step from desaturating all the way to a pure extreme even on bright/
+  saturated-accent covers ("Pure white with many covers").
+
+- `safe_ramp_hover_factor` (`8c6a4d8`). Sleep/Speed/Sprint's ramp hover color was a fixed
+  `QColor(base).lighter(130)` with zero awareness of the text sitting on it — invisible on most themes
+  but could tank a borderline resting contrast to ~1.2:1 on hover, confirmed on 19 of 62 NAMED themes
+  too (Blindsight, Blood Meridian, Alzabo among them), not cover-art-exclusive like the other two
+  fixes in this group. Pulls the lighten factor back only as far as needed, bottoming at 100 (no
+  lightening) rather than going darker than rest.
+
+- `darken_accent_pair` (`3716615`, after `6533e2e` reverted a dead end). The MAIN TRANSPORT speed
+  button's cover-art contrast problem took three real attempts, the first two reverted live: (1)
+  routing text through `button_text_for_accent` — "the dullest way possible... loses its character";
+  (2) blending `accent_light` back toward `accent` alone — on covers where `accent` ITSELF only has
+  marginal contrast against text (confirmed: The Beam, Counter-Clock World, Under the Volcano — accent
+  and text sharing a hue at similarly high value), the blend had to go almost all the way back to
+  `accent` to reach target, making the "tamed" hover color nearly indistinguishable from rest —
+  "Hover is gone." (3, shipped) darkens `accent` AND `accent_light` TOGETHER by the same HSV-value
+  amount, preserving the gap between them — buys contrast for both states while the hover highlight
+  stays visibly distinct. Calibration was done against REAL books from Pryme's own library (not
+  synthetic colors) via a custom script sampling `/home/pryme/.local/share/fabulor/library.db`'s real
+  cover thumbnails through `build_cover_theme` across many repeated jitter rolls per book (the
+  generator has no `random.seed()`, so a single snapshot was shown live to be unreliable — "if it is
+  random, what I deem acceptable may not look the same on another launch"), landing on a 1.6 trigger /
+  1.9 target contrast after several rounds of live relaunch-and-report against specific titles (The
+  Wisdom of Crowds, Under the Volcano, The Unbearable Lightness of Being, The Beam, Counter-Clock
+  World, 2666, A Drop of Corruption, Revolutionary Road, Augustus, Bleeding Edge, and others). Verified
+  before shipping against actual hex pairs (not just contrast numbers) for hue drift — confirmed stays
+  within the same color family (teal stays teal, olive stays olive); Pryme pre-screened for earthy/
+  olive-tone overcorrection across many themes before confirming "legibility issue is gone."
+
+**Known open items, explicitly deferred mid-session, not touched further:** Dorian Gray's button
+background was raised once early in the session and deferred ("Not to fix these yet. We'll check the
+button issue after I am done [tuning]") — subsequently folded into the EOC/Set background work above
+via the same root cause, but not separately re-confirmed live as the ORIGINAL complaint (which may
+have been about the ramp-vs-button-gradient mismatch, now fixed, or something else). The `preset_ramp_
+dark_end`/`bright_end` overrides' own non-literal (easing-curve-affected) behavior was raised as a
+friction point once ("don't change it again" — explicitly deferred, not an active task).
+
+**Tests.** `tests/test_preset_ramp.py`, `tests/test_button_text_for_accent.py` (new),
+`tests/test_write_path_confinement.py`, `tests/test_cover_button_darkening.py` (new),
+`tests/test_grid_button_fold_in.py` (new) — full suite green after every commit in this session, each
+commit individually run against the full suite before being made, not batched.
+
 ## Session Summary — 2026-10-02 Session 2 — Merged the book-based EQ override feature to `main`, then fixed two pre-existing (EQ-unrelated) UI bugs surfaced during its live testing: the Book Detail exclude-confirm banner getting clipped by a long duration string, and clicking an Excluded Books row's eye button scrolling the whole list back to row 0 instead of restoring the clicked row.
 
 **Merge (`feature/book-based-eq` → `main`, `f74fcc0`).** All TESTING.md checklist items for the
