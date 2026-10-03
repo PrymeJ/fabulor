@@ -3962,6 +3962,109 @@ def safe_ramp_hover_factor(bg_rgb, text_hex, requested_factor, min_factor=100):
     return max(factor, min_factor)
 
 
+_COVER_BUTTON_HOVER_TARGET_CONTRAST = 1.9  # darken_accent_pair's own target — calibrated
+                                             # live against real library covers, see that
+                                             # function's docstring for the full account
+_COVER_BUTTON_DARKEN_STEP = 0.01
+_COVER_BUTTON_MAX_DARKEN = 0.35
+_COVER_BUTTON_MIN_VALUE = 0.05  # never darken all the way to black
+
+
+def darken_accent_pair(accent_hex, accent_light_hex, text_hex):
+    """(new_accent_hex, new_accent_light_hex) for a cover-art theme's main
+    `QPushButton` background/hover pair — darkened TOGETHER, by the SAME
+    amount, only as far as needed to bring the text's contrast against the
+    HOVER color up to `_COVER_BUTTON_HOVER_TARGET_CONTRAST`. Returns both
+    hexes unchanged whenever hover already clears target.
+
+    WHY THIS EXISTS, AND WHY NOT THE TWO EARLIER ATTEMPTS (2026-10-03,
+    live-reported on the main transport speed button — "Pure white with
+    many covers" / "the dullest way possible" / "Hover is gone"). Three
+    designs were tried in order on the same underlying problem before this
+    one, each killed by a specific live report:
+
+    1. Route resting AND/OR hover text through `button_text_for_accent`
+       (contrast-maximizing search, same mechanism the ramp/Settings/etc.
+       buttons use). Technically fixed the contrast number but flattened
+       the button to a generic, characterless block — "You're choosing the
+       simplest way to fix the issue but that decision is making it
+       ugly... fixes the problem with the dullest way possible."
+
+    2. Pull `accent_light` back toward `accent` (same blend-search shape as
+       `safe_ramp_hover_factor`, applied to a theme-level color pair instead
+       of a per-step ramp). This respected the "don't flatten text" request,
+       but on covers where `accent` ITSELF only has marginal contrast
+       against `text` (confirmed live and by direct measurement: ~1.5-2.0 on
+       "The Beam," "Counter-Clock World," "Under the Volcano" — accent and
+       text sharing a hue at a similarly high value, with no room between
+       them), the search had to blend almost all the way back to `accent`
+       to reach target, landing the "tamed" hover color within single-digit
+       RGB units of the resting background — "Hover is gone": not tamed,
+       erased. Measured: 59/60 jitter rolls on "The Beam" collapsed the
+       hover-to-rest RGB-channel distance below 15 (visually indistinguishable).
+
+    3. (THIS ONE, shipped) Darken `accent` AND `accent_light` TOGETHER, by
+       the same HSV-value amount — preserving the GAP between them (so the
+       hover highlight stays visibly distinct from rest throughout) while
+       moving the whole button-color pair further from `text`'s own
+       value/hue, buying contrast for BOTH states at once. Confirmed live
+       acceptable on a real example (Pryme, pointing at Revolutionary Road's
+       own resting-state teal buttons): "Subtle highlight is acceptable, but
+       you can also nudge the button colors a bit... In the highlight state,
+       whatever you do, there is not much room to make the text legible" —
+       i.e. touching the BUTTON's own color, not just text or hover, was the
+       explicitly sanctioned lever once 1 and 2 were ruled out. Verified via
+       many before/after hex pairs on the actual problem covers before
+       shipping (not just contrast NUMBERS) — every darkened pair stays
+       within the SAME hue family as the original (teal stays teal, olive
+       stays olive), just a deeper/richer shade, confirmed by Pryme as
+       reading like "a legitimate design variation... not a degraded/washed
+       version." Measured across 5 real problem covers (40 jitter rolls
+       each): hover-to-rest RGB distance stays 58-80 post-fix (vs. 7-26 for
+       attempt 2), hover contrast recovers to ~1.9-1.94 median, darken
+       amount needed is modest (median 0.13-0.16, max 0.23 across all
+       samples) — and an already-comfortable cover (Augustus, hover median
+       2.92) needs darken=0.00, i.e. is completely untouched, confirming
+       "most covers don't cause this, I prefer those untouched."
+
+    Only ever called for cover-art themes — named themes' accent/accent_light
+    are hand-tuned by Pryme directly and this problem was never reported on
+    a named theme.
+    """
+    accent = _hex_to_rgb_tuple(accent_hex, '#888888')
+    accent_light = _hex_to_rgb_tuple(accent_light_hex, '#aaaaaa')
+    text = _hex_to_rgb_tuple(text_hex, '#ffffff')
+
+    if _wcag_contrast(accent_light, text) >= _COVER_BUTTON_HOVER_TARGET_CONTRAST:
+        return accent_hex, accent_light_hex
+
+    a_h, a_s, a_v = colorsys.rgb_to_hsv(*(c / 255 for c in accent))
+    al_h, al_s, al_v = colorsys.rgb_to_hsv(*(c / 255 for c in accent_light))
+
+    darken = 0.0
+    best = (accent, accent_light, _wcag_contrast(accent_light, text))
+    while darken < _COVER_BUTTON_MAX_DARKEN:
+        darken += _COVER_BUTTON_DARKEN_STEP
+        new_a_v = max(_COVER_BUTTON_MIN_VALUE, a_v - darken)
+        new_al_v = max(_COVER_BUTTON_MIN_VALUE, al_v - darken)
+        nr, ng, nb = colorsys.hsv_to_rgb(a_h, a_s, new_a_v)
+        new_accent = tuple(round(c * 255) for c in (nr, ng, nb))
+        nr, ng, nb = colorsys.hsv_to_rgb(al_h, al_s, new_al_v)
+        new_accent_light = tuple(round(c * 255) for c in (nr, ng, nb))
+        c = _wcag_contrast(new_accent_light, text)
+        if c > best[2]:
+            best = (new_accent, new_accent_light, c)
+        if c >= _COVER_BUTTON_HOVER_TARGET_CONTRAST:
+            return (
+                "#" + "".join(f"{v:02x}" for v in new_accent),
+                "#" + "".join(f"{v:02x}" for v in new_accent_light),
+            )
+    return (
+        "#" + "".join(f"{v:02x}" for v in best[0]),
+        "#" + "".join(f"{v:02x}" for v in best[1]),
+    )
+
+
 _BUTTON_TEXT_TARGET_CONTRAST = 4.5  # full WCAG AA — unlike the ramp, this is a single
                                      # flat background, not a 13-step gradient, so there
                                      # is no "midpoint valley" forcing a lower target
@@ -4435,7 +4538,23 @@ def get_player_stylesheet(theme_name="default", suppress_bg_image=False):
     cannot kill the image. The only reliable suppression is to not emit it.
     """
     t = _resolve_theme(theme_name)
-    accent_style = _get_gradient_style(t, "accent", t['accent'])
+    # Cover-art-theme-only button-color darkening (2026-10-03) — see
+    # darken_accent_pair's own docstring for the full account of what was
+    # tried and reverted before this (routing through button_text_for_accent,
+    # twice; blending accent_light alone back toward accent). Darkens BOTH
+    # the resting accent and the hover accent_light together, only as much as
+    # needed to keep the hover highlight legible, preserving the gap between
+    # them so the highlight never goes invisible. Named themes are
+    # unaffected — accent/accent_light there are hand-tuned, and this was
+    # never reported as an issue on a named theme. Cover themes never set
+    # gradient_accent_start/end (build_cover_theme's own output — confirmed),
+    # so accent_style below is always the flat (possibly darkened) accent for
+    # a cover theme, never a gradient.
+    player_accent_hex, player_accent_light_hex = (
+        darken_accent_pair(t['accent'], t['accent_light'], t.get('button_text', t.get('text_on_light_bg', t['text'])))
+        if isinstance(theme_name, dict) else (t['accent'], t['accent_light'])
+    )
+    accent_style = _get_gradient_style(t, "accent", player_accent_hex)
 
     visual_area_bg = ""
     if t.get("bg_image") and not suppress_bg_image:
@@ -4470,11 +4589,12 @@ def get_player_stylesheet(theme_name="default", suppress_bg_image=False):
                visually part of the app's actual theme character. Every
                OTHER get_*_stylesheet's generic QPushButton rule (Settings/
                Speed-panel/Sleep/Sprint/Stats/Tags/Library) DOES use
-               button_text_for_accent — this is the one deliberate exception,
-               for EVERY theme type, named or cover-art. The underlying
-               cover-art jitter-contrast problem is still real and open; any
-               future fix here needs a design that preserves character, not
-               just a bare contrast-maximizing color pick. */
+               button_text_for_accent — this stays the one deliberate
+               exception, for the TEXT COLOR of every theme type, named or
+               cover-art. The underlying cover-art contrast problem is
+               instead fixed on the BACKGROUND side — see darken_accent_pair
+               (its own docstring has the full account, including a second
+               reverted attempt after this comment was last written). */
             background: {accent_style};
             color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
             border-radius: 4px;
@@ -4482,7 +4602,7 @@ def get_player_stylesheet(theme_name="default", suppress_bg_image=False):
             font-weight: bold;
         }}
         QPushButton:hover {{
-            background-color: {t['accent_light']};
+            background-color: {player_accent_light_hex};
         }}
         QPushButton:pressed {{
             background-color: {t['accent_dark']};
