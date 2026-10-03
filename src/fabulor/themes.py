@@ -4452,16 +4452,29 @@ def get_player_stylesheet(theme_name="default", suppress_bg_image=False):
         }}
         QPushButton {{
             /* Deliberately NOT routed through button_text_for_accent(t) — tried
-               2026-10-03, reverted same day. This rule styles the main player
-               view's buttons, including the transport speed button; the
-               contrast-safe derivation visibly changed its text color and was
-               reported live as worse on the theme being used at the time.
-               Every OTHER get_*_stylesheet's generic QPushButton rule (Settings/
+               2026-10-03, reverted same day, TWICE: once for named themes
+               (contrast-safe derivation visibly changed the transport speed
+               button's text color and was reported live as worse on the
+               theme in use at the time), and a second time the same day for
+               cover-art themes specifically — a live report of "totally
+               washed" transport-button text on a cover-art theme (traced to
+               cover_theme.build_cover_theme's unseeded per-launch jitter
+               producing an occasionally low-contrast `text`/`accent` pair)
+               prompted routing JUST the cover-art path through button_text_
+               for_accent, which technically fixed the contrast number but
+               was rejected live as a worse tradeoff: "You're choosing the
+               simplest way to fix the issue but that decision is making it
+               ugly... fixes the problem with the dullest way possible" — a
+               flat, characterless block, where the ORIGINAL flat-text chain
+               (even when its contrast ran a little low) still read as
+               visually part of the app's actual theme character. Every
+               OTHER get_*_stylesheet's generic QPushButton rule (Settings/
                Speed-panel/Sleep/Sprint/Stats/Tags/Library) DOES use
-               button_text_for_accent — this is the one deliberate exception. If
-               a future pass wants to apply it here too, confirm live on more
-               than one theme first; this one was reverted on a single live
-               report, not measured to be definitively worse everywhere. */
+               button_text_for_accent — this is the one deliberate exception,
+               for EVERY theme type, named or cover-art. The underlying
+               cover-art jitter-contrast problem is still real and open; any
+               future fix here needs a design that preserves character, not
+               just a bare contrast-maximizing color pick. */
             background: {accent_style};
             color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
             border-radius: 4px;
