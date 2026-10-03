@@ -2,7 +2,7 @@ import time
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QGridLayout, QLineEdit, QApplication
 from PySide6.QtCore import Qt, QRegularExpression, Signal, QTimer, QEvent
 from PySide6.QtGui import QRegularExpressionValidator, QColor
-from ..themes import preset_ramp_rgb
+from ..themes import preset_ramp_rgb, ramp_text_colors
 from ..player import _CHAPTER_WALK_TOLERANCE
 from .title_bar import RightClickButton
 from mpv import ShutdownError
@@ -484,7 +484,11 @@ class SleepTimerPanel(QWidget):
         """
         from ..themes import _resolve_theme
         t = _resolve_theme(self.theme_manager.get_committed_theme())
-        btn_text = t.get('button_text', t.get('text_on_light_bg', t['text']))
+        # One text color decision for the WHOLE ramp (never per-step) — see
+        # ramp_text_colors' docstring (themes.py) for why: a per-step pick can
+        # make the text flip abruptly partway through the row even when each
+        # step individually passes contrast, which read as broken live.
+        ramp_texts = ramp_text_colors(t, len(self._sleep_presets_buttons))
 
         for i, btn in enumerate(self._sleep_presets_buttons):
             # OPAQUE ramp (2026-07-28). This used to set an ALPHA ramp (75..255) on
@@ -493,8 +497,9 @@ class SleepTimerPanel(QWidget):
             # cover art was legible inside the button grid. preset_ramp_rgb blends
             # the same progression in colour space instead: identical look, no
             # bleed. See its docstring for the full mechanism.
-            c = QColor(*(int(v) for v in
-                         preset_ramp_rgb(t, i, len(self._sleep_presets_buttons)).split(',')))
+            ramp_rgb = preset_ramp_rgb(t, i, len(self._sleep_presets_buttons))
+            c = QColor(*(int(v) for v in ramp_rgb.split(',')))
+            btn_text = ramp_texts[i]
             # Per-instance setStyleSheet (needed for the per-button ramp) wins over
             # the panel-level QPushButton:hover/:pressed QSS, so those states must be
             # reproduced here explicitly or these buttons never visibly react to

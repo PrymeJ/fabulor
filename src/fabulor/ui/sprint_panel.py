@@ -4,7 +4,7 @@ import time
 from PySide6.QtWidgets import QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QGridLayout, QLineEdit
 from PySide6.QtCore import Qt, QEvent, QRect, QRegularExpression, Signal, QTimer
 from PySide6.QtGui import QRegularExpressionValidator, QColor
-from ..themes import preset_ramp_rgb
+from ..themes import preset_ramp_rgb, ramp_text_colors
 from ..player import _CHAPTER_WALK_TOLERANCE
 from mpv import ShutdownError
 from .line_edit_dragfix import DragSafeLineEdit
@@ -1021,11 +1021,16 @@ class SprintPanel(QWidget):
         pseudo-states, so hover/pressed must be reproduced here explicitly)."""
         from ..themes import _resolve_theme
         t = _resolve_theme(self.theme_manager.get_committed_theme())
-        btn_text = t.get('button_text', t.get('text_on_light_bg', t['text']))
+        # One text color decision for the WHOLE ramp (never per-step) — see
+        # ramp_text_colors' docstring (themes.py) for why: a per-step pick can
+        # make the text flip abruptly partway through the row even when each
+        # step individually passes contrast, which read as broken live.
+        ramp_texts = ramp_text_colors(t, len(self._sprint_presets_buttons))
 
         for i, btn in enumerate(self._sprint_presets_buttons):
-            c = QColor(*(int(v) for v in
-                         preset_ramp_rgb(t, i, len(self._sprint_presets_buttons)).split(',')))
+            ramp_rgb = preset_ramp_rgb(t, i, len(self._sprint_presets_buttons))
+            c = QColor(*(int(v) for v in ramp_rgb.split(',')))
+            btn_text = ramp_texts[i]
             hover_c = c.lighter(130)
             pressed_c = c.darker(130)
             # Cached on the button itself so begin_ramp_highlight_fade (called from

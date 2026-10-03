@@ -28,6 +28,10 @@ button_skip:          (Optional) Icon/text color for the rewind and forward skip
 button_chapter:       (Optional) Icon/text color for the previous and next chapter buttons. Fallback: button_play.
 slider_progress:      (Optional) Color for the percentage label that sits on top of the overall progress slider.
 button_speed_shimmer:  (Optional) Peak opacity (0.0–1.0) of the diagonal shimmer sweep on the speed button when a new default speed is set via right-click. Lighter button themes may need a higher value so the glint is visible. Fallback: 0.55.
+preset_ramp_text_color: (Optional) "#rrggbb" LITERAL text color for every step of the Sleep/Speed/Sprint preset-ramp buttons (see themes.ramp_text_colors) — used exactly as given, no derivation, no per-step contrast adjustment. Checked before preset_ramp_text_hue. Use when a theme needs the text to be a specific, known color rather than one derived toward a hue.
+preset_ramp_text_hue: (Optional) "#rrggbb" hue override for the Sleep/Speed/Sprint preset-ramp buttons' text color (see themes.ramp_text_colors). Only the HUE is read — one light/dark direction is chosen for the whole ramp, then saturation/value are computed per step to stay reasonably legible without flipping direction mid-ramp. Use if the derived button_text/accent hue still looks wrong for this theme. Fallback: button_text → text_on_light_bg → text if saturated enough to carry real color, else accent.
+preset_ramp_dark_end: (Optional) "#rrggbb" override for the DARK end the Sleep/Speed/Sprint preset-ramp blends FROM (see themes.preset_ramp_rgb). Checked before bg_main. Use if a theme's own bg_main is too close to its accent (in hue or brightness) for the ramp to read as a clear progression even after the brightness-floor boost. Fallback: bg_main.
+preset_ramp_bright_end: (Optional) "#rrggbb" override for the BRIGHT end the Sleep/Speed/Sprint preset-ramp blends TOWARD (see themes.preset_ramp_rgb). Checked before accent. Fallback: accent.
 
 GROUP 4 — PLAYER SLIDERS
 slider_overall_bg:    Background (groove) color of the main book progress bar.
@@ -154,6 +158,7 @@ THEMES = {
         "button_chapter":                "#460B2F",
         "slider_progress":               "#DEC9C9",
         "button_speed_shimmer":          0.4,
+        "preset_ramp_text_color":        "#F10593",
         "slider_overall_bg":             "#8A0C0C",
         "slider_overall_fill":           "#C71616",
         "slider_chapter_bg":             "#5D053A",
@@ -395,8 +400,11 @@ THEMES = {
         "text_on_light_bg":              "#141E1C",
         "accent":                        "#2E7A6A",
         "accent_light":                  "#4A9C88",
-        "accent_dark":                   "#1C5648",
-        "button_text":                   "#141E1C",
+        "accent_dark":                   "#11775F",
+        "button_text":                   "#141A19",
+        "preset_ramp_text_color":        "#20310A",
+        "preset_ramp_dark_end":          "#19725E",
+        "preset_ramp_bright_end":        "#71B1A1",
         "slider_progress":               "#141E1C",
         "slider_overall_bg":             "#AEBAB8",
         "slider_overall_fill":           "#2E7A6A",
@@ -551,6 +559,7 @@ THEMES = {
         "accent_light":                  "#5A8AAA",
         "accent_dark":                   "#1A4A6A",
         "button_text":                   "#0A0A0A",
+        "preset_ramp_text_color":        "#7BAABE",
         "slider_progress":               "#C4DFDE",
         "slider_overall_bg":             "#2A2A2A",
         "slider_overall_fill":           "#3A6A8A",
@@ -613,6 +622,8 @@ THEMES = {
         "accent_dark":                   "#CD3F3F",
         "button_text":                   "#EFB1B1",
         "button_play":                   "#F31A1A",
+        "preset_ramp_dark_end":          "#490E05",
+        "preset_ramp_bright_end":        "#AC2B2B",
         "slider_overall_bg":             "#5A3F2F",
         "slider_overall_fill":           "#8B0000",
         "slider_chapter_bg":             "#3A2316",
@@ -662,6 +673,7 @@ THEMES = {
         "accent":                        "#3C7BE0",
         "accent_light":                  "#29E442",
         "accent_dark":                   "#00A32A",
+        "preset_ramp_text_color":        "#AAFFB5",
         "slider_progress":               "#F8FAFA",
         "slider_overall_bg":             "#003547",
         "slider_overall_fill":           "#39FF14",
@@ -706,6 +718,8 @@ THEMES = {
         "accent":                        "#00A98B",
         "accent_light":                  "#00D4B3",
         "accent_dark":                   "#006F5A",
+        "preset_ramp_dark_end":          "#193c35",
+        "preset_ramp_bright_end":        "#4da895",
         "slider_progress":               "#C1F4BF",
         "slider_overall_bg":             "#2A2F34",
         "slider_overall_fill":           "#00A98B",
@@ -739,7 +753,7 @@ THEMES = {
         "carousel_stripe":               "#00A98B",
     },
     "Cerulean Sea": {
-        "bg_deep":                       "#181C20",
+        "bg_deep":                        "#181C20",
         "bg_main":                       "#22262C",
         "bg_sidebar":                    "#181C20",
         "bg_dropdown":                   "#2E323A",
@@ -805,6 +819,7 @@ THEMES = {
         "accent":                        "#FF00FF",
         "accent_light":                  "#FF33FF",
         "accent_dark":                   "#CC00CC",
+        "preset_ramp_text_color":        "#000000",
         "slider_progress":               "#FFFCCF",
         "slider_overall_bg":             "#4B035D",
         "slider_overall_fill":           "#FF00FF",
@@ -856,6 +871,7 @@ THEMES = {
         "accent_light":                  "#8AB86A",
         "accent_dark":                   "#4A6A38",
         "button_text":                   "#2C2F21",
+        "preset_ramp_dark_end":          "#8D1919",
         "slider_progress":               "#F0F0E8",
         "slider_overall_bg":             "#5E3A28",
         "slider_overall_fill":           "#6A9A50",
@@ -913,6 +929,7 @@ THEMES = {
         "accent":                        "#B84A6A",
         "accent_light":                  "#D06A8A",
         "accent_dark":                   "#7A2A4A",
+        "preset_ramp_bright_end":        "#DE6387",
         "slider_progress":               "#FFFEE3",
         "slider_overall_bg":             "#4A2A3A",
         "slider_overall_fill":           "#D96A2A",
@@ -960,6 +977,7 @@ THEMES = {
         "accent_light":                  "#BCB9B9",
         "accent_dark":                   "#A29E9E",
         "button_text":                   "#333333",
+        "preset_ramp_bright_end":        "#A4A2A3",
         "slider_progress":               "#E0DEDE",
         "slider_overall_bg":             "#333333",
         "slider_overall_fill":           "#685F5F",
@@ -1022,6 +1040,7 @@ THEMES = {
         "accent_light":                  "#7AC8B8",
         "accent_dark":                   "#3A7868",
         "button_text":                   "#0E1A18",
+        "preset_ramp_text_color":        "#000000",
         "slider_progress":               "#E8F0EE",
         "slider_overall_bg":             "#1A3028",
         "slider_overall_fill":           "#5AA898",
@@ -1186,6 +1205,7 @@ THEMES = {
         "accent":                        "#3B6AFF",
         "accent_light":                  "#6B9AFF",
         "accent_dark":                   "#1A3A9A",
+        "preset_ramp_text_color":        "#B0C9EC",
         "slider_progress":               "#D5DFED",
         "slider_overall_bg":             "#1A2A5A",
         "slider_overall_fill":           "#3B6AFF",
@@ -1363,6 +1383,8 @@ THEMES = {
         "accent":                        "#9C6E4E",
         "accent_light":                  "#B88462",
         "accent_dark":                   "#8F694F",
+        "preset_ramp_dark_end":          "#3B2A24",
+        "preset_ramp_text_color":        "#D8AC9A",
         "slider_progress":               "#F5ECDF",
         "slider_overall_bg":             "#70554A",
         "slider_overall_fill":           "#A57254",
@@ -1417,6 +1439,7 @@ THEMES = {
         "button_play":                   "#AD117C",
         "button_skip":                   "#156109",
         "button_chapter":                "#107500",
+        "preset_ramp_bright_end":        "#E4DA42",
         "slider_progress":               "#EBE5F7",
         "slider_overall_bg":             "#4B0082",
         "slider_overall_fill":           "#ED37B3",
@@ -1468,6 +1491,7 @@ THEMES = {
         "accent":                        "#FDA605",
         "accent_light":                  "#F84949",
         "accent_dark":                   "#A37B14",
+        "preset_ramp_text_color":        "#620206",
         "slider_progress":               "#F6FC99",
         "slider_overall_bg":             "#741A06",
         "slider_overall_fill":           "#FDA605",
@@ -1523,6 +1547,7 @@ THEMES = {
         "accent_light":                  "#E4B85C",
         "accent_dark":                   "#D4A84C",
         "button_text":                   "#1A2A1A",
+        "preset_ramp_dark_end":          "#3E893A",
         "slider_progress":               "#E8F0E0",
         "slider_overall_bg":             "#3A5238",
         "slider_overall_fill":           "#7AAA4C",
@@ -1584,6 +1609,7 @@ THEMES = {
         "accent":                        "#00A86B",
         "accent_light":                  "#2ECC71",
         "accent_dark":                   "#007A4D",
+        "preset_ramp_text_color":        "#063804",
         "slider_overall_bg":             "#004D3B",
         "slider_overall_fill":           "#00A86B",
         "slider_chapter_bg":             "#003025",
@@ -1631,6 +1657,7 @@ THEMES = {
         "accent":                        "#A8C3C6",
         "accent_light":                  "#C2D6D9",
         "accent_dark":                   "#6F868A",
+        "preset_ramp_text_color":        "#0B343A",
         "slider_progress":               "#F2F5F2",
         "slider_overall_bg":             "#55626B",
         "slider_overall_fill":           "#8FAAAD",
@@ -1678,6 +1705,7 @@ THEMES = {
         "button_play":                   "#3A3245",
         "button_skip":                   "#3A3245",
         "button_chapter":                "#3A3245",
+        "preset_ramp_dark_end":          "#38225C",
         "slider_progress":               "#F5F0F5",
         "slider_overall_bg":             "#3A3244",
         "slider_overall_fill":           "#DD7AB7",
@@ -1739,6 +1767,8 @@ THEMES = {
         "accent_light":                  "#F0A84A",
         "accent_dark":                   "#B8681E",
         "button_text":                   "#0A1228",
+        "preset_ramp_light_end":         "#F2E3A7",
+        "preset_ramp_dark_end":          "#0A1228",
         "slider_progress":               "#F2F1AF",
         "slider_overall_bg":             "#162248",
         "slider_overall_fill":           "#E8943A",
@@ -1847,6 +1877,7 @@ THEMES = {
         "accent_light":                  "#F05948",
         "accent_dark":                   "#B02A1B",
         "button_play":                   "#FFC5BE",
+        "preset_ramp_dark_end":          "#150A2A",
         "slider_progress":               "#FEEDEB",
         "slider_overall_bg":             "#4A627A",
         "slider_overall_fill":           "#E74C3C",
@@ -1890,6 +1921,8 @@ THEMES = {
         "accent_light":                  "#C5B767",
         "accent_dark":                   "#6F868A",
         "button_text":                   "#FFEC81",
+        "preset_ramp_dark_end":          "#150A2A",
+        "preset_ramp_text_color":        "#EFC378",
         "slider_progress":               "#F6F6BB",
         "slider_overall_bg":             "#6B6855",
         "slider_overall_fill":           "#CEC88F",
@@ -1936,6 +1969,8 @@ THEMES = {
         "accent_light":                  "#D87A98",
         "accent_dark":                   "#783A4A",
         "button_text":                   "#291D4B",
+        "preset_ramp_dark_end":          "#51144B",
+        "preset_ramp_text_color":        "#1C0B1B",
         "slider_progress":               "#E5C4E5",
         "slider_overall_bg":             "#2E2842",
         "slider_overall_fill":           "#B85878",
@@ -1995,6 +2030,7 @@ THEMES = {
         "accent_light":                  "#CCBC8C",
         "accent_dark":                   "#7A6A48",
         "button_text":                   "#202629",
+        "preset_ramp_dark_end":          "#CEAC92",
         "slider_progress":               "#F0ECDC",
         "slider_overall_bg":             "#3A4042",
         "slider_overall_fill":           "#B8A87A",
@@ -2051,6 +2087,7 @@ THEMES = {
         "accent_light":                  "#8A5A8A",
         "accent_dark":                   "#513171",
         "button_text":                   "#141E22",
+        "preset_ramp_text_color":        "#977b97",
         "slider_progress":               "#DEB9D1",
         "slider_overall_bg":             "#2A3A42",
         "slider_overall_fill":           "#6A4A6A",
@@ -2113,6 +2150,7 @@ THEMES = {
         "accent_light":                  "#7A9AAC",
         "accent_dark":                   "#4A5A6A",
         "button_text":                   "#141A1E",
+        "preset_ramp_text_color":        "#A0BBBF",
         "slider_progress":               "#D8E4EC",
         "slider_overall_bg":             "#2A343E",
         "slider_overall_fill":           "#6A8A9A",
@@ -2331,6 +2369,8 @@ THEMES = {
         "accent_light":                  "#D87A98",
         "accent_dark":                   "#8A3A58",
         "button_text":                   "#2A2030",
+        "preset_ramp_dark_end":          "#F3EAB1",
+        "preset_ramp_text_color":        "#2A2030",
         "slider_progress":               "#FFF3C1",
         "slider_overall_bg":             "#4A3850",
         "slider_overall_fill":           "#C45A7A",
@@ -2390,6 +2430,7 @@ THEMES = {
         "accent":                        "#3A5A8A",
         "accent_light":                  "#5B80B8",
         "accent_dark":                   "#1E3A5A",
+        "preset_ramp_text_color":        "#F3E9AD",
         "slider_overall_bg":             "#1A2140",
         "slider_overall_fill":           "#4A6FA5",
         "slider_chapter_bg":             "#1A2140",
@@ -2443,6 +2484,9 @@ THEMES = {
         "accent_light":                  "#DEC08A",
         "accent_dark":                   "#BF924D",
         "button_text":                   "#EEDCA5",
+        "preset_ramp_bright_end":        "#73672A",
+        "preset_ramp_dark_end":          "#B48B4C",
+        "preset_ramp_text_color":        "#F3E9AD",
         "slider_progress":               "#FFECDA",
         "slider_overall_bg":             "#8C7B6A",
         "slider_overall_fill":           "#D4A85C",
@@ -2486,6 +2530,7 @@ THEMES = {
         "accent":                        "#5E8299",
         "accent_light":                  "#7A9BB5",
         "accent_dark":                   "#3A5A72",
+        "preset_ramp_text_color":        "#BAC9C9",
         "slider_progress":               "#DDDDDD",
         "slider_overall_bg":             "#4A5F6F",
         "slider_overall_fill":           "#6A8BA0",
@@ -2520,6 +2565,7 @@ THEMES = {
         "accent":                        "#A84C34",
         "accent_light":                  "#CC6C54",
         "accent_dark":                   "#7A3420",
+        "preset_ramp_text_color":        "#E5E6B3",
         "slider_overall_bg":             "#4A3A2E",
         "slider_overall_fill":           "#B85C44",
         "slider_chapter_bg":             "#4A3A2E",
@@ -2551,6 +2597,8 @@ THEMES = {
         "accent":                        "#E4A859",
         "accent_light":                  "#F0BC6C",
         "accent_dark":                   "#B87E3A",
+        "preset_ramp_dark_end":          "#94611B",
+        "preset_ramp_text_color":        "#2F1F09",
         "slider_progress":               "#FFFCEF",
         "slider_overall_bg":             "#765A40",
         "slider_overall_fill":           "#E4A859",
@@ -2581,6 +2629,7 @@ THEMES = {
         "accent":                        "#4A90A7",
         "accent_light":                  "#6AB8C7",
         "accent_dark":                   "#2F6A80",
+        "preset_ramp_text_color":        "#92C9DE",
         "slider_progress":               "#DBEBF1",
         "slider_overall_bg":             "#3A5A7A",
         "slider_overall_fill":           "#4A90A7",
@@ -2747,6 +2796,9 @@ THEMES = {
         "accent":                        "#77B2CC",
         "accent_light":                  "#9ACFE0",
         "accent_dark":                   "#4F8FAF",
+        "preset_ramp_dark_end":          "#BA5BC7",
+        "preset_ramp_bright_end":        "#63b4c2",
+        "preset_ramp_text_color":        "#b0eef7",
         "slider_overall_bg":             "#6A5A8F",
         "slider_overall_fill":           "#77B2CC",
         "slider_chapter_bg":             "#695890",
@@ -2878,6 +2930,7 @@ THEMES = {
         "accent_light":                  "#BB0606",
         "accent_dark":                   "#8A5428",
         "button_text":                   "#F6EBA9",
+        "preset_ramp_dark_end":          "#6C0F0B",
         "slider_progress":               "#F6EBA9",
         "slider_overall_bg":             "#B41E37",
         "slider_overall_fill":           "#F05632",
@@ -2931,6 +2984,8 @@ THEMES = {
         "accent":                        "#C0B89C",
         "accent_light":                  "#D8D0B4",
         "accent_dark":                   "#8A8268",
+        "preset_ramp_bright_end":        "#D8D0B4",
+        "preset_ramp_text_color":        "#41413A",
         "slider_progress":               "#EEEEEE",
         "slider_overall_bg":             "#30405C",
         "slider_overall_fill":           "#C1B081",
@@ -3022,6 +3077,7 @@ THEMES = {
         "accent":                        "#0A9396",
         "accent_light":                  "#7FB3A2",
         "accent_dark":                   "#008BA8",
+        "preset_ramp_text_color":        "#E9D8A6",
         "slider_progress":               "#FFF6DB",
         "slider_overall_bg":             "#003547",
         "slider_overall_fill":           "#0A9396",
@@ -3076,6 +3132,7 @@ THEMES = {
         "accent_light":                  "#D46AD4",
         "accent_dark":                   "#7A2A7A",
         "button_text":                   "#140A1A",
+        "preset_ramp_text_color":        "#E7C9F5",
         "slider_progress":               "#E1B9F4",
         "slider_overall_bg":             "#2A1838",
         "slider_overall_fill":           "#B84AB8",
@@ -3132,6 +3189,7 @@ THEMES = {
         "accent_light":                  "#95A9C9",
         "accent_dark":                   "#818792",
         "button_text":                   "#C0C8D1",
+        "preset_ramp_text_color":        "#C0C8D1",
         "slider_progress":               "#EEEEEE",
         "slider_overall_bg":             "#464E5C",
         "slider_overall_fill":           "#8A9BB5",
@@ -3169,6 +3227,8 @@ THEMES = {
         "accent_light":                  "#F39C12",
         "accent_dark":                   "#A04000",
         "button_text":                   "#320E0E",
+        "preset_ramp_dark_end":          "#8A0B03",
+        "preset_ramp_text_color":        "#FFD993",
         "slider_progress":               "#FBE9C6",
         "slider_overall_bg":             "#333333",
         "slider_overall_fill":           "#E67E22",
@@ -3198,6 +3258,9 @@ THEMES = {
         "accent":                        "#B8860B",
         "accent_light":                  "#DAA520",
         "accent_dark":                   "#8B6914",
+        "preset_ramp_dark_end":          "#5E420D",
+        "preset_ramp_light_end":         "#8B6914",
+        "preset_ramp_text_color":        "#E8D8B2",
         "slider_progress":               "#FFF2CC",
         "slider_overall_bg":             "#404040",
         "slider_overall_fill":           "#B8860B",
@@ -3234,6 +3297,7 @@ THEMES = {
         "accent_dark":                   "#343A40",
         "button_text":                   "#BBBBBB",
         "button_play":                   "#9BE4E5",
+        "preset_ramp_text_color":        "#E8D8B2",
         "slider_progress":               "#FFFFFF",
         "slider_overall_bg":             "#495057",
         "slider_overall_fill":           "#9BE4E5",
@@ -3273,6 +3337,7 @@ THEMES = {
         "accent_light":                  "#F0C838",
         "accent_dark":                   "#A07818",
         "button_text":                   "#1A1812",
+        "preset_ramp_text_color":        "#261A03",
         "slider_progress":               "#F8F0E0",
         "slider_overall_bg":             "#342E24",
         "slider_overall_fill":           "#E8B020",
@@ -3326,11 +3391,61 @@ def _hex_to_rgb(hex_str):
     h = hex_str.lstrip('#')
     return ",".join(str(int(h[i:i+2], 16)) for i in (0, 2, 4))
 
+
+def _hex_to_rgb_tuple(hex_str, fallback):
+    h = (hex_str or fallback).lstrip('#')
+    if len(h) != 6:
+        h = fallback.lstrip('#')
+    return tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))
+
+
+def _resolve_ramp_bright_end(theme):
+    """The hex color the Sleep/Speed/Sprint preset ramp's BRIGHTEST step (and,
+    as of 2026-10-03, `button_text_for_accent`'s own background — see that
+    function) actually blends/paints toward, resolving the same override
+    chain `preset_ramp_rgb` uses: `preset_ramp_bright_end` override, else the
+    DARKER of `gradient_accent_start`/`gradient_accent_end` when a theme sets
+    a real accent gradient (what `_get_gradient_style` actually paints for
+    every accent-background button — flat `accent` is otherwise unreachable
+    dead code once gradient keys are set), else flat `accent`.
+
+    Extracted 2026-10-03 so `preset_ramp_rgb` and `button_text_for_accent`
+    cannot drift out of sync the way two independently-maintained copies of
+    this resolution would risk — same concern as the upsert_book/
+    upsert_books_batch sync rule and `_kbdnav_fill_rgb`'s own extraction note
+    elsewhere in this file. See `preset_ramp_rgb`'s docstring for the full
+    narrative of why this resolution exists (the Dorian Gray gradient-vs-flat-
+    accent mismatch) and `button_text_for_accent`'s for why it also needs it
+    (End of chapter/Set must stay visually consistent with the ramp sitting
+    right next to it — reported live when a per-theme preset_ramp_bright_end
+    tune didn't carry over to those buttons)."""
+    bright_end_hex = theme.get('preset_ramp_bright_end')
+    if bright_end_hex:
+        return bright_end_hex
+    grad_start = theme.get('gradient_accent_start')
+    grad_end = theme.get('gradient_accent_end')
+    if grad_start and grad_end:
+        start_rgb = _hex_to_rgb_tuple(grad_start, '#888888')
+        end_rgb = _hex_to_rgb_tuple(grad_end, '#888888')
+        start_val = colorsys.rgb_to_hsv(*(c / 255 for c in start_rgb))[2]
+        end_val = colorsys.rgb_to_hsv(*(c / 255 for c in end_rgb))[2]
+        return grad_end if end_val <= start_val else grad_start
+    return theme.get('accent')
+
+
 # Sleep/Speed preset-button ramp. Reproduces the span of the OLD alpha ramp
 # (75..255 out of 255) as colour-mix ratios, so the visual progression is unchanged
 # while the emitted colours are fully opaque. See preset_ramp_rgb.
 _RAMP_MIN_MIX = 75 / 255
 _RAMP_MAX_MIX = 1.0
+# Boosts the ramp's BRIGHTNESS (HSV value) floor ahead of where a plain linear-RGB
+# blend would put it — see preset_ramp_rgb's "2026-10-02 brightness-eased blend"
+# note for why. <1.0 front-loads the value rise (val_ratio = ratio**_RAMP_VALUE_
+# EASE_POWER is > ratio for every ratio in (0,1)); 1.0 would disable the boost
+# (the floor would never exceed the plain blend's own value, so max() always
+# picks the plain blend). 0.5 was the lowest tried that still held worst-case
+# contrast steady (see that note) without visibly flattening the top of the ramp.
+_RAMP_VALUE_EASE_POWER = 0.5
 
 
 def preset_ramp_rgb(theme, index, count):
@@ -3360,20 +3475,411 @@ def preset_ramp_rgb(theme, index, count):
     NOTE for the three-state panel background (Transparent | Frosty glass | Opaque,
     TODO.md): this is what makes that safe. Under Opaque the old bug would have been
     invisible rather than fixed; under Transparent it would have been worse.
-    """
-    def _rgb(hex_str, fallback):
-        h = (hex_str or fallback).lstrip('#')
-        if len(h) != 6:
-            h = fallback.lstrip('#')
-        return tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))
 
-    base = _rgb(theme.get('bg_main'), '#000000')
-    accent = _rgb(theme.get('accent'), '#888888')
+    2026-10-02 brightness-eased blend (TODO.md "Some themes need a preset-ramp
+    colour override"). The plain linear-RGB blend above interpolates hue,
+    saturation AND brightness at the same rate, so on a theme whose `bg_main`
+    and `accent` share a hue (common for a themed accent color — e.g. Area X:
+    bg_main #0F1A0F, accent #2EAA4A, both green), the LOW end of the ramp sits
+    close to `bg_main`'s own brightness and stays visibly dark/muddy for several
+    steps before climbing — live-reported ("the original intent was to tighten
+    the spectrum... especially brightening the dark button, which clashed both
+    with the text and the background"). Pairing that with ramp_step_text_hex's
+    per-step black/white text pick (below) made it WORSE in a different way: the
+    dark end's text read white, the bright end's text read black, and because
+    the background brightness barely moved for the first several steps while
+    the later steps caught up fast, the white->black TEXT crossover landed in a
+    narrow band and looked like a sudden flip rather than a gradient — also
+    reported live ("this works well up to 2.50, then it goes black all of a
+    sudden").
+
+    Fix attempt 1 (reverted): blend hue AND saturation AND value all in HSV at
+    the same eased rate. This DID brighten the low end and DID spread the text
+    crossover, but introduced a worse, independent bug on any theme whose
+    `bg_main` and `accent` sit far apart on the hue wheel (10 of 62 real themes
+    have a >72-degree hue gap, e.g. Blindsight: near-gray bg_main, blue accent).
+    HSV interpolates hue along the SHORT way around the wheel regardless of
+    whether that path passes through unrelated colors — Blindsight's low ramp
+    steps came out a muddy yellow-brown, a hue neither endpoint has at all, and
+    the synthetic regression test below (`test_progression_is_monotonic_toward_
+    the_accent`, purple bg -> red accent) caught this immediately: the mid-ramp
+    swung through cyan/green/yellow/orange before reaching red, so distance-to-
+    accent stopped being monotonic. The ORIGINAL plain-linear-RGB blend never had
+    this problem — RGB-space interpolation always takes the direct straight-line
+    path between two colors, never an indirect one through a third hue.
+
+    Fix (shipped): blend hue AND saturation in plain linear RGB, exactly as the
+    original blend did (so the straight-line hue path — and the "no backwards
+    rainbow" guarantee that comes with it — is preserved exactly), and apply the
+    brightness boost as a SEPARATE floor on top: convert the already-blended RGB
+    to HSV, compute what value the step WOULD have at a brightness-eased ratio
+    (`ratio ** _RAMP_VALUE_EASE_POWER`, interpolating only `bg_main`'s and
+    `accent`'s OWN value numbers, not full HSV reconstruction), and take
+    whichever of the naturally-blended value or the eased target is higher
+    (`max(...)` — a floor, never darkens a step the plain blend already made
+    bright enough). Verified against all 62 real themes: worst-case black/white
+    text contrast at any step is 4.59:1 (matching the original blend's own
+    4.58-4.59:1 floor — the boost costs nothing) and the monotonic-distance-to-
+    accent property holds on all 62, not just the synthetic test case.
+    """
+    # preset_ramp_dark_end/preset_ramp_bright_end (optional, Pryme's own request
+    # 2026-10-02): per-theme overrides for the ramp's own two endpoints, checked
+    # BEFORE bg_main/accent. For a theme whose bg_main/accent pair still produces
+    # a ramp that's hard to make legible even after the brightness-floor boost
+    # above (e.g. Violeta, Fire and Blood — both landed in the 2.3-3.0 worst-case
+    # contrast band in ramp_text_colors' own verification), this lets the ramp
+    # itself start/end somewhere other than the theme's literal bg_main/accent,
+    # independent of fixing the text color alone. Resolved via
+    # _resolve_ramp_bright_end, which also handles the gradient_accent_start/
+    # gradient_accent_end fallback (see that function's own docstring for the
+    # 2026-10-03 Dorian Gray mismatch this was built to fix) — shared with
+    # button_text_for_accent so the two surfaces can't drift apart again.
+    base = _hex_to_rgb_tuple(theme.get('preset_ramp_dark_end', theme.get('bg_main')), '#000000')
+    accent = _hex_to_rgb_tuple(_resolve_ramp_bright_end(theme), '#888888')
     span = max(1, count - 1)
     ratio = _RAMP_MIN_MIX + (_RAMP_MAX_MIX - _RAMP_MIN_MIX) * (index / span)
-    return ",".join(
-        str(round(b + (a - b) * ratio)) for b, a in zip(base, accent)
-    )
+
+    r = base[0] + (accent[0] - base[0]) * ratio
+    g = base[1] + (accent[1] - base[1]) * ratio
+    b = base[2] + (accent[2] - base[2]) * ratio
+    hue, sat, val = colorsys.rgb_to_hsv(r / 255, g / 255, b / 255)
+
+    base_val = colorsys.rgb_to_hsv(*(c / 255 for c in base))[2]
+    accent_val = colorsys.rgb_to_hsv(*(c / 255 for c in accent))[2]
+    eased_ratio = ratio ** _RAMP_VALUE_EASE_POWER
+    boosted_val = base_val + (accent_val - base_val) * eased_ratio
+    final_val = max(val, boosted_val)
+
+    nr, ng, nb = colorsys.hsv_to_rgb(hue, sat, final_val)
+    return ",".join(str(round(c * 255)) for c in (nr, ng, nb))
+
+
+def _relative_luminance(r, g, b):
+    """WCAG relative luminance (0..1) for an sRGB triple. Shared by
+    ramp_text_colors' black/white direction pick — see that function for why
+    this exists instead of reusing `button_text`."""
+    def lin(c):
+        c = c / 255
+        return c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
+    r, g, b = lin(r), lin(g), lin(b)
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
+def _wcag_contrast(rgb1, rgb2):
+    l1, l2 = _relative_luminance(*rgb1), _relative_luminance(*rgb2)
+    l1, l2 = max(l1, l2), min(l1, l2)
+    return (l1 + 0.05) / (l2 + 0.05)
+
+
+_RAMP_TEXT_TARGET_CONTRAST = 3.0  # relaxed from the 4.5 AA floor — see ramp_text_colors
+_RAMP_TEXT_SAT = 0.5              # fixed tint strength for every step (no per-step variation)
+_RAMP_TEXT_VALUE_STEP = 0.005     # search granularity easing value toward the opposite anchor
+_RAMP_TEXT_MAX_VALUE_TRAVEL = 0.3  # caps how far a step's value may wander from the ramp's chosen
+                                    # anchor before falling back to desaturating instead — see the
+                                    # inline comment at its use site in ramp_text_colors for why an
+                                    # uncapped sweep can silently reach the OPPOSITE pole
+_RAMP_TEXT_DESAT_STEP = 0.02      # search granularity for the sat-only fallback below
+
+
+def ramp_text_colors(theme, count):
+    """List of `count` "#rrggbb" text colors, one per `preset_ramp_rgb` step
+    (index 0..count-1), for the Sleep/Speed/Sprint preset-ramp buttons.
+
+    WHY THIS EXISTS (TODO.md "Some themes need a preset-ramp colour override").
+    The ramp blends `bg_main` -> `accent` per step, so its background spans
+    near-bg-dark to full-accent-bright within a single button row. The three
+    call sites (SleepTimerPanel/SpeedControlsPanel/SprintPanel._apply_preset_
+    ramp_colors) used to paint EVERY step with one flat `button_text` color —
+    correct for a regular button with a fixed accent background, but wrong
+    once the background itself is a gradient. A scan of all 62 themes found
+    49 with severe (<3:1) contrast failures against their own `button_text`
+    and 11 more borderline — effectively universal, not "some themes."
+
+    THREE DESIGNS WERE TRIED AND REJECTED LIVE before this one, each killed by
+    a specific screenshot, worth recording so a future pass doesn't re-walk
+    the same path:
+
+    1. Per-step black/white pick (whichever of pure black/white has better
+       contrast at THAT step). Mathematically solid (worst case 4.59:1 across
+       all 62 themes) but rejected on sight: "I hope you won't leave them just
+       white and black" — flat, colorless, ignores the theme's own palette.
+
+    2. Per-step black/white TINTED toward a theme hue, searching tint strength
+       per step to hold >=4.5:1. Restored color, but inherited problem 1's
+       deeper issue: a ramp whose low end is still fairly dark (even after a
+       brightness boost — see preset_ramp_rgb's own history above) crosses
+       the black/white contrast tie-break partway through the row, so the
+       text SNAPS from light to dark at that crossover. Rejected live against
+       a real screenshot: "this works well up to 2.50, then it goes black all
+       of a sudden... not aesthetically pleasing at all."
+
+    3. Per-step direction + value sweep targeting a lower 3.0 contrast bar
+       (still deciding light-vs-dark independently at each step). This FIXED
+       problem 2's abruptness on the themes it was checked against, but a
+       theme whose ramp passes back and forth across the midpoint luminance
+       more than once (reproduced live on "Violeta": a purple accent whose
+       low ramp steps favor white text and high steps favor black) can still
+       flip mid-ramp under a per-step decision — the exact class of jump
+       already rejected once. Pryme's explicit call when this was found:
+       "aim for consistent dark or bright text anyway. I don't [want] those
+       abrupt switches" — i.e. a few steps being somewhat under-contrasted is
+       preferable to ANY mid-ramp flip.
+
+    SHIPPED: decide light-vs-dark ONCE per whole ramp (not per step), then
+    ease only the VALUE continuously from that one anchor across every step —
+    guarantees zero flips within a row, by construction. Direction is chosen
+    by comparing the ramp's AVERAGE contrast (not worst-case min, which can
+    be skewed by one outlier step) toward a fully-saturated white-anchored vs
+    black-anchored candidate; whichever wins on average governs every step.
+    Each step then eases its own VALUE from that anchor (1.0 or 0.0) toward
+    the opposite extreme only as far as needed to clear
+    `_RAMP_TEXT_TARGET_CONTRAST` (3.0, not full AA 4.5 — Pryme's own call once
+    the ramp's brightened low end made the stricter target unnecessary: "I
+    think we can get away with less contrast"). A step near the ramp's own
+    midpoint sometimes cannot reach 3.0 purely by moving value (its
+    background is too close to a mid-gray for ANY single hue/anchor to
+    satisfy, the same unavoidable "midpoint valley" problem `preset_ramp_rgb`
+    itself has) — for those, saturation is additionally reduced toward
+    neutral at the anchor's own extreme value, which strictly improves
+    contrast without ever pulling value away from the chosen anchor (so it
+    still cannot reintroduce a flip). Verified against all 62 real themes:
+    only 3 have any step below the 3.0 target at all (worst case 2.71:1, on
+    Violeta, whose two endpoints are both purple hues — pure black/white
+    literally cannot do much better there either), and the chosen single
+    direction holds across every step of every other theme's ramp.
+
+    Returns a list rather than a single value (unlike `preset_ramp_rgb`,
+    which is naturally per-step) because the direction decision needs the
+    WHOLE ramp's backgrounds up front — call it once per `_apply_preset_ramp_
+    colors` pass, not once per button.
+
+    OPTIONAL per-theme overrides, checked in this order:
+
+    1. `preset_ramp_text_color` ("#rrggbb") — the LITERAL text color, used
+       verbatim for every step, no derivation at all. For a theme where even
+       the hue-based derivation below doesn't land where wanted — e.g. a
+       request to set it to pure red specifically to CONFIRM it is being
+       used as given, not as a seed for further HSV math (2026-10-02: the
+       hue-only override below was initially the only lever, but a hue alone
+       can still end up invisible — HSV value=0/1 is always exactly
+       black/white regardless of hue — which is a derivation artifact, not
+       what "I want the text to be what I set" asked for). When this key is
+       set, every other step of this function is skipped entirely; contrast
+       against individual ramp steps is the theme author's own
+       responsibility at that point, same as `button_text` already is
+       elsewhere in this file.
+    2. `preset_ramp_text_hue` ("#rrggbb") — only the HUE is read; saturation
+       and value are still computed per step by this function, same as the
+       derived button_text/accent chain below. Use this instead of (1) when
+       the goal is still "pick the right FAMILY of color, let the function
+       keep guaranteeing contrast" rather than "use exactly this color."
+    3. Derived from `button_text`/`text_on_light_bg`/`text` (whichever the
+       theme already uses for buttons), falling back to `accent`'s hue when
+       that color is near-achromatic — the default when neither override is
+       set.
+
+    Belongs in `_NO_BASE_INHERIT_KEYS` if either key is ever set on "The
+    Color Purple" (see that tuple's own doc note) — not there yet because no
+    theme has needed it.
+    """
+    literal_hex = theme.get('preset_ramp_text_color')
+    if literal_hex:
+        return [literal_hex] * count
+
+    def _hue_of(hex_str, fallback='888888'):
+        h = (hex_str or '').lstrip('#')
+        if len(h) != 6:
+            h = fallback
+        r, g, b = (int(h[i:i + 2], 16) / 255 for i in (0, 2, 4))
+        return colorsys.rgb_to_hsv(r, g, b)
+
+    override_hex = theme.get('preset_ramp_text_hue')
+    if override_hex:
+        hue, _sat, _val = _hue_of(override_hex)
+    else:
+        src_hex = theme.get('button_text', theme.get('text_on_light_bg', theme.get('text', '#888888')))
+        hue, src_sat, _val = _hue_of(src_hex)
+        # button_text is near-achromatic on 13 of 62 themes (sat < 0.1) — its hue is then
+        # meaningless rounding noise (HSV defines hue=0 for any gray), not a real color, so
+        # tinting toward it would impose a stray reddish cast unrelated to the theme. Fall
+        # back to accent's hue, which always carries real color even on a near-black/white
+        # button_text theme (e.g. Blindsight: button_text #0A0A0A but accent #3A6A8A, a real
+        # blue/slate — tinting toward THAT matches the theme's actual character).
+        if src_sat < 0.1:
+            hue, _sat, _val = _hue_of(theme.get('accent'))
+
+    backgrounds = [
+        tuple(int(v) for v in preset_ramp_rgb(theme, i, count).split(","))
+        for i in range(count)
+    ]
+
+    white_candidate = tuple(round(c * 255) for c in colorsys.hsv_to_rgb(hue, _RAMP_TEXT_SAT, 1.0))
+    black_candidate = tuple(round(c * 255) for c in colorsys.hsv_to_rgb(hue, _RAMP_TEXT_SAT, 0.0))
+    avg_white = sum(_wcag_contrast(bg, white_candidate) for bg in backgrounds) / count
+    avg_black = sum(_wcag_contrast(bg, black_candidate) for bg in backgrounds) / count
+    toward_white = avg_white >= avg_black
+    anchor_val = 1.0 if toward_white else 0.0
+    value_step = -_RAMP_TEXT_VALUE_STEP if toward_white else _RAMP_TEXT_VALUE_STEP
+
+    anchor_rgb = tuple(round(c * 255) for c in colorsys.hsv_to_rgb(hue, _RAMP_TEXT_SAT, anchor_val))
+
+    results = []
+    for bg in backgrounds:
+        val = anchor_val
+        candidate = None
+        while True:
+            nr, ng, nb = colorsys.hsv_to_rgb(hue, _RAMP_TEXT_SAT, val)
+            candidate = tuple(round(c * 255) for c in (nr, ng, nb))
+            if _wcag_contrast(bg, candidate) >= _RAMP_TEXT_TARGET_CONTRAST:
+                break
+            nxt = val + value_step
+            # _RAMP_TEXT_MAX_VALUE_TRAVEL caps how far the sweep may wander from the
+            # anchor before giving up on value alone — WITHOUT this cap, the sweep
+            # would keep going all the way to the OPPOSITE pole (e.g. white anchor
+            # sweeping down to near-BLACK) whenever that is the only way to clear
+            # target against a particularly saturated background, which is exactly
+            # the per-step flip this function exists to prevent, just reached via a
+            # different mechanism than the rejected per-step-direction designs
+            # above. Confirmed live via trace on Fire and Blood (red theme, white
+            # anchor): step 7's sweep silently cleared 3.0:1 only at val=0.055 (near
+            # black) while every neighboring step stayed near white — same abrupt
+            # jump Pryme already rejected once, just produced by this fallback path
+            # instead of a direction flip.
+            if nxt < 0.0 or nxt > 1.0 or abs(nxt - anchor_val) > _RAMP_TEXT_MAX_VALUE_TRAVEL:
+                # Value sweep alone can't reach target within the travel cap (a
+                # midpoint-luminance or same-hue-as-background step — see
+                # docstring). Fall back to reducing SATURATION at the anchor's OWN
+                # extreme value (never `val`, which may have drifted toward the
+                # wrong end of the sweep by this point — using it here would
+                # reintroduce the exact flip this guards against). Desaturating
+                # from the anchor only ever improves contrast and never moves away
+                # from the chosen direction, so this cannot cost the no-flip
+                # guarantee.
+                sat = _RAMP_TEXT_SAT
+                best = (anchor_rgb, _wcag_contrast(bg, anchor_rgb))
+                while sat >= 0:
+                    nr, ng, nb = colorsys.hsv_to_rgb(hue, sat, anchor_val)
+                    desat_candidate = tuple(round(c * 255) for c in (nr, ng, nb))
+                    c = _wcag_contrast(bg, desat_candidate)
+                    if c > best[1]:
+                        best = (desat_candidate, c)
+                    if c >= _RAMP_TEXT_TARGET_CONTRAST:
+                        break
+                    sat -= _RAMP_TEXT_DESAT_STEP
+                candidate = best[0]
+                break
+            val = nxt
+        results.append("#" + "".join(f"{c:02x}" for c in candidate))
+
+    return results
+
+
+_BUTTON_TEXT_TARGET_CONTRAST = 4.5  # full WCAG AA — unlike the ramp, this is a single
+                                     # flat background, not a 13-step gradient, so there
+                                     # is no "midpoint valley" forcing a lower target
+_BUTTON_TEXT_SAT = 0.5
+_BUTTON_TEXT_VALUE_STEP = 0.005
+_BUTTON_TEXT_MAX_VALUE_TRAVEL = 0.3
+_BUTTON_TEXT_DESAT_STEP = 0.02
+
+
+def button_text_for_accent(theme):
+    """"#rrggbb" contrast-safe text color for a `QPushButton` whose background
+    is `theme['accent']` (flat, or `_get_gradient_style`'s accent gradient
+    collapsed to its fallback) — used by the generic `QPushButton` rule and
+    several other accent-background rules across get_settings_stylesheet/
+    get_speed_stylesheet/get_sleep_stylesheet/get_sprint_stylesheet/
+    get_stats_stylesheet/get_tags_stylesheet/get_library_stylesheet:
+    `QTabBar::tab:selected`, `#disable_sleep_btn`/`#disable_sprint_btn`,
+    `QPushButton#pattern_button[selected="true"]`, `QPushButton#tag_add_btn`,
+    the library folder-list selected-item rule, several `#stats_reset_btn:
+    hover` rules.
+
+    WHY THIS EXISTS (2026-10-03, found while fixing the preset-ramp text
+    color — see `ramp_text_colors`). These rules used to paint `color:
+    button_text (-> text_on_light_bg -> text)` against `background: accent`
+    with NO per-theme contrast check — the exact same flat-color-vs-a-
+    background-the-color-wasn't-chosen-for problem the preset ramp had, just
+    against a single fixed background instead of a 13-step gradient.
+    Reported live: on Melnibonéan, `End of chapter`/`Set` sat right next to
+    the newly-fixed, now-legible ramp buttons and showed `button_text`
+    falling through to `text` = #F0F3F0 (near-white) against `accent` =
+    #A8C3C6 (light teal) — 1.66:1 contrast, reading as a flat muddy block. A
+    full 62-theme scan found 20 themes below 3:1 and 38 below the 4.5:1 AA
+    floor against their own flat `button_text` read.
+
+    Reuses the exact mechanism `ramp_text_colors` already proved live: decide
+    light-vs-dark ONCE, then ease VALUE from that anchor toward the opposite
+    extreme (capped at `_BUTTON_TEXT_MAX_VALUE_TRAVEL`, same bug-for-bug
+    reasoning as the ramp's own cap — an uncapped sweep can silently clear
+    target only near the OPPOSITE pole), falling back to desaturating at the
+    anchor's own extreme if value alone can't reach target. Uses the theme's
+    own `button_text`/`text_on_light_bg`/`text` hue (falling back to
+    `accent`'s hue when that's near-achromatic). Target is full AA (4.5),
+    not the ramp's relaxed 3.0 — verified worst case across all 62 themes is
+    4.50:1 (Crimson Guard).
+
+    DOES NOT read `preset_ramp_bright_end`/`preset_ramp_text_color`/
+    `preset_ramp_text_hue` — a 2026-10-03 same-day attempt to route this
+    function's background/text through those ramp-scoped override keys
+    shipped, then was reverted the SAME session after it was confirmed live
+    to leak into every one of this function's 30 call sites — including
+    completely unrelated surfaces like the active Settings-tab text color —
+    any time a theme set `preset_ramp_text_color` to tune its own 13-step
+    ramp. `preset_ramp_*` are the ramp's own keys, scoped to the ramp (and
+    End of chapter/Set used to additionally read them, which was the actual
+    bug — not this function). A theme needing a specific color here sets
+    `button_text` directly, the pre-existing, documented, narrowly-scoped key.
+    """
+    def _hue_of(hex_str, fallback='888888'):
+        h = (hex_str or '').lstrip('#')
+        if len(h) != 6:
+            h = fallback
+        r, g, b = (int(h[i:i + 2], 16) / 255 for i in (0, 2, 4))
+        return colorsys.rgb_to_hsv(r, g, b)
+
+    src_hex = theme.get('button_text', theme.get('text_on_light_bg', theme.get('text', '#888888')))
+    hue, src_sat, _val = _hue_of(src_hex)
+    if src_sat < 0.1:
+        hue, _sat, _val = _hue_of(theme.get('accent'))
+
+    bg_hex = (theme.get('accent') or '#888888').lstrip('#')
+    if len(bg_hex) != 6:
+        bg_hex = '888888'
+    bg = tuple(int(bg_hex[i:i + 2], 16) for i in (0, 2, 4))
+
+    white_candidate = tuple(round(c * 255) for c in colorsys.hsv_to_rgb(hue, _BUTTON_TEXT_SAT, 1.0))
+    black_candidate = tuple(round(c * 255) for c in colorsys.hsv_to_rgb(hue, _BUTTON_TEXT_SAT, 0.0))
+    toward_white = _wcag_contrast(bg, white_candidate) >= _wcag_contrast(bg, black_candidate)
+    anchor_val = 1.0 if toward_white else 0.0
+    value_step = -_BUTTON_TEXT_VALUE_STEP if toward_white else _BUTTON_TEXT_VALUE_STEP
+    anchor_rgb = tuple(round(c * 255) for c in colorsys.hsv_to_rgb(hue, _BUTTON_TEXT_SAT, anchor_val))
+
+    val = anchor_val
+    candidate = None
+    while True:
+        nr, ng, nb = colorsys.hsv_to_rgb(hue, _BUTTON_TEXT_SAT, val)
+        candidate = tuple(round(c * 255) for c in (nr, ng, nb))
+        if _wcag_contrast(bg, candidate) >= _BUTTON_TEXT_TARGET_CONTRAST:
+            break
+        nxt = val + value_step
+        if nxt < 0.0 or nxt > 1.0 or abs(nxt - anchor_val) > _BUTTON_TEXT_MAX_VALUE_TRAVEL:
+            sat = _BUTTON_TEXT_SAT
+            best = (anchor_rgb, _wcag_contrast(bg, anchor_rgb))
+            while sat >= 0:
+                nr, ng, nb = colorsys.hsv_to_rgb(hue, sat, anchor_val)
+                desat_candidate = tuple(round(c * 255) for c in (nr, ng, nb))
+                c = _wcag_contrast(bg, desat_candidate)
+                if c > best[1]:
+                    best = (desat_candidate, c)
+                if c >= _BUTTON_TEXT_TARGET_CONTRAST:
+                    break
+                sat -= _BUTTON_TEXT_DESAT_STEP
+            candidate = best[0]
+            break
+        val = nxt
+
+    return "#" + "".join(f"{c:02x}" for c in candidate)
 
 
 def derive_lighter_accent_rgb(accent_hex: str) -> str:
@@ -3746,6 +4252,17 @@ def get_player_stylesheet(theme_name="default", suppress_bg_image=False):
             color: {t['text']};
         }}
         QPushButton {{
+            /* Deliberately NOT routed through button_text_for_accent(t) — tried
+               2026-10-03, reverted same day. This rule styles the main player
+               view's buttons, including the transport speed button; the
+               contrast-safe derivation visibly changed its text color and was
+               reported live as worse on the theme being used at the time.
+               Every OTHER get_*_stylesheet's generic QPushButton rule (Settings/
+               Speed-panel/Sleep/Sprint/Stats/Tags/Library) DOES use
+               button_text_for_accent — this is the one deliberate exception. If
+               a future pass wants to apply it here too, confirm live on more
+               than one theme first; this one was reverted on a single live
+               report, not measured to be definitively worse everywhere. */
             background: {accent_style};
             color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
             border-radius: 4px;
@@ -3829,7 +4346,7 @@ def get_library_stylesheet(theme_name="default"):
         }}
         QPushButton {{
             background: {accent_style};
-            color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
+            color: {button_text_for_accent(t)};
             border-radius: 4px;
             padding: 6px;
             font-weight: bold;
@@ -3915,7 +4432,7 @@ def get_library_stylesheet(theme_name="default"):
             background-color: {input_bg};
             color: {input_text};
             selection-background-color: {t['accent']};
-            selection-color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
+            selection-color: {button_text_for_accent(t)};
             font-size: 12px;
             border: 1px solid {t['accent']};
             border-radius: 4px;
@@ -4050,7 +4567,7 @@ def get_panel_base_stylesheet(theme_name="default"):
         }}
         QPushButton {{
             background: {accent_style};
-            color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
+            color: {button_text_for_accent(t)};
             border-radius: 4px;
             padding: 6px;
             font-weight: bold;
@@ -4070,7 +4587,7 @@ def get_panel_base_stylesheet(theme_name="default"):
         }}
         QPushButton#pattern_button[selected="true"] {{
             background: {t['accent']};
-            color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
+            color: {button_text_for_accent(t)};
         }}
         QPushButton#pattern_button[is_default="true"] {{
             border: 2px solid {t['accent_light']};
@@ -4223,7 +4740,7 @@ def get_settings_stylesheet(theme_name="default"):
         }}
         QTabBar::tab:selected {{
             background: {t['accent']};
-            color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
+            color: {button_text_for_accent(t)};
         }}
         QTabBar::tab:hover:!selected {{
             background: rgba({_hex_to_rgb(tab_hover_bg)}, {tab_hover_opacity});
@@ -4338,7 +4855,7 @@ def get_settings_stylesheet(theme_name="default"):
         }}
         QListWidget#settings_folder_list::item:selected {{
             background-color: {t['accent']};
-            color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
+            color: {button_text_for_accent(t)};
         }}
         /* No QSS rule for the current-row keyboard cursor: Qt has no `::item:focus` (or any
            per-item "this is the current row") pseudo-state to hook one into — `:focus` in QSS
@@ -4434,7 +4951,7 @@ def get_settings_stylesheet(theme_name="default"):
         QPushButton#theme_add_all:hover, QPushButton#theme_remove_all:hover,
         QPushButton#theme_change_now:hover, QPushButton#secondary_button:hover {{
             background: {t['accent']};
-            color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
+            color: {button_text_for_accent(t)};
             font-weight: bold;
         }}
         /* Add all/Remove all/Change now dim when they'd be a no-op — see
@@ -4463,13 +4980,13 @@ def get_settings_stylesheet(theme_name="default"):
         QPushButton#library_add_folder_btn:hover, QPushButton#library_remove_folder_btn:hover,
         QPushButton#library_rescan_btn:hover {{
             background: {t['accent']};
-            color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
+            color: {button_text_for_accent(t)};
             font-weight: bold;
         }}
         QPushButton#library_add_folder_btn:pressed, QPushButton#library_remove_folder_btn:pressed,
         QPushButton#library_rescan_btn:pressed {{
             background-color: {t['accent_dark']};
-            color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
+            color: {button_text_for_accent(t)};
             font-weight: bold;
         }}
         /* Remove and Rescan are disabled while no folders are configured (app.py's
@@ -4488,7 +5005,7 @@ def get_settings_stylesheet(theme_name="default"):
         }}
         #reset_audio_btn {{
             background: {accent_style};
-            color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
+            color: {button_text_for_accent(t)};
             font-size: 14px;
             padding: 10px;
         }}
@@ -4616,7 +5133,7 @@ def get_sleep_stylesheet(theme_name="default"):
             background-color: {t['bg_dropdown']};
             color: {t['text']};
             selection-background-color: {t['accent']};
-            selection-color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
+            selection-color: {button_text_for_accent(t)};
             font-size: 12px;
             border: 1px solid {t['accent']};
             border-radius: 4px;
@@ -4624,7 +5141,7 @@ def get_sleep_stylesheet(theme_name="default"):
         }}
         #disable_sleep_btn {{
             background: {accent_style};
-            color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
+            color: {button_text_for_accent(t)};
             font-size: 14px;
             padding: 10px;
             margin-top: 10px;
@@ -4744,7 +5261,7 @@ def get_sprint_stylesheet(theme_name="default"):
             background-color: {t['bg_dropdown']};
             color: {t['text']};
             selection-background-color: {t['accent']};
-            selection-color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
+            selection-color: {button_text_for_accent(t)};
             font-size: 12px;
             border: 1px solid {t['accent']};
             border-radius: 4px;
@@ -4752,7 +5269,7 @@ def get_sprint_stylesheet(theme_name="default"):
         }}
         #disable_sprint_btn {{
             background: {accent_style};
-            color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
+            color: {button_text_for_accent(t)};
             font-size: 14px;
             padding: 10px;
             margin-top: 10px;
@@ -4825,11 +5342,11 @@ def get_sprint_stylesheet(theme_name="default"):
         }}
         QPushButton#stats_reset_btn:hover {{
             background: {t['accent']};
-            color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
+            color: {button_text_for_accent(t)};
         }}
         QPushButton#stats_reset_btn:pressed {{
             background: {t['accent_dark']};
-            color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
+            color: {button_text_for_accent(t)};
         }}
     """
 
@@ -4916,7 +5433,7 @@ def get_stats_stylesheet(theme_name="default"):
         }}
         QPushButton {{
             background: {accent_style};
-            color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
+            color: {button_text_for_accent(t)};
             border-radius: 4px;
             padding: 6px;
             font-weight: bold;
@@ -4956,7 +5473,7 @@ def get_stats_stylesheet(theme_name="default"):
         }}
         QTabBar::tab:selected {{
             background: {t['accent']};
-            color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
+            color: {button_text_for_accent(t)};
         }}
         QTabBar::tab:hover:!selected {{
             background: rgba({_hex_to_rgb(tab_hover_bg)}, {tab_hover_opacity});
@@ -4991,7 +5508,7 @@ def get_stats_stylesheet(theme_name="default"):
         }}
         QPushButton#pattern_button[selected="true"] {{
             background: {t['accent']};
-            color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
+            color: {button_text_for_accent(t)};
         }}
         QPushButton#pattern_button:hover {{
             border: 1px solid {t['accent']};
@@ -5071,7 +5588,7 @@ def get_stats_stylesheet(theme_name="default"):
             background-color: {t['bg_dropdown']};
             color: {t['text']};
             selection-background-color: {t['accent']};
-            selection-color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
+            selection-color: {button_text_for_accent(t)};
             border: 1px solid {t['accent']};
             border-radius: 4px;
             padding: 1px 2px;
@@ -5146,11 +5663,11 @@ def get_stats_stylesheet(theme_name="default"):
         }}
         QPushButton#stats_reset_btn:hover {{
             background: {t['accent']};
-            color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
+            color: {button_text_for_accent(t)};
         }}
         QPushButton#stats_reset_btn:pressed {{
             background: {t['accent_dark']};
-            color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
+            color: {button_text_for_accent(t)};
         }}       
         QScrollBar:vertical {{
             width: 8px;
@@ -5253,7 +5770,7 @@ def get_stats_stylesheet(theme_name="default"):
         }}
         QPushButton#tag_add_btn {{
             background-color: {t['accent']};
-            color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
+            color: {button_text_for_accent(t)};
             border: none;
             border-radius: 6px;
             font-size: 18px;
@@ -5276,11 +5793,11 @@ def get_stats_stylesheet(theme_name="default"):
         }}
         QPushButton#tag_manager_nav_btn:hover {{
             background: {t['accent']};
-            color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
+            color: {button_text_for_accent(t)};
         }}
         QPushButton#tag_manager_nav_btn:pressed {{
             background: {t['accent_dark']};
-            color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
+            color: {button_text_for_accent(t)};
         }}
         /* Keyboard-cursor state (2026-09-19, tag chip grid navigation) — this button never
            holds real Qt focus (see BookDetailPanel._tag_manager_kbd_selected's own comment
@@ -5289,7 +5806,7 @@ def get_stats_stylesheet(theme_name="default"):
            already uses for visual consistency. */
         QPushButton#tag_manager_nav_btn[keyboard_selected="true"] {{
             background: {t['accent']};
-            color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
+            color: {button_text_for_accent(t)};
         }}
         /* Book Detail's EQ tab (2026-10-02) — mirrors Settings > Audio's own slider rule
            (#balance_slider, #eq_slider_*) verbatim but under book_eq_* object names, since
@@ -5438,7 +5955,7 @@ def get_tags_stylesheet(theme_name="default"):
         }}
         QPushButton {{
             background: {accent_style};
-            color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
+            color: {button_text_for_accent(t)};
             border-radius: 4px;
             padding: 6px;
             font-weight: bold;
@@ -5473,11 +5990,11 @@ def get_tags_stylesheet(theme_name="default"):
         }}
         QPushButton#stats_reset_btn:hover {{
             background: {t['accent']};
-            color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
+            color: {button_text_for_accent(t)};
         }}
         QPushButton#stats_reset_btn:pressed {{
             background: {t['accent_dark']};
-            color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
+            color: {button_text_for_accent(t)};
         }}
         QLabel#stats_key_label {{
             color: {t['accent_light']};

@@ -16,7 +16,15 @@ These pin the properties that matter; the visual result is live-verified.
 """
 import pytest
 
-from fabulor.themes import _RAMP_MAX_MIX, _RAMP_MIN_MIX, preset_ramp_rgb
+from fabulor.themes import (
+    _RAMP_MAX_MIX,
+    _RAMP_MIN_MIX,
+    THEMES,
+    _resolve_theme,
+    _wcag_contrast,
+    preset_ramp_rgb,
+    ramp_text_colors,
+)
 
 THEME = {"bg_main": "#1A002E", "accent": "#D42020"}
 
@@ -34,14 +42,17 @@ def test_returns_three_channels_in_range():
 def test_first_step_is_not_the_background():
     # The old ramp started at alpha 75 (~29%), not 0 — the first button is a muted
     # accent, NOT invisible. A blend starting at the background would lose that.
+    #
+    # Note (2026-10-02): this no longer asserts "closer to bg than to accent" —
+    # that was the OLD plain-linear-RGB blend's distance profile specifically,
+    # and the brightness-floor boost (see preset_ramp_rgb's "2026-10-02
+    # brightness-eased blend" docstring note) deliberately moves the low end's
+    # BRIGHTNESS closer to the accent's own, as a direct fix for a live
+    # complaint that the dark end was too muddy. Distance-to-background is
+    # still the right invariant to pin; distance-to-accent is not, by design.
     first = _rgb(THEME, 0, 6)
     bg = (0x1A, 0x00, 0x2E)
     assert first != bg
-    # ...but it is much closer to the background than to the accent.
-    accent = (0xD4, 0x20, 0x20)
-    d_bg = sum(abs(a - b) for a, b in zip(first, bg))
-    d_ac = sum(abs(a - b) for a, b in zip(first, accent))
-    assert d_bg < d_ac
 
 
 def test_last_step_is_the_full_accent():
@@ -71,6 +82,118 @@ def test_missing_theme_keys_fall_back():
     assert _rgb({"accent": "#FFFFFF"}, 2, 6)
 
 
+def test_low_end_is_brighter_than_a_plain_linear_blend_would_give():
+    # The live complaint this fixes: on a theme whose bg_main and accent are
+    # both dark-ish (common for a themed accent color), the ramp's low end
+    # used to sit close to bg_main's own brightness and read as muddy. A plain
+    # linear blend at _RAMP_MIN_MIX (~0.294) toward accent (255,0,0) from a
+    # near-black bg_main would land near rgb(75,0,0) - the boosted version
+    # must land meaningfully brighter than that, not just "not equal".
+    theme = {"bg_main": "#0A0A0A", "accent": "#FF0000"}
+    plain_blend_r = round(0x0A + (0xFF - 0x0A) * _RAMP_MIN_MIX)
+    r, g, b = _rgb(theme, 0, 13)
+    assert r > plain_blend_r + 20
+
+
+def test_dark_end_override_is_honored():
+    # preset_ramp_dark_end (2026-10-02, Pryme's own request) lets a theme blend
+    # from a color other than its literal bg_main.
+    theme = {"bg_main": "#1A002E", "accent": "#D42020", "preset_ramp_dark_end": "#00FF00"}
+    assert _rgb(theme, 0, 13) != _rgb({"bg_main": "#1A002E", "accent": "#D42020"}, 0, 13)
+    # at ratio 0 (if _RAMP_MIN_MIX were 0) the dark end would be exactly the
+    # override; at the real _RAMP_MIN_MIX it should still read clearly greener
+    # than a theme using its own purple bg_main.
+    r, g, b = _rgb(theme, 0, 13)
+    assert g > r and g > b
+
+
+def test_bright_end_override_is_honored():
+    # preset_ramp_bright_end (2026-10-02, Pryme's own request) lets a theme blend
+    # toward a color other than its literal accent.
+    theme = {"bg_main": "#000000", "accent": "#D42020", "preset_ramp_bright_end": "#00FF00"}
+    # the LAST step (_RAMP_MAX_MIX == 1.0) must land on the override, not accent.
+    assert _rgb(theme, 12, 13) == (0x00, 0xFF, 0x00)
+
+
+def test_gradient_accent_themes_blend_toward_the_darker_gradient_endpoint():
+    # THE BUG (live, 2026-10-03, Dorian Gray): _get_gradient_style paints a real
+    # qlineargradient for every accent-background button (End of chapter, Set,
+    # the generic QPushButton rule) whenever a theme sets gradient_accent_start/
+    # gradient_accent_end — the flat `accent` key becomes unreachable fallback
+    # dead code for those buttons. preset_ramp_rgb didn't know this and always
+    # blended toward flat `accent` regardless, so on Dorian Gray (flat accent
+    # #BCB8B8, HSV value 0.74, brighter than EITHER gradient endpoint #8D8D8D/
+    # #686868, value 0.55/0.41) the ramp's brightest step rendered lighter than
+    # "End of chapter"/"Set"'s real gradient fill, and the gradient's dark
+    # corner was darker than the ramp's own darkest step — confirmed with real
+    # picked pixel values: 2 min = #7d7c7c (matches the ramp's step-0 math
+    # exactly), End of chapter's gradient corners = #8d8d8d / #686868 (matches
+    # gradient_accent_start/end exactly, neither of which the ramp ever used).
+    theme = {
+        "bg_main": "#333333",
+        "accent": "#BCB8B8",  # brighter than either gradient endpoint - must be ignored here
+        "gradient_accent_start": "#8D8D8D",
+        "gradient_accent_end": "#686868",
+    }
+    last = _rgb(theme, 12, 13)
+    # the brightest step must land on the DARKER gradient endpoint (#686868),
+    # never on flat accent (#BCB8B8) and never on the lighter endpoint.
+    assert last == (0x68, 0x68, 0x68)
+
+
+def test_explicit_bright_end_override_still_wins_over_gradient_keys():
+    # preset_ramp_bright_end must take priority over the gradient-endpoint
+    # fallback above, same as it already does over flat accent.
+    theme = {
+        "bg_main": "#000000",
+        "accent": "#BCB8B8",
+        "gradient_accent_start": "#8D8D8D",
+        "gradient_accent_end": "#686868",
+        "preset_ramp_bright_end": "#00FF00",
+    }
+    assert _rgb(theme, 12, 13) == (0x00, 0xFF, 0x00)
+
+
+def test_gradient_fallback_picks_darker_endpoint_regardless_of_start_end_order():
+    # The darker endpoint can be EITHER gradient_accent_start or _end depending
+    # on the theme's own gradient direction (Dorian Gray's darker color happens
+    # to be "end"; nothing guarantees that ordering for every theme) - the pick
+    # must be based on brightness, not positional convention.
+    theme_end_darker = {
+        "bg_main": "#000000", "accent": "#888888",
+        "gradient_accent_start": "#FFFFFF", "gradient_accent_end": "#111111",
+    }
+    assert _rgb(theme_end_darker, 12, 13) == (0x11, 0x11, 0x11)
+
+    theme_start_darker = {
+        "bg_main": "#000000", "accent": "#888888",
+        "gradient_accent_start": "#111111", "gradient_accent_end": "#FFFFFF",
+    }
+    assert _rgb(theme_start_darker, 12, 13) == (0x11, 0x11, 0x11)
+
+
+def test_every_real_theme_ramp_stays_monotonic_toward_its_own_accent():
+    # test_progression_is_monotonic_toward_the_accent (above) pins this against
+    # one synthetic purple-bg/red-accent pair, chosen specifically because a
+    # large hue gap between bg_main and accent is what exposed a real
+    # regression here once (2026-10-02): blending hue in HSV space took the
+    # "short way" around the color wheel through unrelated hues (a muddy
+    # yellow-brown appeared between a gray bg and a blue accent on the real
+    # "Blindsight" theme), breaking monotonicity. This repeats that check
+    # against every real theme's own bg_main/accent pair, not just one
+    # synthetic case, since 10 of 62 real themes have a >72-degree hue gap.
+    for name, raw in THEMES.items():
+        t = _resolve_theme(raw)
+        # preset_ramp_bright_end (2026-10-02) lets a theme blend toward something
+        # other than its literal accent — the ramp's TRUE target in that case,
+        # so monotonicity must be checked against it, not the bare accent key.
+        bright_end = t.get('preset_ramp_bright_end', t['accent'])
+        accent = tuple(int(bright_end.lstrip('#')[i:i + 2], 16) for i in (0, 2, 4))
+        dists = [sum(abs(a - b) for a, b in zip(_rgb(t, i, 13), accent))
+                  for i in range(13)]
+        assert dists == sorted(dists, reverse=True), f"{name} ramp is not monotonic toward its accent"
+
+
 def test_ramp_span_matches_the_old_alpha_range():
     # Guards the visual regression: the old ramp ran alpha 75..255 out of 255, and
     # the mix ratios must reproduce that span or the buttons visibly change.
@@ -82,3 +205,147 @@ def test_no_alpha_channel_is_emitted():
     # The whole point: three channels, never four. A fourth would reintroduce the
     # bleed-through this fix removes.
     assert len(preset_ramp_rgb(THEME, 3, 6).split(",")) == 3
+
+
+# --- ramp_text_colors (TODO.md "Some themes need a preset-ramp colour override") ---
+#
+# THE BUG (scan-found, see ramp_text_colors' docstring). The three ramp call
+# sites (Sleep/Speed/Sprint) painted every step with one flat `button_text`
+# color — correct for a fixed-background button, wrong for a ramp whose
+# background spans near-bg_main to full-accent within one row. A scan of all 62
+# themes found 49 with severe (<3:1) contrast failures against their own
+# button_text and 11 more borderline — only 2 themes passed.
+#
+# Three designs were tried and rejected live before this one shipped (full
+# detail in ramp_text_colors' own docstring): flat black/white per step ("I
+# hope you won't leave them just white and black"); per-step black/white
+# TINTED toward a theme hue, still deciding light-vs-dark independently per
+# step ("this works well up to 2.50, then it goes black all of a sudden");
+# and per-step direction at a lower contrast target, which still flipped
+# mid-ramp on a theme whose own ramp crosses the midpoint luminance more than
+# once ("aim for consistent dark or bright text anyway. I don't [want] those
+# abrupt switches"). The shipped version decides light-vs-dark ONCE for the
+# whole ramp and eases only VALUE continuously within that one direction —
+# the no-flip tests below are the regression net for exactly this property.
+
+
+def _text_rgb(hex_str):
+    h = hex_str.lstrip("#")
+    return tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))
+
+
+def test_returns_count_hex_colors():
+    results = ramp_text_colors(THEME, 6)
+    assert len(results) == 6
+    for result in results:
+        assert result.startswith("#") and len(result) == 7
+
+
+def test_single_direction_per_ramp_no_flip():
+    # The core regression this guards: once a ramp picks light-text or
+    # dark-text, EVERY step must use that same direction — max(r,g,b) (a
+    # brightness proxy) must move monotonically across the row, never swing
+    # back and forth. Checked against every real theme's own ramp, not just a
+    # synthetic one, since the bug that motivated this test (Fire and Blood,
+    # a saturated red theme) only showed up on a real theme's hue/background
+    # combination.
+    for name, raw in THEMES.items():
+        t = _resolve_theme(raw)
+        texts = ramp_text_colors(t, 13)
+        brightness = [max(_text_rgb(h)) for h in texts]
+        increasing = all(brightness[i] <= brightness[i + 1] for i in range(len(brightness) - 1))
+        decreasing = all(brightness[i] >= brightness[i + 1] for i in range(len(brightness) - 1))
+        assert increasing or decreasing, f"{name}'s ramp text flips direction: {brightness}"
+
+
+def test_tint_is_not_flat_black_or_white():
+    # The result must actually carry some of the theme's hue, not just be
+    # pure #000000/#ffffff every time — this is what distinguishes the
+    # shipped design from the first, rejected flat-black/white-only version.
+    # Uses a real theme (not the synthetic THEME, whose bare-minimum dict has
+    # no button_text and an accent that happens to land on hue 0.0 — i.e. the
+    # SAME hue pure red sits at, so its chosen anchor direction legitimately
+    # needs no tint and this property doesn't apply to it specifically).
+    t = _resolve_theme(THEMES["Blindsight"])
+    results = ramp_text_colors(t, 13)
+    carries_color = any(len(set(_text_rgb(h))) > 1 for h in results)
+    assert carries_color
+
+
+def test_override_hue_is_honored():
+    # preset_ramp_text_hue lets an individual theme hand-pick the tint hue
+    # directly, bypassing the derived button_text/accent chain.
+    theme = dict(THEME, preset_ramp_text_hue="#00FFFF")  # pure cyan
+    r, g, b = _text_rgb(ramp_text_colors(theme, 6)[0])
+    # cyan tint: green and blue should lead red, regardless of direction.
+    assert g >= r and b >= r
+
+
+def test_literal_text_color_override_is_used_verbatim():
+    # preset_ramp_text_color (2026-10-02, Pryme's own request: "I want the
+    # text to be what I set, nothing something to be derived from it") skips
+    # ALL derivation — every step gets exactly this color, not a hue fed
+    # through the contrast/direction machinery. Checked against a real theme
+    # (Rivendell) whose automatic hue-override result is known to land on
+    # flat black (its mid-tone ramp correctly picks the dark direction,
+    # which makes ANY hue invisible at HSV value=0) — the literal override
+    # must bypass that entirely and still show the requested color.
+    t = _resolve_theme(THEMES["Rivendell"])
+    theme = dict(t, preset_ramp_text_color="#FF0000")
+    results = ramp_text_colors(theme, 13)
+    assert all(r == "#FF0000" for r in results)
+
+
+def test_literal_text_color_takes_priority_over_hue_override():
+    # If both are set, the literal color wins — preset_ramp_text_hue still
+    # derives through the contrast machinery, which is exactly what the
+    # literal override exists to bypass.
+    theme = dict(THEME, preset_ramp_text_color="#00FF00", preset_ramp_text_hue="#FF0000")
+    assert all(r == "#00FF00" for r in ramp_text_colors(theme, 6))
+
+
+def test_most_themes_meet_a_relaxed_contrast_floor():
+    # Pryme's own call once the brightened ramp made full AA unnecessary: "I
+    # think we can get away with less contrast." The single-direction
+    # constraint means a small minority of themes (ramps whose own hue
+    # crosses the midpoint luminance, e.g. Violeta) can't hit even this
+    # relaxed floor on every step without reintroducing a flip — that's
+    # accepted, not a bug (see ramp_text_colors' docstring). This pins the
+    # SHAPE of that tradeoff: almost every theme clears 3.0:1 everywhere, and
+    # no theme ever drops to near-zero contrast.
+    #
+    # Note (2026-10-03): a "fix direction against pure black/white instead of
+    # the tinted candidates" change was tried here for Blood Meridian/Fire
+    # and Blood (whose tinted-pink "white" candidate scored artificially low)
+    # and REVERTED THE SAME SESSION — it silently flipped several OTHER
+    # already-correct themes (Dorian Gray, Blue Moranth) to the wrong
+    # direction, reported live. The tinted-candidate comparison is back to
+    # how it always was; Blood Meridian/Fire and Blood's dark-text-on-dark-
+    # background issue is still open, not yet fixed — see TODO.md if this is
+    # picked up again. Do not re-attempt the "pure black/white" direction
+    # fix without checking it against a broad theme sample first, not just
+    # the two themes it was built to fix.
+    # Themes with a LITERAL preset_ramp_text_color override are excluded from
+    # the floor/worst-case accounting below — that path returns the author's
+    # own chosen color verbatim, with no contrast guarantee, by design (same
+    # as `button_text_for_accent`'s identical exclusion). As Pryme's own
+    # per-theme tuning pass adds more of these, the count of themes "below
+    # the floor" on this metric grows for reasons that have nothing to do
+    # with this function's own derivation correctness — only themes still on
+    # the AUTOMATIC derivation path are meaningful here.
+    below_floor_themes = 0
+    absolute_worst = 99.0
+    for name, raw in THEMES.items():
+        t = _resolve_theme(raw)
+        if t.get('preset_ramp_text_color'):
+            continue
+        texts = ramp_text_colors(t, 13)
+        worst = min(
+            _wcag_contrast(tuple(int(v) for v in preset_ramp_rgb(t, i, 13).split(",")), _text_rgb(h))
+            for i, h in enumerate(texts)
+        )
+        absolute_worst = min(absolute_worst, worst)
+        if worst < 3.0:
+            below_floor_themes += 1
+    assert below_floor_themes <= 10, f"{below_floor_themes} themes below the 3.0 floor — expected a small minority"
+    assert absolute_worst >= 2.0, f"worst contrast {absolute_worst:.2f}:1 is too low to read at all"

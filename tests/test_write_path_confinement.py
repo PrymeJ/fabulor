@@ -227,13 +227,23 @@ class _FakeSpeedControls:
 
 
 def test_speed_apply_preset_ramp_colors_ignores_a_live_hover():
+    # Per-ramp text colors (ramp_text_colors, 2026-10-02) replaced the single flat
+    # button_text read this test used to assert directly — recompute the expected
+    # per-step colors the same way _apply_preset_ramp_colors does, against the
+    # COMMITTED theme, and confirm the hover theme's own ramp never leaks in.
     tm = _hovering_fake_tm()
     speed = _FakeSpeedControls(tm)
     speed._apply_preset_ramp_colors()
-    committed_text = themes._resolve_theme(COMMITTED)
-    committed_btn_text = committed_text.get('button_text', committed_text.get('text_on_light_bg', committed_text['text']))
-    for btn in speed._speed_grid_buttons:
-        assert f"color: {committed_btn_text}" in btn.stylesheet
+    committed_t = themes._resolve_theme(COMMITTED)
+    hover_t = themes._resolve_theme(HOVER)
+    committed_texts = themes.ramp_text_colors(committed_t, len(speed._speed_presets))
+    for i, btn in enumerate(speed._speed_grid_buttons):
+        committed_ramp = themes.preset_ramp_rgb(committed_t, i, len(speed._speed_presets))
+        assert f"background-color: rgb({committed_ramp.replace(',', ', ')})" in btn.stylesheet
+        assert f"color: {committed_texts[i]}" in btn.stylesheet
+        hover_ramp = themes.preset_ramp_rgb(hover_t, i, len(speed._speed_presets))
+        if hover_ramp != committed_ramp:
+            assert f"background-color: rgb({hover_ramp.replace(',', ', ')})" not in btn.stylesheet
 
 
 # ── SleepTimerPanel._apply_preset_ramp_colors ───────────────────────────────────────────────────
@@ -256,13 +266,22 @@ class _FakeSleepTimer:
 
 
 def test_sleep_apply_preset_ramp_colors_ignores_a_live_hover():
+    # Per-ramp text colors (ramp_text_colors, 2026-10-02) replaced the single flat
+    # button_text read this test used to assert directly — see the matching comment
+    # on test_speed_apply_preset_ramp_colors_ignores_a_live_hover above.
     tm = _hovering_fake_tm()
     sleep = _FakeSleepTimer(tm)
     sleep._apply_preset_ramp_colors()
-    committed_text = themes._resolve_theme(COMMITTED)
-    committed_btn_text = committed_text.get('button_text', committed_text.get('text_on_light_bg', committed_text['text']))
-    for btn in sleep._sleep_presets_buttons:
-        assert f"color: {committed_btn_text}" in btn.stylesheet
+    committed_t = themes._resolve_theme(COMMITTED)
+    hover_t = themes._resolve_theme(HOVER)
+    committed_texts = themes.ramp_text_colors(committed_t, len(sleep._sleep_presets_buttons))
+    for i, btn in enumerate(sleep._sleep_presets_buttons):
+        committed_ramp = themes.preset_ramp_rgb(committed_t, i, len(sleep._sleep_presets_buttons))
+        assert f"background-color: rgb({committed_ramp.replace(',', ', ')})" in btn.stylesheet
+        assert f"color: {committed_texts[i]}" in btn.stylesheet
+        hover_ramp = themes.preset_ramp_rgb(hover_t, i, len(sleep._sleep_presets_buttons))
+        if hover_ramp != committed_ramp:
+            assert f"background-color: rgb({hover_ramp.replace(',', ', ')})" not in btn.stylesheet
 
 
 # ── app._reload_excluded_books ──────────────────────────────────────────────────────────────────
