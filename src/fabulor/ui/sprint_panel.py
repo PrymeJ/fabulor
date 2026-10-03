@@ -212,6 +212,10 @@ class SprintPanel(QWidget):
         custom_time_layout.addWidget(self.custom_sprint_input)
 
         self.set_custom_btn = QPushButton("Set")
+        # Named so get_sprint_stylesheet's #panel_grid_set_btn rule (the
+        # same ramp-fold-in treatment as #panel_grid_eoc_btn) can target this
+        # one specific button — see that rule's own comment.
+        self.set_custom_btn.setObjectName("panel_grid_set_btn")
         self.set_custom_btn.setFixedHeight(25)
         self.set_custom_btn.clicked.connect(self._on_custom_sprint_time_set)
         custom_time_layout.addWidget(self.set_custom_btn)

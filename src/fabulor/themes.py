@@ -32,6 +32,7 @@ preset_ramp_text_color: (Optional) "#rrggbb" LITERAL text color for every step o
 preset_ramp_text_hue: (Optional) "#rrggbb" hue override for the Sleep/Speed/Sprint preset-ramp buttons' text color (see themes.ramp_text_colors). Only the HUE is read — one light/dark direction is chosen for the whole ramp, then saturation/value are computed per step to stay reasonably legible without flipping direction mid-ramp. Use if the derived button_text/accent hue still looks wrong for this theme. Fallback: button_text → text_on_light_bg → text if saturated enough to carry real color, else accent.
 preset_ramp_dark_end: (Optional) "#rrggbb" override for the DARK end the Sleep/Speed/Sprint preset-ramp blends FROM (see themes.preset_ramp_rgb). Checked before bg_main. Use if a theme's own bg_main is too close to its accent (in hue or brightness) for the ramp to read as a clear progression even after the brightness-floor boost. Fallback: bg_main.
 preset_ramp_bright_end: (Optional) "#rrggbb" override for the BRIGHT end the Sleep/Speed/Sprint preset-ramp blends TOWARD (see themes.preset_ramp_rgb). Checked before accent. Fallback: accent.
+preset_ramp_grid_buttons_keep_default: (Optional) bool, default-off. End of chapter/Set (Sleep/Sprint) fold into the ramp's BACKGROUND by default (2026-10-03) — same flat color as the ramp's own brightest step (_resolve_ramp_bright_end), replacing the generic QPushButton rule's gradient/flat-accent style for these two buttons specifically, so they never visually clash with the ramp sitting right next to them (a theme with gradient_accent_start/end previously painted EOC/Set with that gradient while the ramp stayed flat — reported live as discordant on Sunspear/Dorian Gray/Camorr). Set this True to opt a theme OUT of the fold-in and keep the old accent_style behavior (plain gradient or flat accent) instead — used on themes where the gradient on these two buttons was judged to look BETTER than folding in: Gravity's Rainbow, Shade of the Evening, Driftmark.
 
 GROUP 4 — PLAYER SLIDERS
 slider_overall_bg:    Background (groove) color of the main book progress bar.
@@ -1089,6 +1090,11 @@ THEMES = {
         "gradient_accent_start":         "#5AA898",
         "gradient_accent_end":           "#D4AA4A",
         "gradient_accent_angle":         45,
+        # 2026-10-03: keeps End of chapter/Set painting this gradient instead
+        # of folding into the ramp's flat bright-end color — Pryme's own
+        # live call, this is one of the themes where the gradient genuinely
+        # looks good there. See the theme-key doc block for the full account.
+        "preset_ramp_grid_buttons_keep_default": True,
         "gradient_slider_fill_start":    "#5AA898",
         "gradient_slider_fill_end":      "#8AD8C8",
         "gradient_slider_fill_angle":    90
@@ -1440,6 +1446,13 @@ THEMES = {
         "button_skip":                   "#156109",
         "button_chapter":                "#107500",
         "preset_ramp_bright_end":        "#E4DA42",
+        # 2026-10-03: keeps End of chapter/Set at flat accent (#00FF00)
+        # instead of folding into preset_ramp_bright_end's #E4DA42 — Pryme's
+        # own live call, after confirming it would otherwise fold in cleanly
+        # (no special-case needed) but preferring to keep the vivid green
+        # there specifically. See the theme-key doc block for the full
+        # account, including why this theme was flagged in the first place.
+        "preset_ramp_grid_buttons_keep_default": True,
         "slider_progress":               "#EBE5F7",
         "slider_overall_bg":             "#4B0082",
         "slider_overall_fill":           "#ED37B3",
@@ -2469,6 +2482,10 @@ THEMES = {
         "gradient_accent_start":         "#4A6FA5",
         "gradient_accent_end":           "#2A4A7A",
         "gradient_accent_angle":         90,
+        # 2026-10-03: keeps End of chapter/Set painting this gradient instead
+        # of folding into the ramp's flat bright-end color — Pryme's own
+        # live call. See the theme-key doc block for the full account.
+        "preset_ramp_grid_buttons_keep_default": True,
         "gradient_slider_fill_start":    "#4A6FA5",
         "gradient_slider_fill_end":      "#6A8FBD",
         "gradient_slider_fill_angle":    0
@@ -3431,6 +3448,47 @@ def _resolve_ramp_bright_end(theme):
         end_val = colorsys.rgb_to_hsv(*(c / 255 for c in end_rgb))[2]
         return grad_end if end_val <= start_val else grad_start
     return theme.get('accent')
+
+
+def _resolve_ramp_grid_button_style(theme, accent_style):
+    """QSS `background` value for End of chapter/Set (`#panel_grid_eoc_btn`/
+    `#panel_grid_set_btn`, Sleep/Sprint) — the preset ramp's OWN flat
+    brightest-step color (`_resolve_ramp_bright_end`) by default, or
+    `accent_style` (the generic QPushButton rule's own gradient-or-flat-
+    accent style) unchanged when the theme sets
+    `preset_ramp_grid_buttons_keep_default`.
+
+    WHY THIS EXISTS (2026-10-03, live-reported with 5 theme screenshots:
+    Sunspear, Driftmark, Dorian Gray, Camorr, Fire and Blood). These two
+    buttons sit directly beside the ramp's own last/brightest step and used
+    to paint via the generic QPushButton rule's `accent_style` — which is a
+    REAL GRADIENT whenever `gradient_accent_start`/`gradient_accent_end` are
+    set (`_get_gradient_style`), while the ramp itself (`preset_ramp_rgb`)
+    is ALWAYS a flat blended color, never a gradient. On a theme with
+    gradient keys, that put a visibly gradiented button right next to a flat
+    one — reported as discordant on Sunspear/Dorian Gray (both have gradient
+    keys). A SECOND, independent cause of the same symptom was found on
+    Gravity's Rainbow, which has NO gradient keys at all: its
+    `preset_ramp_bright_end` override (`#E4DA42`) only ever fed
+    `preset_ramp_rgb`/`button_text_for_accent`'s own background — it never
+    reached these two buttons, which kept painting flat `accent` (`#00FF00`)
+    regardless, producing a plain flat-color mismatch instead of a
+    gradient-vs-flat one. `_resolve_ramp_bright_end` already resolves BOTH
+    cases correctly (override, then darker gradient endpoint, then flat
+    accent) and was already proven correct for the ramp's own background —
+    reusing it here, rather than inventing a third independent resolution,
+    is what closes both causes with one fix (same reasoning as that
+    function's own "cannot drift out of sync" extraction note).
+
+    `preset_ramp_grid_buttons_keep_default` opts a theme OUT when Pryme
+    judged the OLD accent_style look better there specifically, checked live
+    theme-by-theme: Gravity's Rainbow, Shade of the Evening, Driftmark.
+    Every other theme folds in by default — no new key needed per-theme,
+    since most needed the fix and only a few needed to keep the old look.
+    """
+    if theme.get('preset_ramp_grid_buttons_keep_default'):
+        return accent_style
+    return _resolve_ramp_bright_end(theme)
 
 
 # Sleep/Speed preset-button ramp. Reproduces the span of the OLD alpha ramp
@@ -5016,8 +5074,20 @@ def get_settings_stylesheet(theme_name="default"):
     tab_hover_opacity = t.get('tab_hover_opacity', 0.85)
     tab_hover_text = t.get('tab_hover_text', t['text'])
     panel_dimmed_color = t.get('settings_theme_names_dimmed', t['accent_dark'])
+    grid_btn_style = _resolve_ramp_grid_button_style(t, accent_style)
 
     return get_panel_base_stylesheet(theme_name) + f"""
+        QPushButton#panel_grid_eoc_btn, QPushButton#panel_grid_set_btn {{
+            /* Fold End of chapter/Set into the preset ramp's own BACKGROUND —
+               see _resolve_ramp_grid_button_style's docstring and the
+               preset_ramp_grid_buttons_keep_default theme-key doc. An ID
+               selector always outranks the generic QPushButton type selector
+               below regardless of source order (CSS/QSS specificity), so
+               this wins without needing any particular placement — kept
+               near the top of this stylesheet for readability, grouped with
+               the ramp's own fold-in logic rather than buried after it. */
+            background: {grid_btn_style};
+        }}
         QLabel#theme_hint {{
             font-size: 12px;
             color: {t['accent']};
@@ -5587,8 +5657,15 @@ def get_sprint_stylesheet(theme_name="default"):
     """
     t = _resolve_theme(theme_name)
     accent_style = _get_gradient_style(t, "accent", t['accent'])
+    grid_btn_style = _resolve_ramp_grid_button_style(t, accent_style)
 
     return get_panel_base_stylesheet(theme_name) + f"""
+        QPushButton#panel_grid_eoc_btn, QPushButton#panel_grid_set_btn {{
+            /* Fold End of chapter/Set into the preset ramp's own BACKGROUND —
+               mirrors get_settings_stylesheet's identical rule (Sleep) —
+               see _resolve_ramp_grid_button_style's docstring. */
+            background: {grid_btn_style};
+        }}
         QLineEdit {{
             background-color: {t['bg_dropdown']};
             color: {t['text']};
