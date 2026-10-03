@@ -5529,8 +5529,22 @@ def get_sleep_stylesheet(theme_name="default"):
     """
     t = _resolve_theme(theme_name)
     accent_style = _get_gradient_style(t, "accent", t['accent'])
+    grid_btn_style = _resolve_ramp_grid_button_style(t, accent_style)
 
     return get_panel_base_stylesheet(theme_name) + f"""
+        QPushButton#panel_grid_eoc_btn, QPushButton#panel_grid_set_btn {{
+            /* Fold End of chapter/Set into the preset ramp's own BACKGROUND —
+               mirrors get_settings_stylesheet's/get_sprint_stylesheet's
+               identical rule — see _resolve_ramp_grid_button_style's
+               docstring. THIS is the actual sleep_panel stylesheet function
+               (get_settings_stylesheet, despite its name, styles the
+               SETTINGS tab's panel, not Sleep's — the original 2026-10-03
+               fold-in fix was added there and to get_sprint_stylesheet but
+               missed this one, since Sleep has its own dedicated function;
+               confirmed live the same day when Dorian Gray/Sunspear/Camorr's
+               Sleep panel still showed the old, un-folded-in background). */
+            background: {grid_btn_style};
+        }}
         QLineEdit {{
             background-color: {t['bg_dropdown']};
             color: {t['text']};

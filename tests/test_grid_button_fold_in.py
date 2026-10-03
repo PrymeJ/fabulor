@@ -30,13 +30,29 @@ documents). `preset_ramp_grid_buttons_keep_default` opts a theme OUT,
 checked live theme-by-theme by Pryme: Gravity's Rainbow, Shade of the
 Evening, Driftmark — each judged to look BETTER with the old accent_style
 there than folded in.
+
+THE MISSED PANEL (same day, found live): the first version of this fix
+added the rule to `get_settings_stylesheet` and `get_sprint_stylesheet` —
+but `get_settings_stylesheet` styles the SETTINGS TAB's own panel, not
+Sleep's. Sleep has its OWN dedicated `get_sleep_stylesheet` function
+(`theme_manager.py`'s `'sleep_panel': get_sleep_stylesheet(theme_name)`),
+which was missed entirely — confirmed live when Dorian Gray/Sunspear/
+Camorr's Sleep panel still showed the old, un-folded-in background after
+the first fix shipped ("Nope. The screenshots I gave is with your most
+recent changes" — ruled out staleness, traced to the wrong function). Fixed
+by adding the identical rule to `get_sleep_stylesheet` too. Tests below
+check `get_sleep_stylesheet` (the function that actually matters for the
+live Sleep panel) and `get_sprint_stylesheet`; `get_settings_stylesheet` is
+checked separately only because it happens to share the same rule (Settings
+tab has no End of chapter/Set of its own, so this is incidental, not load-
+bearing for the live bug).
 """
 from fabulor.themes import (
     THEMES,
     _resolve_ramp_bright_end,
     _resolve_ramp_grid_button_style,
     _resolve_theme,
-    get_settings_stylesheet,
+    get_sleep_stylesheet,
     get_sprint_stylesheet,
 )
 
@@ -84,31 +100,35 @@ def test_gravitys_rainbow_mismatch_is_fixed_when_not_opted_out():
     )
 
 
-def test_get_settings_stylesheet_eoc_set_rule_matches_ramp_bright_end_for_folded_in_themes():
+def test_get_sleep_stylesheet_eoc_set_rule_matches_ramp_bright_end_for_folded_in_themes():
+    # get_sleep_stylesheet is the function that actually backs the live
+    # Sleep panel (theme_manager.py: 'sleep_panel': get_sleep_stylesheet(...))
+    # — this is the function the original fix MISSED, see the module
+    # docstring's "THE MISSED PANEL" section.
     for name in FOLDED_IN_THEMES:
         t = _resolve_theme(name)
-        s = get_settings_stylesheet(name)
+        s = get_sleep_stylesheet(name)
         expected = _resolve_ramp_bright_end(t)
         assert f"background: {expected};" in s, f"{name}: expected EOC/Set background {expected} not found"
 
 
-def test_get_settings_stylesheet_eoc_set_rule_preserves_accent_style_for_opted_out_themes():
+def test_get_sleep_stylesheet_eoc_set_rule_preserves_accent_style_for_opted_out_themes():
     from fabulor.themes import _get_gradient_style
     for name in OPTED_OUT_THEMES:
         t = _resolve_theme(name)
-        s = get_settings_stylesheet(name)
+        s = get_sleep_stylesheet(name)
         expected = _get_gradient_style(t, "accent", t['accent'])
         assert f"background: {expected};" in s, f"{name}: expected unchanged accent_style not found"
 
 
-def test_get_sprint_stylesheet_mirrors_settings_stylesheet():
+def test_get_sprint_stylesheet_mirrors_sleep_stylesheet():
     for name in FOLDED_IN_THEMES + OPTED_OUT_THEMES:
         t = _resolve_theme(name)
-        settings_s = get_settings_stylesheet(name)
+        sleep_s = get_sleep_stylesheet(name)
         sprint_s = get_sprint_stylesheet(name)
         import re
         pattern = r"QPushButton#panel_grid_eoc_btn, QPushButton#panel_grid_set_btn \{[^}]*background: ([^;]+);"
-        m1 = re.search(pattern, settings_s)
+        m1 = re.search(pattern, sleep_s)
         m2 = re.search(pattern, sprint_s)
         assert m1 and m2, name
         assert m1.group(1) == m2.group(1), f"{name}: Sleep and Sprint disagree on EOC/Set background"
@@ -127,5 +147,5 @@ def test_fold_in_is_byte_for_byte_a_no_op_for_themes_with_no_relevant_keys():
     assert candidates, "expected at least one theme with none of these keys set"
     name = candidates[0]
     t = _resolve_theme(name)
-    s = get_settings_stylesheet(name)
+    s = get_sleep_stylesheet(name)
     assert f"background: {t['accent']};" in s
