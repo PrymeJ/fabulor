@@ -3579,9 +3579,13 @@ _RAMP_TEXT_MAX_VALUE_TRAVEL = 0.3  # caps how far a step's value may wander from
                                     # inline comment at its use site in ramp_text_colors for why an
                                     # uncapped sweep can silently reach the OPPOSITE pole
 _RAMP_TEXT_DESAT_STEP = 0.02      # search granularity for the sat-only fallback below
+_RAMP_TEXT_COVER_SAT_TIE_EPSILON = 0.03  # cover-theme direction-pick (is_cover_theme=True):
+                                           # below this average-saturation gap between the two
+                                           # directions' results, fall back to comparing contrast
+                                           # instead — see ramp_text_colors' is_cover_theme docstring
 
 
-def ramp_text_colors(theme, count):
+def ramp_text_colors(theme, count, is_cover_theme=False):
     """List of `count` "#rrggbb" text colors, one per `preset_ramp_rgb` step
     (index 0..count-1), for the Sleep/Speed/Sprint preset-ramp buttons.
 
@@ -3681,6 +3685,33 @@ def ramp_text_colors(theme, count):
     Belongs in `_NO_BASE_INHERIT_KEYS` if either key is ever set on "The
     Color Purple" (see that tuple's own doc note) — not there yet because no
     theme has needed it.
+
+    `is_cover_theme` (2026-10-03): the direction-pick below (tinted white vs.
+    tinted black candidate, by average contrast) was built and tuned entirely
+    against NAMED themes — Pryme's own hand-tuning pass worked through all 62
+    of them and confirmed the result legible everywhere, with `is_cover_theme`
+    left False (the default) at every one of their call sites. It silently
+    breaks on a cover-art-derived theme (`cover_theme.build_cover_theme`):
+    those dicts are far less saturated/contrasty than a hand-authored theme
+    (no `button_text`/`text_on_light_bg`, a `text` key around sat~0.2), so the
+    ramp's own ~14-step ramp sits in a narrow mid-luminance band where BOTH
+    tinted candidates score low average contrast and black wins by sheer
+    accident of being untinted at val=0 — reported live, 7 of 7 tested cover
+    art pieces all resolving to flat black regardless of how dark/light the
+    ramp buttons actually looked. Pryme's own framing, twice: "I don't want
+    pure blacks and whites... There should be something that would fit the
+    theme's dominant colors better" and "I am talking about cover art based
+    by the way. I already handled the named [themes]." So this parameter
+    gates a SECOND, cover-theme-only algorithm that trades a lower contrast
+    floor for staying visibly tinted: it runs the full per-step search in
+    BOTH directions, then keeps whichever direction's results have the
+    HIGHER average saturation (closer to the theme's own hue) rather than
+    the higher average contrast — breaking only the tie (within
+    `_RAMP_TEXT_COVER_SAT_TIE_EPSILON`) on contrast. Verified this does NOT
+    touch a single one of the 62 named themes' output (the parameter is only
+    ever True from a caller that already knows, via `get_committed_theme()`
+    returning a dict rather than a theme name, that it's resolving a cover
+    theme) — see test_preset_ramp.py for the full before/after sweep.
     """
     literal_hex = theme.get('preset_ramp_text_color')
     if literal_hex:
@@ -3713,65 +3744,117 @@ def ramp_text_colors(theme, count):
         for i in range(count)
     ]
 
-    white_candidate = tuple(round(c * 255) for c in colorsys.hsv_to_rgb(hue, _RAMP_TEXT_SAT, 1.0))
-    black_candidate = tuple(round(c * 255) for c in colorsys.hsv_to_rgb(hue, _RAMP_TEXT_SAT, 0.0))
-    avg_white = sum(_wcag_contrast(bg, white_candidate) for bg in backgrounds) / count
-    avg_black = sum(_wcag_contrast(bg, black_candidate) for bg in backgrounds) / count
-    toward_white = avg_white >= avg_black
-    anchor_val = 1.0 if toward_white else 0.0
-    value_step = -_RAMP_TEXT_VALUE_STEP if toward_white else _RAMP_TEXT_VALUE_STEP
+    def _search(toward_white):
+        """Per-step value-then-saturation search in ONE fixed direction —
+        see the inline comments below for the two-phase mechanism (value
+        sweep, then desaturation fallback). Returns a list of RGB tuples,
+        one per background."""
+        anchor_val = 1.0 if toward_white else 0.0
+        value_step = -_RAMP_TEXT_VALUE_STEP if toward_white else _RAMP_TEXT_VALUE_STEP
+        anchor_rgb = tuple(round(c * 255) for c in colorsys.hsv_to_rgb(hue, _RAMP_TEXT_SAT, anchor_val))
+        out = []
+        for bg in backgrounds:
+            val = anchor_val
+            candidate = None
+            while True:
+                nr, ng, nb = colorsys.hsv_to_rgb(hue, _RAMP_TEXT_SAT, val)
+                candidate = tuple(round(c * 255) for c in (nr, ng, nb))
+                if _wcag_contrast(bg, candidate) >= _RAMP_TEXT_TARGET_CONTRAST:
+                    break
+                nxt = val + value_step
+                # _RAMP_TEXT_MAX_VALUE_TRAVEL caps how far the sweep may wander from the
+                # anchor before giving up on value alone — WITHOUT this cap, the sweep
+                # would keep going all the way to the OPPOSITE pole (e.g. white anchor
+                # sweeping down to near-BLACK) whenever that is the only way to clear
+                # target against a particularly saturated background, which is exactly
+                # the per-step flip this function exists to prevent, just reached via a
+                # different mechanism than the rejected per-step-direction designs
+                # above. Confirmed live via trace on Fire and Blood (red theme, white
+                # anchor): step 7's sweep silently cleared 3.0:1 only at val=0.055 (near
+                # black) while every neighboring step stayed near white — same abrupt
+                # jump Pryme already rejected once, just produced by this fallback path
+                # instead of a direction flip.
+                if nxt < 0.0 or nxt > 1.0 or abs(nxt - anchor_val) > _RAMP_TEXT_MAX_VALUE_TRAVEL:
+                    # Value sweep alone can't reach target within the travel cap (a
+                    # midpoint-luminance or same-hue-as-background step — see
+                    # docstring). Fall back to reducing SATURATION at the anchor's OWN
+                    # extreme value (never `val`, which may have drifted toward the
+                    # wrong end of the sweep by this point — using it here would
+                    # reintroduce the exact flip this guards against). Desaturating
+                    # from the anchor only ever improves contrast and never moves away
+                    # from the chosen direction, so this cannot cost the no-flip
+                    # guarantee.
+                    sat = _RAMP_TEXT_SAT
+                    best = (anchor_rgb, _wcag_contrast(bg, anchor_rgb))
+                    while sat >= 0:
+                        nr, ng, nb = colorsys.hsv_to_rgb(hue, sat, anchor_val)
+                        desat_candidate = tuple(round(c * 255) for c in (nr, ng, nb))
+                        c = _wcag_contrast(bg, desat_candidate)
+                        if c > best[1]:
+                            best = (desat_candidate, c)
+                        if c >= _RAMP_TEXT_TARGET_CONTRAST:
+                            break
+                        sat -= _RAMP_TEXT_DESAT_STEP
+                    candidate = best[0]
+                    break
+                val = nxt
+            out.append(candidate)
+        return out
 
-    anchor_rgb = tuple(round(c * 255) for c in colorsys.hsv_to_rgb(hue, _RAMP_TEXT_SAT, anchor_val))
+    if not is_cover_theme:
+        # NAMED-THEME PATH — byte-for-byte the original mechanism, untouched.
+        # Direction is picked ONCE by comparing hue-tinted white/black
+        # candidates' average contrast (not the full per-step search output)
+        # — a cheap proxy that is good enough across all 62 hand-tuned named
+        # themes (verified, see test_preset_ramp.py) but NOT safe to reuse
+        # for cover themes (see is_cover_theme's docstring above).
+        white_candidate = tuple(round(c * 255) for c in colorsys.hsv_to_rgb(hue, _RAMP_TEXT_SAT, 1.0))
+        black_candidate = tuple(round(c * 255) for c in colorsys.hsv_to_rgb(hue, _RAMP_TEXT_SAT, 0.0))
+        avg_white = sum(_wcag_contrast(bg, white_candidate) for bg in backgrounds) / count
+        avg_black = sum(_wcag_contrast(bg, black_candidate) for bg in backgrounds) / count
+        toward_white = avg_white >= avg_black
+        rgb_results = _search(toward_white)
+    else:
+        # COVER-THEME PATH — run the real per-step search in BOTH directions,
+        # then keep whichever direction's own results stay more TINTED
+        # (higher average saturation), not whichever has more raw contrast.
+        # Picking by raw contrast here reliably picks pure black: a cover
+        # theme's low-saturation, mid-luminance ramp gives both directions
+        # mediocre contrast, and black wins that comparison purely because
+        # black is untinted (sat is undefined/irrelevant at val=0) while a
+        # light candidate is still visibly a tint of the theme's hue and so
+        # "loses" on contrast alone even though it looks far more at home.
+        # Ties within _RAMP_TEXT_COVER_SAT_TIE_EPSILON fall back to contrast.
+        results_white = _search(True)
+        results_black = _search(False)
+        sat_white = sum(colorsys.rgb_to_hsv(*(c / 255 for c in rgb))[1] for rgb in results_white) / count
+        sat_black = sum(colorsys.rgb_to_hsv(*(c / 255 for c in rgb))[1] for rgb in results_black) / count
+        if abs(sat_white - sat_black) > _RAMP_TEXT_COVER_SAT_TIE_EPSILON:
+            winning_results = results_white if sat_white > sat_black else results_black
+        else:
+            avg_white = sum(_wcag_contrast(bg, c) for bg, c in zip(backgrounds, results_white)) / count
+            avg_black = sum(_wcag_contrast(bg, c) for bg, c in zip(backgrounds, results_black)) / count
+            winning_results = results_white if avg_white >= avg_black else results_black
+        # COLLAPSE to a single representative candidate for the whole ramp —
+        # same "one decision, never per-step" guarantee the named-theme path
+        # gets for free (see this function's own module docstring: a per-step
+        # pick can flip abruptly partway through the row even when each step
+        # individually passes contrast). Unlike the named-theme path, the
+        # per-step results here genuinely do vary slightly between steps
+        # (each step's own desaturation search can stop at a slightly
+        # different saturation), so this path must explicitly pick ONE of
+        # them rather than returning the per-step list as-is. Picks the step
+        # whose own candidate has the LOWEST contrast against its background
+        # (the hardest-to-satisfy step) — using that step's color for every
+        # button guarantees every OTHER step (which needed less desaturation
+        # to pass) also clears target with that same color.
+        worst_i = min(
+            range(count),
+            key=lambda i: _wcag_contrast(backgrounds[i], winning_results[i]),
+        )
+        rgb_results = [winning_results[worst_i]] * count
 
-    results = []
-    for bg in backgrounds:
-        val = anchor_val
-        candidate = None
-        while True:
-            nr, ng, nb = colorsys.hsv_to_rgb(hue, _RAMP_TEXT_SAT, val)
-            candidate = tuple(round(c * 255) for c in (nr, ng, nb))
-            if _wcag_contrast(bg, candidate) >= _RAMP_TEXT_TARGET_CONTRAST:
-                break
-            nxt = val + value_step
-            # _RAMP_TEXT_MAX_VALUE_TRAVEL caps how far the sweep may wander from the
-            # anchor before giving up on value alone — WITHOUT this cap, the sweep
-            # would keep going all the way to the OPPOSITE pole (e.g. white anchor
-            # sweeping down to near-BLACK) whenever that is the only way to clear
-            # target against a particularly saturated background, which is exactly
-            # the per-step flip this function exists to prevent, just reached via a
-            # different mechanism than the rejected per-step-direction designs
-            # above. Confirmed live via trace on Fire and Blood (red theme, white
-            # anchor): step 7's sweep silently cleared 3.0:1 only at val=0.055 (near
-            # black) while every neighboring step stayed near white — same abrupt
-            # jump Pryme already rejected once, just produced by this fallback path
-            # instead of a direction flip.
-            if nxt < 0.0 or nxt > 1.0 or abs(nxt - anchor_val) > _RAMP_TEXT_MAX_VALUE_TRAVEL:
-                # Value sweep alone can't reach target within the travel cap (a
-                # midpoint-luminance or same-hue-as-background step — see
-                # docstring). Fall back to reducing SATURATION at the anchor's OWN
-                # extreme value (never `val`, which may have drifted toward the
-                # wrong end of the sweep by this point — using it here would
-                # reintroduce the exact flip this guards against). Desaturating
-                # from the anchor only ever improves contrast and never moves away
-                # from the chosen direction, so this cannot cost the no-flip
-                # guarantee.
-                sat = _RAMP_TEXT_SAT
-                best = (anchor_rgb, _wcag_contrast(bg, anchor_rgb))
-                while sat >= 0:
-                    nr, ng, nb = colorsys.hsv_to_rgb(hue, sat, anchor_val)
-                    desat_candidate = tuple(round(c * 255) for c in (nr, ng, nb))
-                    c = _wcag_contrast(bg, desat_candidate)
-                    if c > best[1]:
-                        best = (desat_candidate, c)
-                    if c >= _RAMP_TEXT_TARGET_CONTRAST:
-                        break
-                    sat -= _RAMP_TEXT_DESAT_STEP
-                candidate = best[0]
-                break
-            val = nxt
-        results.append("#" + "".join(f"{c:02x}" for c in candidate))
-
-    return results
+    return ["#" + "".join(f"{c:02x}" for c in candidate) for candidate in rgb_results]
 
 
 _BUTTON_TEXT_TARGET_CONTRAST = 4.5  # full WCAG AA — unlike the ramp, this is a single

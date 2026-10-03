@@ -483,12 +483,20 @@ class SleepTimerPanel(QWidget):
         hover-inclusive answer either.
         """
         from ..themes import _resolve_theme
-        t = _resolve_theme(self.theme_manager.get_committed_theme())
+        committed = self.theme_manager.get_committed_theme()
+        t = _resolve_theme(committed)
         # One text color decision for the WHOLE ramp (never per-step) — see
         # ramp_text_colors' docstring (themes.py) for why: a per-step pick can
         # make the text flip abruptly partway through the row even when each
         # step individually passes contrast, which read as broken live.
-        ramp_texts = ramp_text_colors(t, len(self._sleep_presets_buttons))
+        # is_cover_theme=True whenever get_committed_theme() returned a dict
+        # (cover-art mode) rather than a theme name — see ramp_text_colors'
+        # is_cover_theme docstring for why cover themes need a different
+        # direction-pick (reported live 2026-10-03: 7 of 7 tested covers
+        # resolved to flat black under the named-theme algorithm).
+        ramp_texts = ramp_text_colors(
+            t, len(self._sleep_presets_buttons), is_cover_theme=isinstance(committed, dict)
+        )
 
         for i, btn in enumerate(self._sleep_presets_buttons):
             # OPAQUE ramp (2026-07-28). This used to set an ALPHA ramp (75..255) on

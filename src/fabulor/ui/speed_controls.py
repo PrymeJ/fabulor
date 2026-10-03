@@ -288,12 +288,17 @@ class SpeedControlsPanel(QWidget):
         hover-inclusive answer either.
         """
         from ..themes import _resolve_theme
-        t = _resolve_theme(self.theme_manager.get_committed_theme())
+        committed = self.theme_manager.get_committed_theme()
+        t = _resolve_theme(committed)
         # One text color decision for the WHOLE ramp (never per-step) — see
         # ramp_text_colors' docstring (themes.py) for why: a per-step pick can
         # make the text flip abruptly partway through the row even when each
         # step individually passes contrast, which read as broken live.
-        ramp_texts = ramp_text_colors(t, len(self._speed_presets))
+        # is_cover_theme — see SleepTimerPanel._apply_preset_ramp_colors's
+        # identical comment for the full reasoning.
+        ramp_texts = ramp_text_colors(
+            t, len(self._speed_presets), is_cover_theme=isinstance(committed, dict)
+        )
 
         for i, btn in enumerate(self._speed_grid_buttons):
             # OPAQUE ramp (2026-07-28). This used to set an ALPHA ramp

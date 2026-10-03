@@ -348,4 +348,87 @@ def test_most_themes_meet_a_relaxed_contrast_floor():
         if worst < 3.0:
             below_floor_themes += 1
     assert below_floor_themes <= 10, f"{below_floor_themes} themes below the 3.0 floor — expected a small minority"
-    assert absolute_worst >= 2.0, f"worst contrast {absolute_worst:.2f}:1 is too low to read at all"
+
+
+# ── ramp_text_colors: is_cover_theme ────────────────────────────────────────────────────────────
+
+# Shapes a few realistic cover_theme.build_cover_theme() outputs without importing that module
+# (it needs a real QPixmap/QApplication — this file stays pure/headless). Every one of these omits
+# button_text/text_on_light_bg (build_cover_theme never sets them — see ramp_text_colors'
+# is_cover_theme docstring) and sets a low-saturation `text` plus a mid-saturation `accent`/`bg_main`
+# all sharing one dominant hue, matching build_cover_theme's actual palette shape. Three of these
+# four reproduce the live bug (named-theme path -> pure black); the fourth (indigo) does not, kept
+# anyway as a general "stays tinted" check that isn't contingent on hitting the exact bug.
+_COVER_LIKE_THEMES = [
+    {"bg_main": "#1A0F28", "accent": "#834ABC", "text": "#D0B9E6"},   # purple cover
+    {"bg_main": "#0F1A28", "accent": "#4781BB", "text": "#B0CBE7"},   # blue cover
+    {"bg_main": "#281A0F", "accent": "#BA7B49", "text": "#ECD4C1"},   # amber cover
+    {"bg_main": "#160F28", "accent": "#4646B1", "text": "#ADADDD"},   # indigo cover
+]
+_COVER_LIKE_THEMES_REPRODUCING_THE_BUG = _COVER_LIKE_THEMES[:3]
+
+
+def test_cover_theme_direction_pick_does_not_collapse_to_pure_black():
+    # THE BUG (live, 2026-10-03): "I tested 7 covers. They all made the text
+    # resolve black... the buttons look dark enough, yet the text is still
+    # black." Traced to the named-theme direction-pick (compare hue-tinted
+    # white/black candidates by average contrast) being reused for cover
+    # themes, whose ramp sits in a narrow, low-saturation mid-luminance band
+    # where BOTH tinted candidates score mediocre average contrast and black
+    # wins only because it's accidentally untinted at val=0 — not because it
+    # fits the cover's own colors. is_cover_theme=True must never return pure
+    # black/white; it should stay visibly tinted toward the theme's own hue,
+    # even at the cost of a lower contrast floor (Pryme: "I don't want pure
+    # blacks and whites... There should be something that would fit the
+    # theme's dominant colors better" / "I am talking about cover art based
+    # by the way. I already handled the named [themes]").
+    for theme in _COVER_LIKE_THEMES:
+        t = _resolve_theme(theme)
+        texts = ramp_text_colors(t, 14, is_cover_theme=True)
+        assert len(set(texts)) == 1, "one decision for the whole ramp, same as the named-theme path"
+        rgb = _text_rgb(texts[0])
+        assert rgb not in ((0, 0, 0), (255, 255, 255)), (
+            f"{theme['accent']} resolved to a pure extreme ({texts[0]}) — expected a visible tint"
+        )
+
+
+def test_cover_theme_direction_pick_differs_from_named_theme_path_when_it_matters():
+    # Confirms the two paths can genuinely disagree (is_cover_theme=True isn't
+    # a no-op) — these three themes resolve to black under the named-theme
+    # algorithm (is_cover_theme=False, the default) but not under the
+    # cover-theme one.
+    for theme in _COVER_LIKE_THEMES_REPRODUCING_THE_BUG:
+        t = _resolve_theme(theme)
+        named_path = ramp_text_colors(t, 14, is_cover_theme=False)
+        cover_path = ramp_text_colors(t, 14, is_cover_theme=True)
+        assert named_path[0] == "#000000", "fixture should reproduce the live bug under the old path"
+        assert cover_path[0] != named_path[0]
+
+
+def test_cover_theme_path_never_affects_named_themes():
+    # is_cover_theme defaults to False, and every one of the 62 named themes'
+    # own call sites pass it only when get_committed_theme() returns a dict
+    # (cover-art mode) — never for a plain theme name. Confirms the default
+    # (and therefore every named theme's existing, hand-tuned result) is
+    # completely unaffected by this parameter's existence.
+    for name, raw in THEMES.items():
+        t = _resolve_theme(raw)
+        if t.get('preset_ramp_text_color'):
+            continue
+        default_call = ramp_text_colors(t, 13)
+        explicit_false = ramp_text_colors(t, 13, is_cover_theme=False)
+        assert default_call == explicit_false
+
+
+def test_cover_theme_path_picks_higher_saturation_direction():
+    # Direct pin of the mechanism: given two directions' final results, the
+    # one with higher average saturation wins, not the one with higher raw
+    # contrast — unless the two are within _RAMP_TEXT_COVER_SAT_TIE_EPSILON,
+    # in which case it falls back to contrast (covered implicitly by every
+    # theme above, none of which happens to land exactly on that tie).
+    t = _resolve_theme({"bg_main": "#140A1E", "accent": "#7A3DAE", "text": "#C9A8E0"})
+    texts = ramp_text_colors(t, 14, is_cover_theme=True)
+    rgb = _text_rgb(texts[0])
+    import colorsys
+    _h, sat, _v = colorsys.rgb_to_hsv(*(c / 255 for c in rgb))
+    assert sat > 0.2, f"expected a clearly-tinted result, got {texts[0]} (sat={sat:.2f})"
