@@ -562,19 +562,26 @@ class SleepTimerPanel(QWidget):
             )
 
         # end_chap_btn/set_custom_btn: TEXT COLOR ONLY, borrowed directly from the
-        # ramp's own already-computed decision (ramp_texts is one color repeated
-        # for every step — see the comment above) — not a second, independent
-        # contrast calculation. Reported live 2026-10-03 (cover-art-based theme,
-        # before any named theme was even checked): these two buttons' text used
-        # button_text_for_accent(t) via the panel's generic QPushButton QSS rule,
-        # a DIFFERENT calculation against a DIFFERENT (flat accent) background
-        # than what the ramp buttons use — close enough to look like it should
-        # match, different enough to visibly not. Pryme's own framing: "The text
-        # of these two buttons will use the text color of other ramp-up buttons.
-        # Nothing fancier than this." Background/hover/pressed are deliberately
-        # left alone — these two buttons are NOT part of the ramp's per-index
-        # blend, only their text color should borrow from it.
-        eoc_set_text = ramp_texts[0] if ramp_texts else None
+        # LAST preset button's own already-computed ramp text color (ramp_texts
+        # is one color repeated for every step as of 2026-10-03 — see the comment
+        # above — so [-1] and [0] are currently identical, but [-1] is used
+        # deliberately: these two sit visually AFTER "90 min" in the grid, so if
+        # ramp_text_colors is ever changed to vary per step again, End of
+        # chapter/Set should fold into the ramp as a continuation of its LAST
+        # step, not silently keep reading whatever index 0 happens to be) — not
+        # a second, independent contrast calculation. Reported live 2026-10-03
+        # (cover-art-based theme, before any named theme was even checked):
+        # these two buttons' text used button_text_for_accent(t) via the panel's
+        # generic QPushButton QSS rule, a DIFFERENT calculation against a
+        # DIFFERENT (flat accent) background than what the ramp buttons use —
+        # close enough to look like it should match, different enough to
+        # visibly not. Pryme's own framing: "The text of these two buttons will
+        # use the text color of other ramp-up buttons. Nothing fancier than
+        # this" / "If it is getting too complex, just use the last button's
+        # text color. Like 90m." Background/hover/pressed are deliberately left
+        # alone — these two buttons are NOT part of the ramp's per-index blend,
+        # only their text color should borrow from it.
+        eoc_set_text = ramp_texts[-1] if ramp_texts else None
         if eoc_set_text:
             self.end_chap_btn.setStyleSheet(f"QPushButton {{ color: {eoc_set_text}; }}")
             self.set_custom_btn.setStyleSheet(f"QPushButton {{ color: {eoc_set_text}; }}")

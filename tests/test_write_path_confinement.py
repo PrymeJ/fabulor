@@ -292,15 +292,21 @@ def test_sleep_end_chap_and_set_borrow_the_ramps_text_color():
     # a different calculation than the ramp buttons' own ramp_text_colors, close
     # enough to look like it should match and different enough to visibly not.
     # Pryme: "The text of these two buttons will use the text color of other
-    # ramp-up buttons. Nothing fancier than this." Confirms both buttons get a
-    # color-only stylesheet carrying the ramp's own text color, and that it also
-    # respects write-path confinement (committed theme, never the live hover).
+    # ramp-up buttons. Nothing fancier than this" / "If it is getting too
+    # complex, just use the last button's text color. Like 90m." Confirms both
+    # buttons get a color-only stylesheet carrying the LAST ramp step's own
+    # text color (index -1, not 0 — same value today since ramp_text_colors
+    # is still a single flat color per ramp, but [-1] is the deliberate
+    # choice so these two fold in as a continuation of the ramp's last/
+    # brightest step if per-step variation is ever reintroduced), and that it
+    # also respects write-path confinement (committed theme, never the live
+    # hover).
     tm = _hovering_fake_tm()
     sleep = _FakeSleepTimer(tm)
     sleep._apply_preset_ramp_colors()
     committed_t = themes._resolve_theme(COMMITTED)
     committed_texts = themes.ramp_text_colors(committed_t, len(sleep._sleep_presets_buttons))
-    expected = f"QPushButton {{ color: {committed_texts[0]}; }}"
+    expected = f"QPushButton {{ color: {committed_texts[-1]}; }}"
     assert sleep.end_chap_btn.stylesheet == expected
     assert sleep.set_custom_btn.stylesheet == expected
 

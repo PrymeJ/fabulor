@@ -1066,12 +1066,13 @@ class SprintPanel(QWidget):
             )
 
         # _eoc_btn/set_custom_btn: TEXT COLOR ONLY, borrowed directly from the
-        # ramp's own already-computed decision — mirrors SleepTimerPanel.
-        # _apply_preset_ramp_colors's identical fix exactly (2026-10-03). See
-        # that method's comment for the full reasoning. Background/hover/pressed
-        # are deliberately left alone — these two buttons are not part of the
-        # ramp's per-index blend, only their text color should borrow from it.
-        eoc_set_text = ramp_texts[0] if ramp_texts else None
+        # LAST preset button's own ramp text color — mirrors SleepTimerPanel.
+        # _apply_preset_ramp_colors's identical fix exactly (2026-10-03,
+        # including the [-1]-not-[0] choice; see that method's comment for the
+        # full reasoning). Background/hover/pressed are deliberately left
+        # alone — these two buttons are not part of the ramp's per-index
+        # blend, only their text color should borrow from it.
+        eoc_set_text = ramp_texts[-1] if ramp_texts else None
         if eoc_set_text:
             self._eoc_btn.setStyleSheet(f"QPushButton {{ color: {eoc_set_text}; }}")
             self.set_custom_btn.setStyleSheet(f"QPushButton {{ color: {eoc_set_text}; }}")
