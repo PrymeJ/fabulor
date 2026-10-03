@@ -211,10 +211,10 @@ class SprintPanel(QWidget):
         self.custom_sprint_input.keyPressEvent = _sprint_input_key
         custom_time_layout.addWidget(self.custom_sprint_input)
 
-        set_custom_btn = QPushButton("Set")
-        set_custom_btn.setFixedHeight(25)
-        set_custom_btn.clicked.connect(self._on_custom_sprint_time_set)
-        custom_time_layout.addWidget(set_custom_btn)
+        self.set_custom_btn = QPushButton("Set")
+        self.set_custom_btn.setFixedHeight(25)
+        self.set_custom_btn.clicked.connect(self._on_custom_sprint_time_set)
+        custom_time_layout.addWidget(self.set_custom_btn)
         custom_time_layout.addStretch()
         layout.addLayout(custom_time_layout)
 
@@ -1059,6 +1059,17 @@ class SprintPanel(QWidget):
                 f"QWidget#sprint_panel[kbdnav=\"true\"] QPushButton:focus:hover {{ "
                 f"background-color: rgb({hover_c.red()}, {hover_c.green()}, {hover_c.blue()}); }}"
             )
+
+        # _eoc_btn/set_custom_btn: TEXT COLOR ONLY, borrowed directly from the
+        # ramp's own already-computed decision — mirrors SleepTimerPanel.
+        # _apply_preset_ramp_colors's identical fix exactly (2026-10-03). See
+        # that method's comment for the full reasoning. Background/hover/pressed
+        # are deliberately left alone — these two buttons are not part of the
+        # ramp's per-index blend, only their text color should borrow from it.
+        eoc_set_text = ramp_texts[0] if ramp_texts else None
+        if eoc_set_text:
+            self._eoc_btn.setStyleSheet(f"QPushButton {{ color: {eoc_set_text}; }}")
+            self.set_custom_btn.setStyleSheet(f"QPushButton {{ color: {eoc_set_text}; }}")
 
     def begin_ramp_highlight_fade(self, btn) -> None:
         """Called by MainWindow when the traveling marker starts fading on `btn` —

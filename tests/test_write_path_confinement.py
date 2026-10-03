@@ -263,6 +263,8 @@ class _FakeSleepTimer:
     def __init__(self, theme_manager):
         self.theme_manager = theme_manager
         self._sleep_presets_buttons = [_FakeSleepButton() for _ in range(3)]
+        self.end_chap_btn = _FakeSleepButton()
+        self.set_custom_btn = _FakeSleepButton()
 
 
 def test_sleep_apply_preset_ramp_colors_ignores_a_live_hover():
@@ -282,6 +284,25 @@ def test_sleep_apply_preset_ramp_colors_ignores_a_live_hover():
         hover_ramp = themes.preset_ramp_rgb(hover_t, i, len(sleep._sleep_presets_buttons))
         if hover_ramp != committed_ramp:
             assert f"background-color: rgb({hover_ramp.replace(',', ', ')})" not in btn.stylesheet
+
+
+def test_sleep_end_chap_and_set_borrow_the_ramps_text_color():
+    # 2026-10-03: end_chap_btn/set_custom_btn used to fall through to the panel's
+    # generic QPushButton QSS rule (button_text_for_accent against flat accent) —
+    # a different calculation than the ramp buttons' own ramp_text_colors, close
+    # enough to look like it should match and different enough to visibly not.
+    # Pryme: "The text of these two buttons will use the text color of other
+    # ramp-up buttons. Nothing fancier than this." Confirms both buttons get a
+    # color-only stylesheet carrying the ramp's own text color, and that it also
+    # respects write-path confinement (committed theme, never the live hover).
+    tm = _hovering_fake_tm()
+    sleep = _FakeSleepTimer(tm)
+    sleep._apply_preset_ramp_colors()
+    committed_t = themes._resolve_theme(COMMITTED)
+    committed_texts = themes.ramp_text_colors(committed_t, len(sleep._sleep_presets_buttons))
+    expected = f"QPushButton {{ color: {committed_texts[0]}; }}"
+    assert sleep.end_chap_btn.stylesheet == expected
+    assert sleep.set_custom_btn.stylesheet == expected
 
 
 # ── app._reload_excluded_books ──────────────────────────────────────────────────────────────────

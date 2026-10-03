@@ -145,10 +145,10 @@ class SleepTimerPanel(QWidget):
         self.custom_sleep_input.keyPressEvent = _sleep_input_key
         custom_time_layout.addWidget(self.custom_sleep_input)
 
-        set_custom_btn = QPushButton("Set")
-        set_custom_btn.setFixedHeight(25)
-        set_custom_btn.clicked.connect(self._on_custom_sleep_time_set)
-        custom_time_layout.addWidget(set_custom_btn)
+        self.set_custom_btn = QPushButton("Set")
+        self.set_custom_btn.setFixedHeight(25)
+        self.set_custom_btn.clicked.connect(self._on_custom_sleep_time_set)
+        custom_time_layout.addWidget(self.set_custom_btn)
         custom_time_layout.addStretch()
         layout.addLayout(custom_time_layout)
 
@@ -552,6 +552,24 @@ class SleepTimerPanel(QWidget):
                 f"QWidget#sleep_panel[kbdnav=\"true\"] QPushButton:focus:hover {{ "
                 f"background-color: rgb({hover_c.red()}, {hover_c.green()}, {hover_c.blue()}); }}"
             )
+
+        # end_chap_btn/set_custom_btn: TEXT COLOR ONLY, borrowed directly from the
+        # ramp's own already-computed decision (ramp_texts is one color repeated
+        # for every step — see the comment above) — not a second, independent
+        # contrast calculation. Reported live 2026-10-03 (cover-art-based theme,
+        # before any named theme was even checked): these two buttons' text used
+        # button_text_for_accent(t) via the panel's generic QPushButton QSS rule,
+        # a DIFFERENT calculation against a DIFFERENT (flat accent) background
+        # than what the ramp buttons use — close enough to look like it should
+        # match, different enough to visibly not. Pryme's own framing: "The text
+        # of these two buttons will use the text color of other ramp-up buttons.
+        # Nothing fancier than this." Background/hover/pressed are deliberately
+        # left alone — these two buttons are NOT part of the ramp's per-index
+        # blend, only their text color should borrow from it.
+        eoc_set_text = ramp_texts[0] if ramp_texts else None
+        if eoc_set_text:
+            self.end_chap_btn.setStyleSheet(f"QPushButton {{ color: {eoc_set_text}; }}")
+            self.set_custom_btn.setStyleSheet(f"QPushButton {{ color: {eoc_set_text}; }}")
 
     def begin_ramp_highlight_fade(self, btn) -> None:
         """Called by MainWindow when the traveling marker starts fading on `btn` —
