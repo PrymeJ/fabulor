@@ -4,7 +4,7 @@ import time
 from PySide6.QtWidgets import QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QGridLayout, QLineEdit
 from PySide6.QtCore import Qt, QEvent, QRect, QRegularExpression, Signal, QTimer
 from PySide6.QtGui import QRegularExpressionValidator, QColor
-from ..themes import preset_ramp_rgb, ramp_text_colors
+from ..themes import preset_ramp_rgb, ramp_text_colors, safe_ramp_hover_factor
 from ..player import _CHAPTER_WALK_TOLERANCE
 from mpv import ShutdownError
 from .line_edit_dragfix import DragSafeLineEdit
@@ -1036,7 +1036,11 @@ class SprintPanel(QWidget):
             ramp_rgb = preset_ramp_rgb(t, i, len(self._sprint_presets_buttons))
             c = QColor(*(int(v) for v in ramp_rgb.split(',')))
             btn_text = ramp_texts[i]
-            hover_c = c.lighter(130)
+            # safe_ramp_hover_factor (2026-10-03) — see SpeedControlsPanel._apply_
+            # preset_ramp_colors's identical comment for the full reasoning.
+            # Returns 130 unchanged whenever that's already safe.
+            hover_factor = safe_ramp_hover_factor((c.red(), c.green(), c.blue()), btn_text, 130)
+            hover_c = c.lighter(hover_factor)
             pressed_c = c.darker(130)
             # Cached on the button itself so begin_ramp_highlight_fade (called from
             # MainWindow when the traveling marker starts fading) doesn't need to

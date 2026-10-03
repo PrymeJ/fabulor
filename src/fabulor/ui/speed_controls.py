@@ -1,7 +1,7 @@
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QGridLayout
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor
-from ..themes import preset_ramp_rgb, ramp_text_colors
+from ..themes import preset_ramp_rgb, ramp_text_colors, safe_ramp_hover_factor
 from .ramp_highlight_fade import RampHighlightFade
 from mpv import ShutdownError
 
@@ -315,7 +315,18 @@ class SpeedControlsPanel(QWidget):
             # reproduced here explicitly or these buttons never visibly react to
             # hover/press (found live 2026-07-21 — same shape as the sleep panel's
             # time-preset ramp, see sleep_timer.py's update_panel_styling).
-            hover_c = c.lighter(130)
+            # safe_ramp_hover_factor (2026-10-03): the fixed lighter(130) below had
+            # no awareness of btn_text's contrast against the LIGHTENED background —
+            # invisible on most themes (plenty of margin), but on a cover theme whose
+            # ramp already sits in a narrow, bright band, lightening further could
+            # tank a borderline-but-acceptable resting contrast on hover (reported
+            # live: "the contrast becomes an issue on hover as the highlight is too
+            # bright... not all covers cause this, so we should let the calculation
+            # stay the same if it won't cause a contrast issue, but tame the unruly
+            # ones"). Returns 130 unchanged whenever that's already safe — a safe
+            # theme's hover color is untouched by this call.
+            hover_factor = safe_ramp_hover_factor((c.red(), c.green(), c.blue()), btn_text, 130)
+            hover_c = c.lighter(hover_factor)
             pressed_c = c.darker(130)
             # Cached on the button itself so begin_ramp_highlight_fade (called from
             # MainWindow when the traveling marker starts fading) doesn't need to

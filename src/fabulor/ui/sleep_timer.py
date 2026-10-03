@@ -2,7 +2,7 @@ import time
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QGridLayout, QLineEdit, QApplication
 from PySide6.QtCore import Qt, QRegularExpression, Signal, QTimer, QEvent
 from PySide6.QtGui import QRegularExpressionValidator, QColor
-from ..themes import preset_ramp_rgb, ramp_text_colors
+from ..themes import preset_ramp_rgb, ramp_text_colors, safe_ramp_hover_factor
 from ..player import _CHAPTER_WALK_TOLERANCE
 from .title_bar import RightClickButton
 from mpv import ShutdownError
@@ -513,7 +513,11 @@ class SleepTimerPanel(QWidget):
             # reproduced here explicitly or these buttons never visibly react to
             # hover/press (found live 2026-07-21 — the ramp had silently had no
             # hover state since it was introduced).
-            hover_c = c.lighter(130)
+            # safe_ramp_hover_factor (2026-10-03) — see SpeedControlsPanel's
+            # identical comment for the full reasoning. Returns 130 unchanged
+            # whenever that's already safe.
+            hover_factor = safe_ramp_hover_factor((c.red(), c.green(), c.blue()), btn_text, 130)
+            hover_c = c.lighter(hover_factor)
             pressed_c = c.darker(130)
             # Cached on the button itself so begin_ramp_highlight_fade (called from
             # MainWindow when the traveling marker starts fading) doesn't need to

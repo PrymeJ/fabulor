@@ -3887,6 +3887,81 @@ def ramp_text_colors(theme, count, is_cover_theme=False):
     return ["#" + "".join(f"{c:02x}" for c in candidate) for candidate in rgb_results]
 
 
+_RAMP_HOVER_TARGET_CONTRAST = 2.5  # relaxed further than the ramp's own 3.0 — this only
+                                     # ever PULLS BACK an already-chosen hover lighten factor,
+                                     # never improves on what the resting state itself has (see
+                                     # safe_ramp_hover_factor's docstring); using the ramp's own
+                                     # 3.0 here would make this function fight steps whose
+                                     # RESTING contrast is already below 3.0 (accepted there by
+                                     # design, e.g. the cover-theme sat floor's own tradeoff) —
+                                     # it would always bottom out at min_factor for those, which
+                                     # is correct, but then LOOKS indistinguishable from "this
+                                     # function is broken" rather than "this step was already a
+                                     # known tradeoff." 2.5 keeps it strictly about hover-specific
+                                     # degradation, not re-litigating the resting-state target.
+_RAMP_HOVER_FACTOR_STEP = 2  # QColor.lighter()-factor search granularity
+
+
+def safe_ramp_hover_factor(bg_rgb, text_hex, requested_factor, min_factor=100):
+    """Largest lighten factor <= `requested_factor` (in the same units as
+    `QColor.lighter(factor)` — 100 = no change) for which `text_hex` still
+    clears `_RAMP_HOVER_TARGET_CONTRAST` against `bg_rgb` lightened by that
+    factor. Never returns less than `min_factor` (100 by default — "no
+    lightening at all," never darker than the resting background itself).
+
+    WHY THIS EXISTS (2026-10-03, live-reported: "the contrast becomes an
+    issue on hover as the highlight is too bright... not all covers cause
+    this, so we should let the calculation stay the same if it won't cause a
+    contrast issue, but tame the unruly ones"). Every one of Sleep/Speed/
+    Sprint's `_apply_preset_ramp_colors` computes a per-step hover color as
+    `QColor(base).lighter(130)` — a fixed 30% brightness boost with zero
+    awareness of the text color about to sit on top of it. This is invisible
+    on most themes (the ramp's own text-color search already has margin to
+    spare), but on a cover theme whose ramp sits in a narrow, already-bright
+    band (see `ramp_text_colors`' `is_cover_theme` path), lightening a
+    step's background further can tank what was a borderline-but-acceptable
+    resting contrast to as low as 1.2:1 on hover — confirmed live on a dark
+    green cover (step 11: resting 2.09:1, hover 1.22:1 at the fixed
+    factor=130).
+
+    Implemented in plain `colorsys` (this module stays Qt-free — see
+    `preset_ramp_rgb`'s own docstring) rather than taking a `QColor`:
+    `QColor.lighter(factor)` is a pure `value *= factor/100` operation in
+    HSV with hue/saturation held fixed (confirmed empirically before relying
+    on it, not assumed) — replicated here exactly, so a caller can convert
+    the returned factor straight into its own `QColor(...).lighter(factor)`
+    call and get an identical result to what this function evaluated.
+
+    Searches DOWNWARD from `requested_factor` in `_RAMP_HOVER_FACTOR_STEP`
+    increments — the requested factor is always tried FIRST and returned
+    unchanged if it already clears target, so a safe theme's hover color is
+    untouched byte-for-byte (same QColor construction, same result) by this
+    function's mere existence. Deliberately bottoms out at `min_factor`
+    rather than clearing the target at any cost: if even NO lightening can't
+    clear `_RAMP_HOVER_TARGET_CONTRAST`, the step's resting-state contrast
+    was already below that (an accepted tradeoff upstream, not something
+    this function should try to re-litigate by, say, darkening further or
+    picking a different text color) — in that case hover simply stops being
+    brighter than rest, which is the best available answer here.
+    """
+    bg_h, bg_s, bg_v = colorsys.rgb_to_hsv(*(c / 255 for c in bg_rgb))
+    text_rgb = _hex_to_rgb_tuple(text_hex, '#ffffff')
+
+    def _lighten(factor):
+        v2 = min(1.0, bg_v * factor / 100)
+        r, g, b = colorsys.hsv_to_rgb(bg_h, bg_s, v2)
+        return tuple(round(c * 255) for c in (r, g, b))
+
+    factor = requested_factor
+    while factor > min_factor:
+        if _wcag_contrast(_lighten(factor), text_rgb) >= _RAMP_HOVER_TARGET_CONTRAST:
+            break
+        factor -= _RAMP_HOVER_FACTOR_STEP
+    else:
+        factor = min_factor
+    return max(factor, min_factor)
+
+
 _BUTTON_TEXT_TARGET_CONTRAST = 4.5  # full WCAG AA — unlike the ramp, this is a single
                                      # flat background, not a 13-step gradient, so there
                                      # is no "midpoint valley" forcing a lower target

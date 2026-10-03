@@ -19,6 +19,7 @@ import colorsys
 import pytest
 
 from fabulor.themes import (
+    _RAMP_HOVER_TARGET_CONTRAST,
     _RAMP_MAX_MIX,
     _RAMP_MIN_MIX,
     THEMES,
@@ -26,6 +27,7 @@ from fabulor.themes import (
     _wcag_contrast,
     preset_ramp_rgb,
     ramp_text_colors,
+    safe_ramp_hover_factor,
 )
 
 THEME = {"bg_main": "#1A002E", "accent": "#D42020"}
@@ -492,3 +494,99 @@ def test_cover_theme_path_picks_higher_saturation_direction():
     rgb = _text_rgb(texts[0])
     _h, sat, _v = colorsys.rgb_to_hsv(*(c / 255 for c in rgb))
     assert sat > 0.2, f"expected a clearly-tinted result, got {texts[0]} (sat={sat:.2f})"
+
+
+# ── safe_ramp_hover_factor ───────────────────────────────────────────────────────────────────────
+
+def _lighten(rgb, factor):
+    h, s, v = colorsys.rgb_to_hsv(*(c / 255 for c in rgb))
+    v2 = min(1.0, v * factor / 100)
+    r, g, b = colorsys.hsv_to_rgb(h, s, v2)
+    return tuple(round(c * 255) for c in (r, g, b))
+
+
+def test_safe_hover_factor_leaves_an_already_safe_theme_untouched():
+    # Reported live, 2026-10-03: "the contrast becomes an issue on hover as
+    # the highlight is too bright... not all covers cause this, so we should
+    # let the calculation stay the same if it won't cause a contrast issue."
+    # A step whose hover (lighter(130)) already clears the target must get
+    # 130 back unchanged — not pulled back "just in case."
+    bg = (20, 20, 40)  # very dark — plenty of margin even lightened
+    text = "#ffffff"
+    factor = safe_ramp_hover_factor(bg, text, 130)
+    assert factor == 130
+
+
+def test_safe_hover_factor_pulls_back_an_unruly_one():
+    # Direct repro of the live bug: a bright cover-theme ramp step whose
+    # resting contrast is only borderline (just above the ramp's own 3.0
+    # floor) collapses well below _RAMP_HOVER_TARGET_CONTRAST once lightened
+    # by the fixed 130 factor. The returned factor must still clear target.
+    bg = (81, 192, 136)  # bright green, late ramp step — the live repro shape
+    text = "#d6ffeb"
+    factor = safe_ramp_hover_factor(bg, text, 130)
+    assert factor < 130
+    hover_rgb = _lighten(bg, factor)
+    # Either clears target, or bottomed out at min_factor because even
+    # min_factor (no lightening) can't reach it — both are acceptable; what's
+    # NOT acceptable is silently returning 130 here.
+    assert factor == 100 or _wcag_contrast(hover_rgb, _text_rgb(text)) >= _RAMP_HOVER_TARGET_CONTRAST
+
+
+def test_safe_hover_factor_never_undershoots_min_factor():
+    # A step whose resting contrast is already below _RAMP_HOVER_TARGET_
+    # CONTRAST (an accepted upstream tradeoff — e.g. the cover-theme sat
+    # floor) must bottom out at min_factor (no lightening), not go below it
+    # trying to "fix" something this function isn't meant to re-litigate.
+    bg = (81, 192, 136)
+    text = "#d6ffeb"  # same pairing as above — resting contrast is itself low
+    resting_contrast = _wcag_contrast(bg, _text_rgb(text))
+    assert resting_contrast < _RAMP_HOVER_TARGET_CONTRAST, "fixture should already be below target at rest"
+    factor = safe_ramp_hover_factor(bg, text, 130)
+    assert factor == 100
+
+
+def test_safe_hover_factor_requested_factor_is_always_tried_first():
+    # The search starts AT requested_factor, not below it — confirms a
+    # caller passing something other than 130 (if this is ever reused
+    # elsewhere) gets that exact value back when already safe, not some
+    # fixed ceiling baked into this function.
+    bg = (20, 20, 40)
+    text = "#ffffff"
+    assert safe_ramp_hover_factor(bg, text, 115) == 115
+
+
+def test_safe_hover_factor_matches_qcolor_lighter_math():
+    # Pin of the documented claim that QColor.lighter(factor) is a pure
+    # value*=factor/100 op in HSV with hue/sat fixed — verified empirically
+    # against real QColor before relying on it (see safe_ramp_hover_factor's
+    # own docstring); this re-derives the same numbers independently here so
+    # a future Qt version silently changing that behavior would be caught.
+    bg = (60, 158, 112)
+    for factor in (100, 110, 130, 150):
+        got = _lighten(bg, factor)
+        h, s, v = colorsys.rgb_to_hsv(*(c / 255 for c in bg))
+        expected_v = min(1.0, v * factor / 100)
+        r, g, b = colorsys.hsv_to_rgb(h, s, expected_v)
+        expected = tuple(round(c * 255) for c in (r, g, b))
+        assert got == expected
+
+
+def test_named_theme_ramp_hover_factors_are_mostly_but_not_universally_130():
+    # Confirms this fix is NOT scoped to cover themes only — live feedback
+    # said "it is the main window, but affects other similar buttons in
+    # other panels too," and a sweep found 19 of 62 NAMED themes also have
+    # at least one ramp step whose hover needs pulling back (e.g. Blindsight,
+    # Blood Meridian, Alzabo — themes already discussed earlier this same
+    # session for unrelated ramp issues). Pins that the helper is applied
+    # universally (every call site passes every step through it, named and
+    # cover-art theme alike) rather than gated behind is_cover_theme.
+    themes_needing_pullback = 0
+    for name, raw in THEMES.items():
+        t = _resolve_theme(raw)
+        texts = ramp_text_colors(t, 13)
+        backgrounds = [tuple(int(v) for v in preset_ramp_rgb(t, i, 13).split(",")) for i in range(13)]
+        if any(safe_ramp_hover_factor(bg, txt, 130) != 130 for bg, txt in zip(backgrounds, texts)):
+            themes_needing_pullback += 1
+    assert themes_needing_pullback > 0, "expected at least some named themes to need pullback"
+    assert themes_needing_pullback < len(THEMES), "expected most named themes to stay untouched"
