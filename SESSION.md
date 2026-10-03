@@ -1,3 +1,90 @@
+## Session Summary — 2026-10-03 Session 2 — Derived Book Detail session-history row colors for 22 themes that were silently inheriting The Color Purple's literal purple (cover-art themes confirmed to hit the identical bug, not yet fixed).
+
+**The bug.** `session_history_row_one`/`session_history_row_two` (Book Detail's History
+tab alternating-row background) are documented in `themes.py`'s theme-key doc block as
+falling back to `library_row_one/two → bg_main` when a theme doesn't set them — but that
+fallback was never actually implemented in code. The real mechanism is `_resolve_theme`'s
+generic base-copy: any key not listed in `_NO_BASE_INHERIT_KEYS` silently inherits The
+Color Purple's own literal hardcoded hex (`#22003D`/`#170129`) when a theme doesn't set
+it. `session_history_row_one/two` were never added to that exclusion list, so 22 named
+themes — several with warm/green/red `bg_main`s (Red Rising deep red, Emiko/Highgarden
+green, Goldfinch red) — showed a stark, disconnected purple History tab regardless of
+their own palette. Confirmed the cover-art theme path (`build_cover_theme`, which never
+sets these keys either) hits the exact same bug live, via a synthetic green-palette cover
+dict that resolved to the same literal `#22003D`.
+
+Investigation only, no fix, in the first pass of this work — Pryme: "Investigation only.
+Do not fix anything yet." Full cross-check against each affected theme's own `bg_main`/
+`library_row_one` ruled out a second, distinct "always-blue" bucket Pryme suspected: 13
+themes that DO set the key explicitly to a blue/teal/purple hex (Shrike, Solaris, Syl
+Anagist, Turquoise Days, Urras, Tigana, etc.) all tracked their OWN theme's genuinely
+blue/purple identity closely — not a bug, just blue themes being blue. Every real anomaly
+traced back to the single missing-`_NO_BASE_INHERIT_KEYS`-entry root cause.
+
+**Scope correction, mid-session.** The TODO.md/artifact entry this traced back to
+("Theme-pass-adjacent color work," 3 bundled items) turned out to have shrunk to 1
+surviving entry already — the other two (a two-color ramp override key for Speed/Sleep/
+Sprint grid buttons; ramp-button-vs-label contrast on a cover-based theme, "2666" the
+known bad case) were resolved by the earlier 2026-10-03 Session 1 work and had already
+dropped out of TODO.md. Confirmed via direct grep before touching the artifact, rather
+than assuming the bundle was still 3-wide.
+
+**Deriving the fix, not guessing it.** Pryme named which of the 38 explicitly-set themes
+he actually trusted as hand-tuned (not a quick alphabetical pass he caught some early
+gaps in): "These are all good and can be used to derive the colors... Darlington Hall is
+a partial theme. I skipped the ones close to black or too grey. Rebma needs to be fixed."
+Also corrected three themes I'd flagged as "missing" that were actually intentional
+Purple-coincidences he wanted kept as-is for Alzabo/Violeta (purple-identity themes where
+the literal Purple fallback happens to look right) — Chatsubo specifically confirmed
+correct ("same kind of purple") and left untouched; Eyes of Ibad flagged as genuinely
+uncertain, so treated as needing a real fix rather than assumed-fine.
+
+Measured the hand-tuned sample's row1/row2 value-channel deltas relative to `bg_main`
+(hue/sat preserved in every case but one outlier — Darlington Hall, where `bg_main` itself
+isn't representative of that theme's real palette). Row2 showed a tight, reliable signal
+(median -0.0275 value vs. bg_main) across the mid-brightness range; row1 showed genuine
+per-theme wobble with no extractable rule — reported this honestly rather than inventing a
+formula for it ("I can't derive that part honestly"), and asked Pryme directly which
+simplification to use rather than picking one myself. He chose "row1 = bg_main nudged
+slightly lighter" over "unchanged" or "nudged darker." Final formula: row1 = bg_main +0.025
+value, row2 = row1 -0.03 value, with a floor-case flip (both nudge UP instead) below
+bg_main value 0.09, matching the Blindsight/Castle Dracula/Storm's End shape already
+present in the hand-tuned sample.
+
+**Explicit instruction on shape of the fix:** "I need you to leave the already fixed
+ones and fill the themes.py with the manual keys after your calculations rather than a
+helper code for all the themes, including the already fixed ones. So run your helper
+calculations, but do not incorporate it into the codebase, just the resulting keys."
+No derivation function shipped — only literal hex pairs written into each theme's dict,
+calculated in a scratch script and discarded.
+
+**Second bug found along the way:** Rebma's existing entry only ever set
+`session_history_row_one`, never `row_two` — a half-set pair masked by `_resolve_theme`
+silently filling the missing `row_two` from Purple's inherited fallback, so it looked
+complete on a casual read. Replaced both values; the fix also removed an orphaned
+duplicate `session_history_row_one` line left over from a first insertion-script attempt
+that mis-sequenced line-index shifts (reverted cleanly via `git checkout`, redone
+bottom-to-top so earlier indices never shift mid-edit — verified purely additive both
+times via `git diff --stat` before and after).
+
+**Fixed 22 themes:** Alzabo, Area X, Blue Moranth, Camorr, Cerulean Sea, Crimson Guard,
+Driftmark, Emiko, Eyes of Ibad, Goldfinch, Gravity's Rainbow, Highgarden, Midnight
+Children, Méséglise, Pink Institute, Piranesi, Plum Island, Pyke, Red Rising, Shade of
+the Evening, Violeta, Rebma. Chatsubo deliberately left on the Purple-inherited fallback
+(confirmed coincidentally correct). 38 previously hand-tuned themes untouched. Full test
+suite green (622 tests) after the fix; verified no duplicate keys, correct values on all
+22, and a purely-additive diff (44 insertions, 1 deletion — the Rebma orphan line) before
+committing. Commit `91e412c`.
+
+**Still open, deliberately not touched this session:** the cover-art theme path itself
+(`build_cover_theme`) still doesn't set these keys and will still hit the literal-Purple
+bug live — this session only fixed the 22 named themes per Pryme's explicit "fill the
+literal keys" instruction; cover-art's own fix (presumably a bg_main-relative derivation
+inside `cover_theme.py` itself, since that function already derives everything else the
+same way) is follow-up work, not yet scheduled.
+
+---
+
 ## Session Summary — 2026-10-03 Session 1 — Full pass on the TODO.md "Preset-ramp color override needed for three low-contrast themes" item, which expanded into ramp background/text fixes, a new cover-art-themes-only contrast-safety track for the main transport button and ramp hover, and folding End of chapter/Set into the ramp's own colors across Sleep/Speed/Sprint.
 
 **Preset-ramp background brightness + text no-flip (earlier in session, before compaction).**

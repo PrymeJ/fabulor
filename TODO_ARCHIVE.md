@@ -2268,3 +2268,25 @@ order these entries had in TODO.md before the split (2026-07-30).
   2000ms's near-static sway) — Pryme's own call, confirmed by the numbers rather than assumed.
   Net result: ~90% sustained CPU while Stats' Timeline tab is open, before → ~18-31% after,
   correctly and repeatably measured.
+
+- [2026-10-03] **Named-theme session-history row colors derived for 22 themes that were silently
+  inheriting The Color Purple's literal `#22003D`/`#170129`** — `session_history_row_one`/`two`
+  (Book Detail's History tab) were documented to fall back to `library_row_one/two → bg_main` but
+  that fallback was never implemented; the real mechanism (`_resolve_theme`'s base-copy skipping
+  only `_NO_BASE_INHERIT_KEYS`) silently inherited Purple's own hardcoded purple for any theme that
+  didn't set the key, disconnected from themes with warm/green/red palettes (Red Rising, Emiko,
+  Highgarden, Goldfinch). Formula reverse-engineered from the ~38 themes Pryme confirmed as
+  genuinely hand-tuned (not a blanket "all explicitly-set themes," since some were quick
+  alphabetical-pass gaps he'd caught, and two — Darlington Hall, Rebma — were flagged as partial/
+  broken): row1 = bg_main nudged slightly lighter (+0.025 value), row2 = row1 darkened a further
+  ~0.03 value, with a floor-case flip (both nudge UP instead) below bg_main value 0.09. Fixed 22
+  themes: Alzabo, Area X, Blue Moranth, Camorr, Cerulean Sea, Crimson Guard, Driftmark, Emiko, Eyes
+  of Ibad, Goldfinch, Gravity's Rainbow, Highgarden, Midnight Children, Méséglise, Pink Institute,
+  Piranesi, Plum Island, Pyke, Red Rising, Shade of the Evening, Violeta, Rebma (also fixed a
+  second, distinct bug: Rebma's dict only ever set `row_one`, never `row_two`). Chatsubo
+  deliberately left on the Purple-inherited fallback (confirmed coincidentally correct, "same kind
+  of purple"). No helper/derivation function was added to the codebase — literal hex pairs only,
+  per Pryme's explicit instruction, so each could be checked one by one. Cover-art theme path
+  (`build_cover_theme`) confirmed to hit the identical bug but deliberately left unfixed this
+  session — see TODO.md's updated entry for that follow-up. Commit `91e412c`. Full narrative:
+  SESSION.md, 2026-10-03 Session 2.
