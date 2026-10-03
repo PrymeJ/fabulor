@@ -3848,9 +3848,20 @@ def button_text_for_accent(theme):
         bg_hex = '888888'
     bg = tuple(int(bg_hex[i:i + 2], 16) for i in (0, 2, 4))
 
-    white_candidate = tuple(round(c * 255) for c in colorsys.hsv_to_rgb(hue, _BUTTON_TEXT_SAT, 1.0))
-    black_candidate = tuple(round(c * 255) for c in colorsys.hsv_to_rgb(hue, _BUTTON_TEXT_SAT, 0.0))
-    toward_white = _wcag_contrast(bg, white_candidate) >= _wcag_contrast(bg, black_candidate)
+    # Direction-pick uses PURE black/white, not the hue-tinted candidates the
+    # search below uses. A hue-tinted "white" (val=1, sat=_BUTTON_TEXT_SAT) can
+    # be a weak pastel tint of the source hue — e.g. a red-hued button_text
+    # against a saturated red accent tints "white" to a salmon (255,128,128),
+    # which contrasts far worse than true white would. Comparing against the
+    # tinted candidates then picks black purely because black is accidentally
+    # untinted at val=0 regardless of hue/sat, not because black genuinely has
+    # more contrast headroom. Found 2026-10-03 on Blood Meridian/Fire and
+    # Blood (both red-on-red): verified via a full 62-theme sweep that this
+    # narrower fix (direction only; the subsequent search keeps using tinted
+    # candidates) improves 5 themes and regresses none — unlike the earlier,
+    # reverted attempt to make the WHOLE search pure black/white, which broke
+    # already-correct themes (see test_preset_ramp.py's matching note).
+    toward_white = _wcag_contrast(bg, (255, 255, 255)) >= _wcag_contrast(bg, (0, 0, 0))
     anchor_val = 1.0 if toward_white else 0.0
     value_step = -_BUTTON_TEXT_VALUE_STEP if toward_white else _BUTTON_TEXT_VALUE_STEP
     anchor_rgb = tuple(round(c * 255) for c in colorsys.hsv_to_rgb(hue, _BUTTON_TEXT_SAT, anchor_val))

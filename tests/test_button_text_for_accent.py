@@ -50,18 +50,35 @@ def test_fixes_the_reported_melnibonean_regression():
 
 
 def test_most_themes_meet_full_aa_contrast():
-    # Verified against all 62 real themes: only a handful (highly saturated
-    # accent colors like Blood Meridian's dark red, where even pure black/white
-    # can't do much better) fall slightly short of 4.5 — accepted, same shape
-    # as ramp_text_colors' own documented exceptions.
+    # Verified against all 62 real themes: every theme now clears 4.5:1 (see
+    # the direction-pick fix below) — the >8-below-floor ceiling here is
+    # deliberately loose headroom for future theme tuning, not a sign any
+    # are currently expected to fall short.
     #
     # Note (2026-10-03): a "fix direction against pure black/white instead of
-    # the tinted candidates" change was tried here for Blood Meridian/Fire and
-    # Blood and REVERTED THE SAME SESSION — see the matching note in
-    # tests/test_preset_ramp.py's test_most_themes_meet_a_relaxed_contrast_
-    # floor for why (it silently broke other, already-correct themes). Blood
-    # Meridian/Fire and Blood's dark-text-on-dark-background issue is still
-    # open, not yet fixed.
+    # the tinted candidates" change was tried here EARLIER THE SAME SESSION
+    # for Blood Meridian/Fire and Blood and REVERTED — see the matching note
+    # in tests/test_preset_ramp.py's test_most_themes_meet_a_relaxed_contrast_
+    # floor for why (it broke other, already-correct themes there). That
+    # revert applied to `ramp_text_colors` (a 13-step GRADIENT background,
+    # where "pure black/white has more average headroom" does not reliably
+    # hold — re-verified this same session: applying the identical change
+    # there regresses Not the Only Fruit/Red Rising/Sunspear). It does NOT
+    # apply here: `button_text_for_accent` targets a single FLAT background,
+    # where pure black/white genuinely is the correct question ("which pole
+    # has more contrast headroom") and the old tinted-candidate comparison
+    # could pick black only because black happens to be untinted at val=0
+    # regardless of hue — not because it was actually the better choice. A
+    # full 62-theme sweep of this narrower, direction-only fix (the value/
+    # desaturation SEARCH that follows direction-pick still uses the
+    # hue-tinted candidates, unchanged) found zero regressions and 5
+    # improvements (Blindsight, Blood Meridian, Crimson Guard, Fire and
+    # Blood, Winterfell) — closing the Blood Meridian/Fire and Blood
+    # "End of chapter"/"Set" wrong-direction-text issue that was previously
+    # left open. Verify any FUTURE direction-pick change the same way: run it
+    # against the full 62-theme set and look for regressions, not just the
+    # theme(s) that prompted it — this is the second time this exact
+    # distinction (flat background vs. gradient background) has mattered.
     #
     # Note (2026-10-03, second entry): a same-day attempt to also route this
     # function's background/text through preset_ramp_bright_end/preset_ramp_
@@ -84,6 +101,24 @@ def test_most_themes_meet_full_aa_contrast():
             below_floor += 1
     assert below_floor <= 8, f"{below_floor} themes below 4.5:1 — expected a small minority"
     assert absolute_worst >= 2.5, f"worst contrast {absolute_worst:.2f}:1 is too low"
+
+
+def test_fixes_the_blood_meridian_and_fire_and_blood_regression():
+    # THE BUG (2026-10-03, found and fixed same session as the leak revert
+    # above): both themes' button_text/text_on_light_bg hue is red, same
+    # family as their own saturated red accent. The direction-pick used to
+    # compare hue-TINTED white/black candidates (sat=_BUTTON_TEXT_SAT) —
+    # tinted "white" at that saturation is a pale red/salmon, which contrasts
+    # far worse against a red accent than true white does, so black won the
+    # comparison by accident (black is untinted at val=0 regardless of hue),
+    # not because it was genuinely the better pole. Fixed by deciding
+    # direction against PURE black/white while leaving the subsequent
+    # hue-tinted value/desaturation search unchanged.
+    for name in ("Blood Meridian", "Fire and Blood"):
+        t = _resolve_theme(THEMES[name])
+        accent = _text_rgb(t['accent'])
+        text = _text_rgb(button_text_for_accent(t))
+        assert _wcag_contrast(accent, text) >= 4.5, name
 
 
 def test_same_hue_as_background_does_not_break():
