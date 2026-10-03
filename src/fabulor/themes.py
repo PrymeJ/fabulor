@@ -3583,6 +3583,14 @@ _RAMP_TEXT_COVER_SAT_TIE_EPSILON = 0.03  # cover-theme direction-pick (is_cover_
                                            # below this average-saturation gap between the two
                                            # directions' results, fall back to comparing contrast
                                            # instead — see ramp_text_colors' is_cover_theme docstring
+_RAMP_TEXT_COVER_SAT_FLOOR = 0.15  # cover-theme path's desaturation floor — the named-theme
+                                     # path's own fallback can desaturate all the way to 0 (pure
+                                     # black/white), which is correct there (verified against all
+                                     # 62 hand-tuned themes) but on a cover theme with a bright/
+                                     # saturated accent (e.g. a vivid green) left several LATER
+                                     # ramp steps a hair from pure white — "Pure white with many
+                                     # covers," reported live. This floor trades contrast margin
+                                     # for guaranteed visible hue; see ramp_text_colors' docstring
 
 
 def ramp_text_colors(theme, count, is_cover_theme=False):
@@ -3744,11 +3752,23 @@ def ramp_text_colors(theme, count, is_cover_theme=False):
         for i in range(count)
     ]
 
-    def _search(toward_white):
+    def _search(toward_white, sat_floor=0.0):
         """Per-step value-then-saturation search in ONE fixed direction —
         see the inline comments below for the two-phase mechanism (value
         sweep, then desaturation fallback). Returns a list of RGB tuples,
-        one per background."""
+        one per background.
+
+        `sat_floor` (2026-10-03): the desaturation fallback's lower bound —
+        0.0 (full desaturation allowed, pure black/white reachable) for the
+        named-theme path's own calls, unchanged. The cover-theme path passes
+        `_RAMP_TEXT_COVER_SAT_FLOOR` instead: reported live that several
+        cover themes with a bright/saturated accent (e.g. a vivid green)
+        needed near-total desaturation to clear target on their later,
+        brighter ramp steps, landing a hair from pure white even though the
+        direction-pick itself was correct — "Pure white with many covers."
+        A floor trades contrast margin for guaranteed visible hue; only the
+        cover-theme caller opts into that trade.
+        """
         anchor_val = 1.0 if toward_white else 0.0
         value_step = -_RAMP_TEXT_VALUE_STEP if toward_white else _RAMP_TEXT_VALUE_STEP
         anchor_rgb = tuple(round(c * 255) for c in colorsys.hsv_to_rgb(hue, _RAMP_TEXT_SAT, anchor_val))
@@ -3786,7 +3806,7 @@ def ramp_text_colors(theme, count, is_cover_theme=False):
                     # guarantee.
                     sat = _RAMP_TEXT_SAT
                     best = (anchor_rgb, _wcag_contrast(bg, anchor_rgb))
-                    while sat >= 0:
+                    while sat >= sat_floor:
                         nr, ng, nb = colorsys.hsv_to_rgb(hue, sat, anchor_val)
                         desat_candidate = tuple(round(c * 255) for c in (nr, ng, nb))
                         c = _wcag_contrast(bg, desat_candidate)
@@ -3815,44 +3835,54 @@ def ramp_text_colors(theme, count, is_cover_theme=False):
         toward_white = avg_white >= avg_black
         rgb_results = _search(toward_white)
     else:
-        # COVER-THEME PATH — run the real per-step search in BOTH directions,
-        # then keep whichever direction's own results stay more TINTED
-        # (higher average saturation), not whichever has more raw contrast.
-        # Picking by raw contrast here reliably picks pure black: a cover
-        # theme's low-saturation, mid-luminance ramp gives both directions
-        # mediocre contrast, and black wins that comparison purely because
-        # black is untinted (sat is undefined/irrelevant at val=0) while a
-        # light candidate is still visibly a tint of the theme's hue and so
-        # "loses" on contrast alone even though it looks far more at home.
-        # Ties within _RAMP_TEXT_COVER_SAT_TIE_EPSILON fall back to contrast.
-        results_white = _search(True)
-        results_black = _search(False)
+        # COVER-THEME PATH — run the real per-step search in BOTH directions
+        # (with _RAMP_TEXT_COVER_SAT_FLOOR, so neither direction can collapse
+        # to pure black/white), then keep whichever direction's own results
+        # stay more TINTED (higher average saturation), not whichever has
+        # more raw contrast. Picking by raw contrast here reliably picks
+        # near-black: a cover theme's low-saturation, mid-luminance ramp
+        # gives both directions mediocre contrast, and the darker/less-
+        # tinted direction wins that comparison purely because it needs less
+        # desaturation to clear target — not because it fits the cover's own
+        # colors. Ties within _RAMP_TEXT_COVER_SAT_TIE_EPSILON fall back to
+        # contrast.
+        #
+        # RETURNED PER-STEP, not collapsed to one value (2026-10-03, second
+        # pass — the first shipped version of this path DID collapse to a
+        # single representative color, same "no per-step flip" shape as the
+        # named-theme path; reverted after live feedback: "the ease-in
+        # spectrum is too narrow. I think the first button can use a bit
+        # darker text and make its way up to current last button's text
+        # color"). The per-step search is already SAFE to return directly
+        # here, with no risk of the abrupt flip the named-theme path's
+        # design exists to prevent: each step's candidate is found by moving
+        # OUTWARD from the SAME fixed anchor (chosen once, for the whole
+        # ramp) only as far as that step's own background demands, and
+        # preset_ramp_rgb's background VALUE increases monotonically across
+        # the row by construction — so desaturation need can only trend in
+        # one direction as the row progresses, never reverse. Verified via a
+        # 200-cover/2-direction randomized sweep (see test_preset_ramp.py):
+        # 0 non-monotonic sequences found. This is what gives "first button
+        # darker, easing up to the last button's color" for free, instead of
+        # needing a separate deliberately-designed easing curve (an earlier,
+        # more complex approach — smoothly varying VALUE or SATURATION on
+        # top of the contrast-safe floor using preset_ramp_rgb's own ratio
+        # shape — was explored and dropped before this: on themes whose ramp
+        # background barely moves in value, any visible ease had to come
+        # from pushing saturation up, which steadily tanks contrast; this
+        # per-step-search approach needs no separate curve because the
+        # existing contrast-driven search already produces smooth variation
+        # as a side effect, wherever the ramp has room to show it).
+        results_white = _search(True, sat_floor=_RAMP_TEXT_COVER_SAT_FLOOR)
+        results_black = _search(False, sat_floor=_RAMP_TEXT_COVER_SAT_FLOOR)
         sat_white = sum(colorsys.rgb_to_hsv(*(c / 255 for c in rgb))[1] for rgb in results_white) / count
         sat_black = sum(colorsys.rgb_to_hsv(*(c / 255 for c in rgb))[1] for rgb in results_black) / count
         if abs(sat_white - sat_black) > _RAMP_TEXT_COVER_SAT_TIE_EPSILON:
-            winning_results = results_white if sat_white > sat_black else results_black
+            rgb_results = results_white if sat_white > sat_black else results_black
         else:
             avg_white = sum(_wcag_contrast(bg, c) for bg, c in zip(backgrounds, results_white)) / count
             avg_black = sum(_wcag_contrast(bg, c) for bg, c in zip(backgrounds, results_black)) / count
-            winning_results = results_white if avg_white >= avg_black else results_black
-        # COLLAPSE to a single representative candidate for the whole ramp —
-        # same "one decision, never per-step" guarantee the named-theme path
-        # gets for free (see this function's own module docstring: a per-step
-        # pick can flip abruptly partway through the row even when each step
-        # individually passes contrast). Unlike the named-theme path, the
-        # per-step results here genuinely do vary slightly between steps
-        # (each step's own desaturation search can stop at a slightly
-        # different saturation), so this path must explicitly pick ONE of
-        # them rather than returning the per-step list as-is. Picks the step
-        # whose own candidate has the LOWEST contrast against its background
-        # (the hardest-to-satisfy step) — using that step's color for every
-        # button guarantees every OTHER step (which needed less desaturation
-        # to pass) also clears target with that same color.
-        worst_i = min(
-            range(count),
-            key=lambda i: _wcag_contrast(backgrounds[i], winning_results[i]),
-        )
-        rgb_results = [winning_results[worst_i]] * count
+            rgb_results = results_white if avg_white >= avg_black else results_black
 
     return ["#" + "".join(f"{c:02x}" for c in candidate) for candidate in rgb_results]
 

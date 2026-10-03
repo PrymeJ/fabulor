@@ -14,6 +14,8 @@ opaque and nothing can bleed through.
 
 These pin the properties that matter; the visual result is live-verified.
 """
+import colorsys
+
 import pytest
 
 from fabulor.themes import (
@@ -368,7 +370,7 @@ _COVER_LIKE_THEMES = [
 _COVER_LIKE_THEMES_REPRODUCING_THE_BUG = _COVER_LIKE_THEMES[:3]
 
 
-def test_cover_theme_direction_pick_does_not_collapse_to_pure_black():
+def test_cover_theme_path_never_collapses_to_a_pure_extreme():
     # THE BUG (live, 2026-10-03): "I tested 7 covers. They all made the text
     # resolve black... the buttons look dark enough, yet the text is still
     # black." Traced to the named-theme direction-pick (compare hue-tinted
@@ -376,20 +378,22 @@ def test_cover_theme_direction_pick_does_not_collapse_to_pure_black():
     # themes, whose ramp sits in a narrow, low-saturation mid-luminance band
     # where BOTH tinted candidates score mediocre average contrast and black
     # wins only because it's accidentally untinted at val=0 — not because it
-    # fits the cover's own colors. is_cover_theme=True must never return pure
-    # black/white; it should stay visibly tinted toward the theme's own hue,
-    # even at the cost of a lower contrast floor (Pryme: "I don't want pure
-    # blacks and whites... There should be something that would fit the
-    # theme's dominant colors better" / "I am talking about cover art based
-    # by the way. I already handled the named [themes]").
+    # fits the cover's own colors. A later live report ("Pure white with many
+    # covers") found a SECOND, independent way to reach a near-extreme: on a
+    # cover theme with a bright/saturated accent, the per-step desaturation
+    # search needed near-total desaturation to clear target on the ramp's
+    # brighter/later steps, landing a hair from pure white even with the
+    # direction-pick itself correct. _RAMP_TEXT_COVER_SAT_FLOOR closes that
+    # second gap — no step, anywhere in the ramp, may drop below it. No
+    # theme, at any step, should ever land on a pure black/white extreme.
     for theme in _COVER_LIKE_THEMES:
         t = _resolve_theme(theme)
         texts = ramp_text_colors(t, 14, is_cover_theme=True)
-        assert len(set(texts)) == 1, "one decision for the whole ramp, same as the named-theme path"
-        rgb = _text_rgb(texts[0])
-        assert rgb not in ((0, 0, 0), (255, 255, 255)), (
-            f"{theme['accent']} resolved to a pure extreme ({texts[0]}) — expected a visible tint"
-        )
+        for i, hexcolor in enumerate(texts):
+            rgb = _text_rgb(hexcolor)
+            assert rgb not in ((0, 0, 0), (255, 255, 255)), (
+                f"{theme['accent']} step {i} resolved to a pure extreme ({hexcolor}) — expected a visible tint"
+            )
 
 
 def test_cover_theme_direction_pick_differs_from_named_theme_path_when_it_matters():
@@ -403,6 +407,63 @@ def test_cover_theme_direction_pick_differs_from_named_theme_path_when_it_matter
         cover_path = ramp_text_colors(t, 14, is_cover_theme=True)
         assert named_path[0] == "#000000", "fixture should reproduce the live bug under the old path"
         assert cover_path[0] != named_path[0]
+
+
+def test_cover_theme_path_eases_per_step_from_darker_to_the_last_steps_color():
+    # Live feedback (2026-10-03), after the first version of this path shipped
+    # collapsed to one flat color for the whole ramp (mirroring the named-theme
+    # path's own no-flip design): "the ease-in spectrum is too narrow. I think
+    # the first button can use a bit darker text and make its way up to
+    # current last button's text color." Unlike the named-theme path, this one
+    # intentionally returns genuine PER-STEP variation — each step's own
+    # contrast-safe search result, not collapsed — because it is already
+    # provably safe to do so here (see the mechanism comment in
+    # ramp_text_colors' cover-theme branch): the search always moves outward
+    # from the SAME fixed anchor, and preset_ramp_rgb's background value only
+    # increases along the row, so desaturation need can only trend in one
+    # direction, never reverse mid-ramp.
+    for theme in _COVER_LIKE_THEMES:
+        t = _resolve_theme(theme)
+        texts = ramp_text_colors(t, 14, is_cover_theme=True)
+        sats = [colorsys.rgb_to_hsv(*(c / 255 for c in _text_rgb(h)))[1] for h in texts]
+        assert len(set(texts)) > 1, f"{theme['accent']}: expected visible per-step variation, got one flat color"
+        # Monotonic: saturation never INCREASES moving later into the ramp
+        # (a reversal would look like exactly the abrupt flip this whole
+        # function's design otherwise guards against).
+        for i in range(len(sats) - 1):
+            assert sats[i + 1] <= sats[i] + 1e-9, (
+                f"{theme['accent']}: saturation rose from step {i} ({sats[i]:.3f}) "
+                f"to step {i + 1} ({sats[i + 1]:.3f}) — must ease monotonically"
+            )
+
+
+def test_cover_theme_path_monotonic_across_a_broad_random_sample():
+    # Broader, randomized version of the monotonicity check above — verified
+    # live against 200 random cover-derived themes x 2 directions (white/
+    # black-anchored) with zero non-monotonic sequences before this path
+    # shipped; this pins a smaller, deterministic sample of the same property
+    # so a future regression doesn't need a live app to catch.
+    import random as _random
+    _random.seed(7)
+    for _ in range(25):
+        rgb_dom = tuple(_random.randint(10, 220) for _ in range(3))
+        # Shape a cover-like theme directly from the random dominant color,
+        # same palette shape build_cover_theme uses (no button_text/
+        # text_on_light_bg; text/accent share the dominant hue).
+        hue, _s, _v = colorsys.rgb_to_hsv(*(c / 255 for c in rgb_dom))
+        text_rgb = tuple(round(c * 255) for c in colorsys.hsv_to_rgb(hue, 0.2, 0.9))
+        accent_rgb = tuple(round(c * 255) for c in colorsys.hsv_to_rgb(hue, 0.6, 0.72))
+        bg_rgb = tuple(round(c * 255) for c in colorsys.hsv_to_rgb(hue, 0.45, 0.15))
+        theme = {
+            "text": "#%02x%02x%02x" % text_rgb,
+            "accent": "#%02x%02x%02x" % accent_rgb,
+            "bg_main": "#%02x%02x%02x" % bg_rgb,
+        }
+        t = _resolve_theme(theme)
+        texts = ramp_text_colors(t, 14, is_cover_theme=True)
+        sats = [colorsys.rgb_to_hsv(*(c / 255 for c in _text_rgb(h)))[1] for h in texts]
+        for i in range(len(sats) - 1):
+            assert sats[i + 1] <= sats[i] + 1e-9, f"{theme}: non-monotonic at step {i}"
 
 
 def test_cover_theme_path_never_affects_named_themes():
@@ -429,6 +490,5 @@ def test_cover_theme_path_picks_higher_saturation_direction():
     t = _resolve_theme({"bg_main": "#140A1E", "accent": "#7A3DAE", "text": "#C9A8E0"})
     texts = ramp_text_colors(t, 14, is_cover_theme=True)
     rgb = _text_rgb(texts[0])
-    import colorsys
     _h, sat, _v = colorsys.rgb_to_hsv(*(c / 255 for c in rgb))
     assert sat > 0.2, f"expected a clearly-tinted result, got {texts[0]} (sat={sat:.2f})"
