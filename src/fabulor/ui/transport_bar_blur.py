@@ -1068,9 +1068,12 @@ class TransportBarBlurOverlay:
         # below. Passed explicitly (not the default self._active_panel) — the
         # panel THIS call must hide is not the panel driving the transport-bar
         # overlay.
+        # exclude_by_move=True: Book Detail must never be HIDDEN for this grab — its
+        # hideEvent tears down whatever the user is doing in it. See _grab_and_blur.
         blurred = self._grab_and_blur(
             rect_common, panel, blur=blur,
-            extra_mouse_blocked_widgets=extra_mouse_blocked_widgets)
+            extra_mouse_blocked_widgets=extra_mouse_blocked_widgets,
+            exclude_by_move=True)
 
         # Paint the panel's OWN translucent wash on top of the blurred snapshot,
         # into the pixmap itself.
@@ -2200,11 +2203,35 @@ class TransportBarBlurOverlay:
         self._overlay.setPixmap(pixmap)
 
     def _grab_and_blur(self, rect: QRect, panel=None, blur: bool = True,
-                        extra_mouse_blocked_widgets=None) -> QPixmap:
+                        extra_mouse_blocked_widgets=None,
+                        exclude_by_move: bool = False) -> QPixmap:
         """Grabs main_window with `panel` hidden. `panel` defaults to
         self._active_panel (the transport-bar path's every call site); the
         frost path (frost_panel_backdrop) passes Book Detail explicitly, since
         the panel it must hide is not the one driving this overlay.
+
+        `exclude_by_move` (added 2026-10-20, Book Detail only — frost_panel_backdrop passes
+        it): keep `panel` out of the grab by MOVING it past the grabbed rect for the
+        duration of the grab instead of hiding it. A hide is not a neutral act for a panel
+        the user is interacting with: it fires the panel's real hideEvent (Book Detail's
+        tears down in-progress edits with save=False — restoring the pre-edit text and
+        reclaiming focus onto the panel — cancels the armed remove/finish confirms, removes its
+        app-wide event filter), and the tag field's completer popup closes (Book Detail's
+        hideEvent has no popup cleanup, so Qt itself closes it on the field's hide — that exact
+        mechanism is inferred, not traced; popups can't be shown in the offscreen test harness).
+        The focus save/restore in the hide branch below does NOT prevent any of this: focus is
+        restored fine in isolation, it is the hideEvent's own teardown that moves it. Book
+        Detail's frost refresh
+        runs this every 10s while the panel is open, so ALL of that happened every 10s —
+        live-reported 2026-10-20 as "typing reverts after a few seconds", "tag suggestions
+        close by themselves", "exclusion confirm dismisses itself", in Frosty and Opaque but
+        not Transparent (the one mode that never grabs). A move changes geometry only:
+        no hide/show events, no focus transfer, no popup teardown. The underlay is still
+        uncovered for the grab instant, so the cursor-pin and mouse-transparency guards
+        below apply exactly as for a hide. NOT used for the transport-bar path (the other
+        five panels, 5-15 grabs/sec): that path is left on hide/show deliberately, so this
+        fix does not perturb a separately-tuned mechanism. See
+        tests/test_grab_exclude_by_move.py.
 
         `extra_mouse_blocked_widgets` (added 2026-09-24, hover-bleed fix): additional widgets to
         give the SAME WA_TransparentForMouseEvents treatment as `_all_tracked_widgets()` gets
@@ -2332,6 +2359,10 @@ class TransportBarBlurOverlay:
         # it is only populated on the panel-visible branch — leaving it unbound
         # would raise NameError out of the finally on every panel-less grab.
         _mouse_blocked = []
+        # exclude_by_move: the panel's pre-grab position, set only while it is parked.
+        # Restored in the finally too, so a raising grab can never strand Book Detail
+        # off-screen.
+        _moved_from = None
         try:
             self._grab_suppress_until = time.perf_counter() + _GRAB_FEEDBACK_SUPPRESS_S
             overlay_was_visible = self._overlay.isVisible()
@@ -2380,20 +2411,36 @@ class TransportBarBlurOverlay:
                 # focus on its own, it could be left stranded on the underlay's widget
                 # afterward too, not just flicker momentarily. Saving and restoring focus
                 # around the hide, exactly like the cursor override above it, closes both.
-                _focus_to_restore = QApplication.focusWidget()
-                panel.hide()
-                if (_focus_to_restore is not None
-                        and QApplication.focusWidget() is not _focus_to_restore):
-                    _focus_to_restore.setFocus(Qt.FocusReason.OtherFocusReason)
+                if exclude_by_move:
+                    # Park the panel's left edge just past the grabbed rect's right edge
+                    # (main_window space, mapped into the panel's parent space), so
+                    # nothing of it renders into the grab. Derived from padded_rect, not a
+                    # magic offset, so the blur padding can never reach it.
+                    _moved_from = panel.pos()
+                    park_mw = QPoint(padded_rect.x() + padded_rect.width() + 1, 0)
+                    park_x = panel.parentWidget().mapFrom(self.main_window, park_mw).x()
+                    panel.move(park_x, _moved_from.y())
+                else:
+                    _focus_to_restore = QApplication.focusWidget()
+                    panel.hide()
+                    if (_focus_to_restore is not None
+                            and QApplication.focusWidget() is not _focus_to_restore):
+                        _focus_to_restore.setFocus(Qt.FocusReason.OtherFocusReason)
             src = self.main_window.grab(padded_rect)
             if panel_was_visible:
-                panel.show()
+                if _moved_from is not None:
+                    panel.move(_moved_from)
+                    _moved_from = None
+                else:
+                    panel.show()
             if overlay_was_visible:
                 self._overlay.show()
         finally:
             # Restore before the cursor override is popped, and unconditionally
             # — leaving a transport button permanently mouse-transparent would
             # make it unclickable for the rest of the session.
+            if _moved_from is not None:
+                panel.move(_moved_from)
             for _w in _mouse_blocked:
                 _w.setAttribute(Qt.WA_TransparentForMouseEvents, False)
             if _cursor_override_pushed:

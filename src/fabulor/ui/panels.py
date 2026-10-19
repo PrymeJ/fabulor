@@ -1325,6 +1325,8 @@ class PanelManager:
         static backdrop compositing at all — which is honest to what "Transparent" has always
         meant in this app. Opaque now ALSO runs this (newly added, cleaner A/B benchmark per
         Pryme: "Opaque definitely could use grab rather than native paint. Nothing to lose there"
+        [SUPERSEDED 2026-10-20: Opaque removed again — there WAS something to lose; see the
+        comment at the gate below]
         — an opaque panel has no translucent wash, so this call degrades to a plain unblurred
         grab of the underlay, harmless and skippable in effect but kept symmetric with Frosty's
         code path rather than special-cased out).
@@ -1339,7 +1341,14 @@ class PanelManager:
         highlight "appearing from nothing" once Book Detail actually closes (live-reported
         2026-09-24)."""
         backdrop = self.config.get_panel_backdrop()
-        if backdrop == "transparent":
+        # FROSTY ONLY (changed 2026-10-20). Opaque was added to this grab 2026-09-24 as an A/B
+        # benchmark arm; that A/B concluded (TODO.md, "source, not mode") that backdrop mode
+        # barely moves Book Detail's open cost, and Opaque only paid EXTRA grab cost over
+        # Stats. Under an opaque panel the frost is invisible (it composites to solid
+        # bg_main), so the grab bought nothing while every one of its hide-based grabs tore
+        # down Book Detail's in-progress edits/confirms/tag popup — see
+        # TransportBarBlurOverlay._grab_and_blur's `exclude_by_move` note.
+        if backdrop != "frosty":
             return
         stats_panel = getattr(self.main_window, 'stats_panel', None)
         extra_widgets = None
@@ -1373,7 +1382,8 @@ class PanelManager:
         excluding TRANSPARENT instead, matching `_apply_transport_bar_blur_full`'s own reverted
         gate — see that method's docstring for the full A/B-plan reasoning. Transparent mode
         relies entirely on the panel's own live paint again, so there is no static frost for
-        this timer to keep fresh. Opaque now runs it (harmless — see
+        this timer to keep fresh. [SUPERSEDED 2026-10-20: Frosty only now — see
+        `_apply_transport_bar_blur_full`'s gate comment.] Opaque now runs it (harmless — see
         `_apply_transport_bar_blur_full`'s reasoning for why an opaque panel tolerates a frost
         child it never shows).
 
@@ -1381,7 +1391,9 @@ class PanelManager:
         `_disarm_book_detail_frost_refresh` in both close paths
         (`_close_book_detail_flow`/`_on_book_detail_hidden`), so the timer is NEVER left
         running once Book Detail is closed."""
-        if self.config.get_panel_backdrop() == "transparent":
+        # FROSTY ONLY (2026-10-20) — must match _apply_transport_bar_blur_full's gate; see
+        # its comment. tests/test_book_detail_frost_gate.py pins the pair.
+        if self.config.get_panel_backdrop() != "frosty":
             return
         self._book_detail_frost_refresh_timer.start(self._BOOK_DETAIL_FROST_REFRESH_MS)
 

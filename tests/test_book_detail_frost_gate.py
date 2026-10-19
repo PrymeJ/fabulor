@@ -1,6 +1,10 @@
 """Pins the backdrop-mode gate on PanelManager._apply_transport_bar_blur_full and
 _arm_book_detail_frost_refresh — Book Detail's paint-suppression static-backdrop mechanism.
 
+As of 2026-10-20: FROSTY ONLY. Opaque was dropped — under an opaque panel the frost is invisible,
+the 2026-09-24 A/B found no performance benefit, and each grab tore down Book Detail's in-progress
+edits/confirms (see test_grab_exclude_by_move.py). History below kept for context.
+
 As of 2026-09-24 (A/B plan settled with Pryme, see TODO.md): Frosty and Opaque use the grab
 mechanism (a static frost/wash composited once at open-start and periodically refreshed);
 Transparent does NOT — it relies entirely on the panel's own live paint, matching what
@@ -83,8 +87,8 @@ class _FakeHost:
         return "RECT-SENTINEL"
 
 
-@pytest.mark.parametrize("backdrop", ["frosty", "opaque"])
-def test_transport_bar_blur_full_runs_for_frosty_and_opaque(backdrop):
+@pytest.mark.parametrize("backdrop", ["frosty"])
+def test_transport_bar_blur_full_runs_for_frosty(backdrop):
     host = _FakeHost(backdrop)
     PanelManager._apply_transport_bar_blur_full(host, "PANEL-SENTINEL")
     assert len(host._transport_bar_blur.calls) == 1
@@ -95,7 +99,7 @@ def test_transport_bar_blur_full_runs_for_frosty_and_opaque(backdrop):
     assert extra is None, "no extra widgets to protect when Stats isn't the underlay"
 
 
-@pytest.mark.parametrize("backdrop", ["frosty", "opaque"])
+@pytest.mark.parametrize("backdrop", ["frosty"])
 def test_transport_bar_blur_full_protects_stats_tab_bar_when_stats_is_underlay(backdrop):
     """Hover-bleed fix regression net (2026-09-24): when Stats is visible underneath Book
     Detail, its tab bar must be passed through as an extra mouse-blocked widget so
@@ -107,21 +111,23 @@ def test_transport_bar_blur_full_protects_stats_tab_bar_when_stats_is_underlay(b
     assert extra == ["TABBAR-SENTINEL"]
 
 
-def test_transport_bar_blur_full_skips_transparent():
-    host = _FakeHost("transparent")
+@pytest.mark.parametrize("backdrop", ["transparent", "opaque"])
+def test_transport_bar_blur_full_skips_non_frosty(backdrop):
+    host = _FakeHost(backdrop)
     PanelManager._apply_transport_bar_blur_full(host, "PANEL-SENTINEL")
     assert host._transport_bar_blur.calls == []
 
 
-@pytest.mark.parametrize("backdrop", ["frosty", "opaque"])
-def test_frost_refresh_arms_for_frosty_and_opaque(backdrop):
+@pytest.mark.parametrize("backdrop", ["frosty"])
+def test_frost_refresh_arms_for_frosty(backdrop):
     host = _FakeHost(backdrop)
     PanelManager._arm_book_detail_frost_refresh(host)
     assert host._book_detail_frost_refresh_timer.started_with == 10_000
 
 
-def test_frost_refresh_skips_transparent():
-    host = _FakeHost("transparent")
+@pytest.mark.parametrize("backdrop", ["transparent", "opaque"])
+def test_frost_refresh_skips_non_frosty(backdrop):
+    host = _FakeHost(backdrop)
     PanelManager._arm_book_detail_frost_refresh(host)
     assert host._book_detail_frost_refresh_timer.started_with is None
 
