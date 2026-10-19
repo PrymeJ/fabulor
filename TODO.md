@@ -679,7 +679,59 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
   dedicated design/implementation session, not a quick patch. **Reminder for whoever picks this up:
   the "cover image changed outside the app" item directly above this one was deliberately sequenced
   to follow this refactor rather than being fixed independently — once book identity survives a
-  path change, revisit that item as a natural, much simpler follow-up.**
+  path change, revisit that item as a natural, much simpler follow-up.** **Also read the
+  2026-10-20 entry directly below before designing the ID:** it is the inverse of this bug, and
+  it constrains what the content hash may cover.
+- [2026-10-20, DOCUMENT ONLY — no fix until the identity design is settled, Pryme's call] BUG:
+  metadata changed inside an M4B outside the app is not always picked up. Pryme's live case: he
+  recreated several M4Bs with a corrected narrator tag, folder and file names unchanged. Deleted the
+  old folders, rescanned, put the new folders (same names) back — the app still showed the old
+  narrator. Pryme's read: the DB already holds that folder path's metadata and doesn't care what's
+  inside the files. **This is the inverse of the folder-move bug above, and the same root:** path is
+  identity, so moved content looks like a new book (history lost), and changed content at an
+  unchanged path looks like the same, unchanged book (new metadata ignored).
+  - **Verified in code (2026-10-20, read only, no repro run):** a non-force scan skips every path
+    already in the DB, whatever its flags (`scanner.py:121`, `known_paths` from the unfenced
+    `get_all_book_paths()`) — tags are never re-read for a known path. Adding a scan location runs
+    a NON-force scan (`library_controller.py:89`/`:124`); only the Rescan button forces
+    (`:134`/`:136`). A forced rescan does re-read tags, but the upsert keeps the old narrator when
+    `narrator_locked` is set (any earlier in-app edit of that field locks it) or when the new tag is
+    empty (`COALESCE(NULLIF(excluded.narrator, ''), books.narrator)`, `db.py:355`/`:377`; title/
+    author/year have the same lock guard).
+  - **Not verified:** which kind of scan Pryme's sequence actually ran at each step, whether those
+    books had a locked narrator, and whether the edited tag is one the scanner's narrator priority
+    chain reads at all. Any of the three alone would explain it; a repro with the log open would
+    tell them apart.
+  - Same cache question as the cover item above: even when the DB row does update, check whether
+    anything already in memory (library model, Book Detail) shows the stale value until restart.
+  - **Design input for the identity refactor:** a content hash fixes the folder move only if it
+    survives the edits a user legitimately makes. If the hash covers the whole file, re-tagging or
+    re-muxing an M4B changes it and the book would read as NEW — losing its history the same way a
+    folder move does today. So the refactor has to answer two questions, not one: "is this the same
+    book?" (identity — needs something stable across moves AND re-tags) and "has this book's content
+    changed?" (freshness — e.g. file size + mtime per file, to decide when to re-read tags without a
+    full forced rescan). It also has to decide what a re-read does to locked fields: today a lock
+    silently wins over the file, which is right for a user's in-app edit but wrong if the user
+    fixed the tag in the file on purpose.
+  - **Scan design, same mechanism (Pryme, 2026-10-20 — open, not decided).** Pryme's problem with
+    today's scanner: the Rescan button re-extracts EVERY book, so a 3000-book library waits for
+    3000+1 to add one book — but scanning only new folders isn't right either, since a user may
+    genuinely want everything re-read. Two buttons (soft "changes only" + full) were considered and
+    disliked: overkill for a regular user, who won't know which does what. A startup soft-scan
+    existed earlier and was removed — it hitched the flow animation, and it was never a real
+    answer anyway (changes made while the app stays open went unseen until a manual scan).
+    **Claude's proposal (unmeasured):** one Scan button that is change-aware. Every scan already
+    walks every folder (Phase 1, a directory listing); the cost is Phase 2, which opens every audio
+    file (mutagen, cover extraction, thumbnails). With a per-book freshness fingerprint stored at
+    extraction time (file list + size + mtime per file), Phase 2 runs only for new folders and
+    folders whose fingerprint changed; missing-folder detection (a set difference, cheap) runs on
+    every scan instead of force-only. That makes the one button both fast and correct, so the user
+    never has to choose. A full re-read stays available as a repair tool, not a peer of Scan — e.g.
+    "Rebuild library from files" behind a confirm, somewhere out of the everyday path. Must be
+    measured at 3000-5000 books (CLAUDE.md scale rule) before trusting "the walk is cheap" —
+    especially on a USB drive or network mount, where per-folder listing is not free. Caveat the
+    fingerprint can't see: a tag edited in place with mtime preserved (some taggers can do this);
+    the repair tool covers that.
 - [2026-09-17] TEST, minor: add a deliberately corrupted image file as a book's cover and confirm
   the app handles it gracefully (no crash, some sane fallback) rather than assuming it does. Not a
   known bug — a gap in test coverage to close.
