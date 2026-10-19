@@ -1,3 +1,30 @@
+## Book Detail backdrop grab no longer tears down in-progress work — 2026-10-20 Session 1
+
+Background: in Frosty and Opaque backdrop modes, Book Detail re-grabbed its backdrop every 10s by
+HIDING the panel, which ran its close teardown each time. The grab now moves the panel aside instead
+of hiding it, and only Frosty grabs at all. Commit `06407e3`; Pryme confirmed the fix live
+("The fix worked") — boxes left for item-by-item regression runs. Each check below should hold for 30+ seconds (three
+refresh ticks) — the old bug hit within 10s.
+
+### Frosty glass (the mode that still grabs)
+- [ ] Open a book's detail, click into Title, start typing, then stop and wait 30s — text stays,
+      caret stays in the field, nothing reverts. Repeat for Author, Narrator, Year.
+- [ ] Tags tab: type a partial tag that brings up the suggestion menu, wait 30s — the menu stays open.
+- [ ] Click the delete/exclude button — the confirmation stays up for its full 7s and only then
+      reverts on its own (it must not vanish early).
+- [ ] Mark-finished confirm: same as above.
+- [ ] With a book playing, open Book Detail from Stats and from Library: the frosted backdrop still
+      looks right, and the progress-bar strip behind the frost still catches up within ~10s.
+- [ ] Mouse resting over a Stats tab while Book Detail is open, then close Book Detail — no stale
+      tab highlight (the 2026-09-24 hover-bleed fix still holds).
+
+### Opaque
+- [ ] Same three checks (typing, tag menu, exclude confirm) — all hold for 30s.
+- [ ] Book Detail looks the same as before (solid background; no frost was ever visible here).
+
+### Transparent
+- [ ] Unchanged: same three checks still pass, as they did before.
+
 ## Book-based EQ+balance override — Book Detail EQ tab, Settings > Audio superseded-indicator — 2026-10-02
 
 Background: the global EQ (shipped 2026-09-18, On/Off toggle 2026-10-02, see the section below)

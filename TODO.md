@@ -9,6 +9,18 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
 
 ## Summary index
 
+### Move the other five panels' backdrop grab to move-aside too (deferred by Pryme — regression risk)
+- [2026-10-20] `TransportBarBlurOverlay._grab_and_blur` now excludes Book Detail from its grab by
+  moving it aside (`exclude_by_move`, `06407e3`) instead of hiding it — a hide runs the panel's real
+  `hideEvent`. The other five panels (Settings/Speed/Sleep/Sprint/Stats/Tags via the transport-bar
+  path) still hide/show 5-15x/sec. That hide has now caused at least three separate bugs, each
+  patched locally: the Stats tassel kick reset (2026-07-27), the Tags event-filter loss, and Book
+  Detail's teardown (2026-10-20). Moving every panel to move-aside would close the class. None of
+  those panels' current `hideEvent`s tears down user work (checked 2026-10-20), so nothing is broken
+  today. Pryme agrees it makes sense but isn't sure it's worth the regression risk to a separately
+  tuned, high-frequency mechanism. If picked up: its own session, live-verified against cursor
+  flicker, hover bleed and blur appearance on every panel, not bundled with other work.
+
 ### L/R balance reported inconsistent across books (deferred by Pryme — not yet actionable)
 - [2026-10-01] BUG REPORT, not yet investigated. Found live while testing the book-based EQ
   override (see TODO_ARCHIVE.md's now-closed entry) but confirmed unrelated to that feature —

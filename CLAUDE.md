@@ -924,6 +924,34 @@ blurred result, and a post-paint window grab, and log `same_parent` / the overla
 correct pixmap that never appears is a compositing problem, not a grab problem — that one check
 eliminated every grab-timing theory at once.
 
+### DO NOT hide Book Detail to grab its backdrop — a grab that hides a panel runs that panel's real `hideEvent`
+`TransportBarBlurOverlay._grab_and_blur` historically excluded the panel from the grab with
+`panel.hide()`/`panel.show()`. For Book Detail that is not a neutral act: `BookDetailPanel.hideEvent`
+is the panel's CLOSE teardown — `_exit_edit_mode(save=False)` (restores pre-edit text, reclaims focus
+onto the panel), `_cancel_remove`, `_cancel_finished_confirm`, history/tag-chip clears, event-filter
+removal — and the tag field's completer popup closes too. Book Detail's frost refresh grabs every
+10s while open, so all of it fired every 10s. Live-reported 2026-10-20: inline metadata edits
+reverting "after a few seconds," tag suggestions closing by themselves, the exclusion confirm
+dismissing itself — Frosty and Opaque only, because Transparent is the one mode that never grabs.
+The existing focus save/restore in the hide branch could not help: focus is restored fine in
+isolation; it is the hideEvent's own teardown that moves it.
+
+Fixed by `exclude_by_move=True` (passed only by `frost_panel_backdrop`): the panel is parked just
+past the grabbed rect for the grab instant and moved back (also in the `finally`), so no
+hide/show event, focus transfer or popup teardown occurs. The transport-bar path for the other
+five panels deliberately stays on hide/show — not re-tuned here. Also, Book Detail's grab gates
+(`_apply_transport_bar_blur_full`, `_arm_book_detail_frost_refresh`) are now **Frosty only**:
+Opaque was added 2026-09-24 as an A/B arm, the A/B found no performance benefit (TODO.md, "source,
+not mode"), and the frost is invisible under an opaque panel.
+
+**Pinned by `tests/test_grab_exclude_by_move.py`**, which drives the real `_grab_and_blur` against
+a real `BookDetailPanel` (temp DB, mock config) mid-edit and with the remove confirm armed — each
+with a hide-path control that must reproduce the bug, so the assertions are proven able to fail.
+The popup case can't run on this desktop (offscreen shows no popups; Wayland/Xwayland grant no
+focus to a test window) and skips — live check in TESTING.md. **Generalization:** before any
+grab/snapshot mechanism hides a widget the user may be interacting with, read that widget's
+`hideEvent` — "hide" in this codebase usually means "close."
+
 ### DO NOT make any panel-dismiss path depend on a *stashed* snapback to restore the active theme
 `_close_settings_flow` (`panels.py`) must call `_on_theme_unhovered()` — which issues a **fresh**
 snapback — *before* `snap_theme_forward()`; `hide_all_panels` and `handle_drag_area_right_click`
@@ -1846,7 +1874,12 @@ Any `QWidget` subclass (not `QFrame`, not `QLabel`) that owns a background-color
 
 *Reorganization note (2026-07-13): the "Critical Architecture Rules" section was restructured to remove repetition — it previously existed as two passes (a full-prose section and a later condensed second pass covering many of the same rules). The two were merged: rules that appeared in both now appear once, under whichever fact they share, with no information dropped. Rules unique to either pass are unchanged. See the note directly under the "Critical Architecture Rules" heading for detail.*
 
-*Last updated: 2026-09-19 Session 2 — Book Detail's Tags tab tag chip grid gained full keyboard
+*Last updated: 2026-10-20 Session 1 — Book Detail's backdrop grab stopped hiding the panel
+(`exclude_by_move`), and its grab gates became Frosty-only. Fixes edits reverting, tag suggestions
+closing and the exclusion confirm self-dismissing every ~10s in Frosty/Opaque. See the "DO NOT hide
+Book Detail to grab its backdrop" rule.*
+
+*Previously: 2026-09-19 Session 2 — Book Detail's Tags tab tag chip grid gained full keyboard
 navigation (design settled in TODO.md the same day, implemented directly against it): Down
 enters the grid at the first chip; Left/Right wrap reading-order across rows, Up/Down move
 column-aware (clamped to shorter rows), both derived from real `FlowLayout` geometry rather than

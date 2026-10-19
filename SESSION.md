@@ -1,3 +1,43 @@
+## Session Summary — 2026-10-20 Session 1 — Book Detail's backdrop grab stopped hiding the panel: fixes edits reverting, tag suggestions closing and the exclusion confirm self-dismissing in Frosty/Opaque
+
+**Report (Pryme).** In Book Detail, typing in Title/Author/Narrator/Year lost focus and reverted after
+a few seconds; the tag field's suggestion menu closed by itself; the exclusion confirm sometimes
+dismissed itself right away. Frosty and Opaque only, Transparent fine.
+
+**Cause, confirmed.** `PanelManager._arm_book_detail_frost_refresh` re-frosts every 10s while Book
+Detail is open, gated to skip only Transparent. Each refresh goes through
+`TransportBarBlurOverlay._grab_and_blur`, which excluded Book Detail from the grab with
+`panel.hide()`/`show()`. That hide runs `BookDetailPanel.hideEvent` — the close teardown:
+`_exit_edit_mode(save=False)` (restores pre-edit text, reclaims focus onto the panel), `_cancel_remove`,
+`_cancel_finished_confirm`, etc. The log showed `frost_panel_backdrop DONE panel='book_detail_panel'`
+at exact 10s intervals. A probe on a real `BookDetailPanel` reproduced both the edit revert (text back
+to the original, focus gone) and the confirm dismissal on the hide path. The tag popup closing is
+consistent with the same hide but its exact Qt mechanism was not traced (no popups offscreen).
+
+A correction made mid-session: Claude first said the hide "moves Qt focus off" the panel. A harness
+showed the existing focus save/restore handles that fine; the focus loss comes from the hideEvent's own
+teardown.
+
+**Why Opaque grabbed at all.** Added 2026-09-24 (`9d5d274`) as an arm of the Frosty/Opaque/
+Transparent A/B for Book Detail's slide cost. That A/B concluded (TODO.md, "source, not mode")
+that backdrop mode barely moves wall-clock time; Frosty/Opaque only paid EXTRA grab cost over Stats.
+Under an opaque panel the frost composites to solid `bg_main` — invisible.
+
+**Fix.** (1) `_grab_and_blur(..., exclude_by_move=True)` — passed only by `frost_panel_backdrop` —
+parks the panel just past the grabbed rect and moves it back (also in the `finally`), so no hide/show
+event, focus change or popup teardown. The transport-bar grab for the other five panels is unchanged.
+(2) Both Book Detail grab gates are now Frosty-only. New `tests/test_grab_exclude_by_move.py` drives
+the real grab against a real `BookDetailPanel`, with hide-path controls that must reproduce the bug;
+`tests/test_book_detail_frost_gate.py` updated. Full suite 814 passed, 1 skipped (the popup test,
+which can't run on this desktop). New CLAUDE.md rule: "DO NOT hide Book Detail to grab its backdrop."
+Live checks: TESTING.md, 2026-10-20.
+
+**Live-verified by Pryme** — "The fix worked." Code commit `06407e3`.
+
+**Deferred, Pryme's call.** Claude raised moving the other five panels' grab to move-aside as
+well, since the grab's hide has now caused at least three separate bugs. Pryme: "makes sense, but I
+am not sure if we should risk regression." Filed in TODO.md, not started.
+
 ## Session Summary — 2026-10-03 Session 2 — Derived Book Detail session-history row colors for 22 themes that were silently inheriting The Color Purple's literal purple (cover-art themes confirmed to hit the identical bug, not yet fixed).
 
 **The bug.** `session_history_row_one`/`session_history_row_two` (Book Detail's History
