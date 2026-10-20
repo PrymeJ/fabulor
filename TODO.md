@@ -681,7 +681,9 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
   to follow this refactor rather than being fixed independently — once book identity survives a
   path change, revisit that item as a natural, much simpler follow-up.** **Also read the
   2026-10-20 entry directly below before designing the ID:** it is the inverse of this bug, and
-  it constrains what the content hash may cover.
+  it constrains what the content hash may cover. **The refactor must also produce the per-book
+  freshness check ("has this book's content changed?"), not only identity** — the change-aware
+  scan entry below depends on it and should not grow its own.
 - [2026-10-20, DOCUMENT ONLY — no fix until the identity design is settled, Pryme's call] BUG:
   metadata changed inside an M4B outside the app is not always picked up. Pryme's live case: he
   recreated several M4Bs with a corrected narrator tag, folder and file names unchanged. Deleted the
@@ -712,26 +714,35 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
     changed?" (freshness — e.g. file size + mtime per file, to decide when to re-read tags without a
     full forced rescan). It also has to decide what a re-read does to locked fields: today a lock
     silently wins over the file, which is right for a user's in-app edit but wrong if the user
-    fixed the tag in the file on purpose.
-  - **Scan design, same mechanism (Pryme, 2026-10-20 — open, not decided).** Pryme's problem with
-    today's scanner: the Rescan button re-extracts EVERY book, so a 3000-book library waits for
-    3000+1 to add one book — but scanning only new folders isn't right either, since a user may
-    genuinely want everything re-read. Two buttons (soft "changes only" + full) were considered and
-    disliked: overkill for a regular user, who won't know which does what. A startup soft-scan
-    existed earlier and was removed — it hitched the flow animation, and it was never a real
-    answer anyway (changes made while the app stays open went unseen until a manual scan).
-    **Claude's proposal (unmeasured):** one Scan button that is change-aware. Every scan already
-    walks every folder (Phase 1, a directory listing); the cost is Phase 2, which opens every audio
-    file (mutagen, cover extraction, thumbnails). With a per-book freshness fingerprint stored at
-    extraction time (file list + size + mtime per file), Phase 2 runs only for new folders and
-    folders whose fingerprint changed; missing-folder detection (a set difference, cheap) runs on
-    every scan instead of force-only. That makes the one button both fast and correct, so the user
-    never has to choose. A full re-read stays available as a repair tool, not a peer of Scan — e.g.
-    "Rebuild library from files" behind a confirm, somewhere out of the everyday path. Must be
-    measured at 3000-5000 books (CLAUDE.md scale rule) before trusting "the walk is cheap" —
-    especially on a USB drive or network mount, where per-folder listing is not free. Caveat the
-    fingerprint can't see: a tag edited in place with mtime preserved (some taggers can do this);
-    the repair tool covers that.
+    fixed the tag in the file on purpose. The scan-design discussion that started here now has its
+    own entry below ("Change-aware scanning + a Full scan affordance").
+- [2026-10-20, DEPENDS ON the identity refactor above — kept separate on purpose] Change-aware
+  scanning + a "Full scan" affordance. Not a release blocker on its own (speed/UX, no data loss),
+  but it builds on the freshness check the refactor must produce, so design the two in the same
+  session and ship them as two steps: identity + freshness first, then this. Split rather than
+  merged into the Blocking item so Blocking reflects only the data-loss risk, and so the
+  refactor (already most of `db.py` + the scanner, in a regression-prone area) doesn't also
+  carry UI work.
+  **The problem (Pryme, 2026-10-20 — open, not decided).** Pryme's problem with
+  today's scanner: the Rescan button re-extracts EVERY book, so a 3000-book library waits for
+  3000+1 to add one book — but scanning only new folders isn't right either, since a user may
+  genuinely want everything re-read. Two buttons (soft "changes only" + full) were considered and
+  disliked: overkill for a regular user, who won't know which does what. A startup soft-scan
+  existed earlier and was removed — it hitched the flow animation, and it was never a real
+  answer anyway (changes made while the app stays open went unseen until a manual scan).
+  **Claude's proposal (unmeasured):** one Scan button that is change-aware. Every scan already
+  walks every folder (Phase 1, a directory listing); the cost is Phase 2, which opens every audio
+  file (mutagen, cover extraction, thumbnails). With a per-book freshness fingerprint stored at
+  extraction time (file list + size + mtime per file), Phase 2 runs only for new folders and
+  folders whose fingerprint changed; missing-folder detection (a set difference, cheap) runs on
+  every scan instead of force-only. That makes the one button both fast and correct, so the user
+  never has to choose. A full re-read stays available as a repair tool, not a peer of Scan — e.g.
+  a "Full scan" (name and placement settled below — the "Rebuild library" wording first floated
+  here was rejected), somewhere out of the everyday path. Must be
+  measured at 3000-5000 books (CLAUDE.md scale rule) before trusting "the walk is cheap" —
+  especially on a USB drive or network mount, where per-folder listing is not free. Caveat the
+  fingerprint can't see: a tag edited in place with mtime preserved (some taggers can do this);
+  the repair tool covers that.
   - **Full-scan affordance (Pryme + Claude, 2026-10-20 — direction agreed, details open).** The
     Library settings tab has no room for another row (confirmed by Pryme's screenshot — the tab is
     full down to the Excluded Books section). Agreed shape: **two ways in, one for those in the
