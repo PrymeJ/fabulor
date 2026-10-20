@@ -732,6 +732,27 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
     especially on a USB drive or network mount, where per-folder listing is not free. Caveat the
     fingerprint can't see: a tag edited in place with mtime preserved (some taggers can do this);
     the repair tool covers that.
+  - **Full-scan affordance (Pryme + Claude, 2026-10-20 — direction agreed, details open).** The
+    Library settings tab has no room for another row (confirmed by Pryme's screenshot — the tab is
+    full down to the Excluded Books section). Agreed shape: **two ways in, one for those in the
+    know.** (1) Discoverable: after every scan, the status banner (the "Library updated: N books."
+    strip) reports what changed — e.g. "2 added · 1 removed" — and offers a differently styled
+    "Full scan" call to action on its right. It shows after a no-change scan too, which is exactly
+    when someone expected a change and didn't get one. Precedent: the banner already carries an
+    inline action (the EOF revert button). (2) Direct: right-click on Rescan opens a one-item
+    "Full scan" menu — hidden, but fine as a shortcut once the banner path exists, and it covers
+    wanting a full scan without sitting through the quick one first. Rejected: a split-button
+    sliver on Rescan (cramped in a 300px row, and puts a slow rare action one mis-click from the
+    everyday one); a hover popup (Pryme isn't a fan).
+    - **Naming:** NOT "Rebuild library" (implies starting over, i.e. excluded books coming back)
+      and NOT "Re-read all books" (in an audiobook app it reads as telling the listener to
+      re-listen — Pryme's catch). Working name: "Full scan".
+    - **Excluded books stay excluded** under a full scan — Pryme's call, and it's what today's
+      forced Rescan already does (`is_excluded` is sticky through upserts; only the Excluded Books
+      popup restores). Full scan = today's forced Rescan semantics, nothing more.
+    - **Unchecked:** whether the banner fits a counts message plus an action at 300px wide, and
+      how long it stays visible after a scan. Pryme still weighing whether the two-step banner
+      path is too cumbersome.
 - [2026-09-17] TEST, minor: add a deliberately corrupted image file as a book's cover and confirm
   the app handles it gracefully (no crash, some sane fallback) rather than assuming it does. Not a
   known bug — a gap in test coverage to close.
