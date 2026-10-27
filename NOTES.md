@@ -1,3 +1,85 @@
+## 2026-10-27 — No-cover placeholder: title/author layout (branch `feature/placeholder-title-author-layout`)
+
+The no-cover placeholder no longer shows the dash-joined `"{author} - {title}"` line in
+`metadata_label`. Title (1-2 lines, François One) and author (1 line, upper-cased, Versa) are now
+painted into the placeholder pixmap under the logo. Pure layout logic lives in
+`ui/cover_placeholder_layout.py` (injected `text_width`/`supports_char`, headless-tested in
+`tests/test_cover_placeholder_layout.py`); `ui/cover_placeholder.py` supplies real
+`QFontMetrics`/`QRawFont` measurement and does the painting.
+
+**Why paint instead of two QLabels.** `visual_area` is exactly 280×280 in the has-book state and
+`cover_art_label` is pinned to 280 inside it, so `metadata_label` never had real room: measured, it
+sat at label-local y=264-280, overlapping the bottom of `cover_art_label`. Adding two more labels
+to that `QVBoxLayout` would mean fighting the same fixed budget (see the "constraining a lone
+stretch participant" rule in CLAUDE.md). Painting into the one 280×280 pixmap avoids it, and the
+font that measures the text is the font that paints it, so pre-elided strings can't be re-wrapped.
+`metadata_label` is now hidden in every state.
+
+**Real space available** (measured offscreen in an isolated `HOME`/XDG, with `cover_art_label`
+positioned at window (10, 66)): 280 wide (300 window − 2×10 content margin) × 280 tall
+(`COVER_AREA_HEIGHT`) for logo and text together. Pryme's "about 200 px" works out to the text
+**width**. The mockup screenshot is offset from the real window by (−3, −2) px (calibrated
+against `prev_button` (10, 430) and `speed_button` (230, 356)).
+
+**Constants set** (all in `cover_placeholder_layout.py`, starting from the mockup):
+- `TEXT_MAX_WIDTH_PX = 190`, not 200. With greedy wrapping, the mockup's break ("Colorless
+  Tsukuru Tazaki" / "and His Years of Pilgrimage") only reproduces between ~182 and ~191px; at
+  200, "and" lands on line 1. Side effect: `CĂRTĂRESCU LÁSZLÓ ÖĞİŞE` (193px at Versa 15 / spacing
+  0) now elides to `CĂRTĂRESCU LÁSZLÓ ÖĞİ…`. Tightening the author letter spacing would let it fit again.
+- `TITLE_PX_SIZE = 16`: François One 16px gives 165/182px for the mockup's two lines (mockup
+  ink: 164/180).
+- `AUTHOR_PX_SIZE = 14` (Pryme's call after a first look; it started at 15px, chosen to match
+  the mockup's 11px cap height), `AUTHOR_LETTER_SPACING_PX = 0`. The mockup author is 108px wide, which corresponds to about **−2px** spacing at 15px
+  (measured: 0 → 149px ink, −1 → 131px, −2 → 113px). Left at 0 per the brief, for Pryme to tune.
+- Logo size 182 in both states (unchanged). The SVG's ink starts 3px into its box.
+  `LOGO_TOP_PX`: TWO_LINE = 12 (the mockup's logo ink top is at local y 15), ONE_LINE = 31.
+  `LOGO_TITLE_GAP_PX = 26`, `TITLE_LINE_PITCH_PX = 19`, `TITLE_AUTHOR_GAP_PX = 15`. Rendered
+  two-line output puts the author caps at local y 266-276, the same as the mockup's. The text
+  block is bottom-anchored and the logo moves by one pitch between states. The old placeholder
+  had the logo top at 49 (centered), so the one-line state now sits 18px higher than before.
+
+**Measured vs painted, author with letter spacing.** They agree: `horizontalAdvance` vs painted
+ink width = 150/149 (spacing 0), 131/131 (−1), 112/113 (−2). The ±1px is side bearings, not
+drift. Spacing is applied with `QFont.setLetterSpacing(AbsoluteSpacing, …)` on the single
+`make_font()` used for both measuring and painting.
+
+**PySide6 gotcha found on the way:** `QRawFont.supportsCharacter(str)` returns False for every
+non-ASCII character ('Ă', 'Д' → False even in fonts that have them). `supportsCharacter(ord(ch))`
+is correct. Without the `ord()`, every non-ASCII string silently went to the fallback font.
+
+**Coverage (logged by the real-font test):** François One and Versa cover Latin Extended, but not
+Cyrillic, Greek or CJK. Oswald covers Cyrillic but **not Greek**, so a Greek title or author goes
+through Oswald and Qt then falls back per glyph for those characters. Not handled; it's rare.
+
+**Fonts and licenses.** Registered in `main.py` right after Open Sans Condensed, using the same
+`QFontDatabase.addApplicationFont(os.path.join(_FONTS_DIR, …))` call. The file list is
+`PLACEHOLDER_FONT_FILES` in the layout module. Family names as reported by Qt: `Francois One`,
+`Versa`, `Oswald`. Only `Oswald-Regular.ttf` is registered; the other five Oswald weights in
+`assets/fonts/` are unused. Packaging: `pyproject.toml` declares no package data for any font
+(Open Sans Condensed included), so there was nothing to mirror. License files present:
+`FrancoisOne OFL.txt`, `Oswald OFL.txt`. **Missing: a license file for `Versa.otf`**, and also
+for `OpenSans-CondensedRegular.ttf`, which predates this change.
+
+**`metadata_label` elsewhere.** Its only text writer was `_show_no_cover_state`.
+`_update_metadata_ui` (via `UIInterface`/`AppInterface.update_metadata`) can set text, but all
+three callers in `library_controller.apply_library_state` pass `text=None` and only toggle
+visibility. The text under the transport controls in the screenshots is the chapter label, not
+`metadata_label`. Left the widget, `_update_metadata_ui` and its visibility toggles alone; only
+updated two comments that described the dash text.
+
+**Theme imagery.** The ten `bg_image` themes are 284×284 images centered on the 280×280 area. The
+GoT banners are transparent in the text band: their vertical slogans sit at x≈255-280, outside
+the 190px column (x 45-235). Their bottom-left sigils reach label x≈46, y≈243-280, so a
+**max-width author line can touch the Winterfell/Pyke sigil edge** by about 1px; shorter author
+lines can't. **The Overlook** (tiled rug, 100% opaque) collides with everything, as already
+known; that's a separate task.
+
+**Awkward bits in `app.py`.** None blocking. `_placeholder_color()` reaches into
+`theme_manager._current_theme_name`. The theme-refresh path (`_cover_placeholder.refresh`) needed
+no change, because `CoverPlaceholder` keeps the last title/author and the layout cache makes the
+recolor a cache hit. The placeholder pixmap is now rendered at the label's `devicePixelRatioF()`;
+the old 1x pixmap was blurry on HiDPI, so the logo is also sharper there.
+
 ## 2026-09-26 — `mutagen.FileType`'s dict-subclass truthiness silently dropped duration for real, valid, untagged audio files — one book's duration lost, another book's VT stitching broken (4 of 5 parts missing from `book_files`)
 
 **The bug.** `ScannerWorker._extract_metadata` (`scanner.py`) decided whether `mutagen.File(af)`

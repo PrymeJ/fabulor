@@ -9,6 +9,15 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
 
 ## Summary index
 
+### No-cover placeholder doesn't update after a Book Detail metadata edit (noted by Pryme, not scheduled)
+- [2026-10-27] Editing the playing book's title/author in Book Detail leaves the main window's
+  no-cover placeholder showing the old text. `MainWindow._on_book_metadata_saved` updates only the
+  library model and Stats; nothing calls `_show_cover_placeholder` again. Not a regression: the old
+  dash-joined `metadata_label` line was never refreshed there either. Likely fix: when
+  `book_id` matches the current book and `_cover_placeholder.is_showing`, re-show it with the new
+  title/author (the layout cache key changes, so it re-measures). Branch
+  `feature/placeholder-title-author-layout`.
+
 ### Move the other five panels' backdrop grab to move-aside too (deferred by Pryme — regression risk)
 - [2026-10-20] `TransportBarBlurOverlay._grab_and_blur` now excludes Book Detail from its grab by
   moving it aside (`exclude_by_move`, `06407e3`) instead of hiding it — a hide runs the panel's real
