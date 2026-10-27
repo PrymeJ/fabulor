@@ -3886,20 +3886,22 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         else:
             self.theme_manager.clear_cover_theme()
             self._pending_cover_pixmap = None
-        self._show_cover_placeholder()
-        self.metadata_label.show()
+        # Title/author are painted into the placeholder itself (see
+        # cover_placeholder_layout); metadata_label no longer carries the old
+        # dash-joined "Author - Title" line.
+        self.metadata_label.hide()
         if book:
-            text = f"{book.author} - {book.title}" if book.author else (book.title or "")
+            self._show_cover_placeholder(book.title or "", book.author or "")
         else:
-            text = "Unknown book"
-        self.metadata_label.setText(text)
+            self._show_cover_placeholder("Unknown book", "")
 
     def _placeholder_color(self):
         t = _resolve_theme(self.theme_manager._current_theme_name)
         return t.get('placeholder_cover', t.get('library_narrator', t.get('text', '#888888')))
 
-    def _show_cover_placeholder(self):
-        self._cover_placeholder.show(self.cover_art_label, self._placeholder_color())
+    def _show_cover_placeholder(self, title: str, author: str):
+        self._cover_placeholder.show(self.cover_art_label, self._placeholder_color(),
+                                     title, author)
 
     def _on_cover_error(self, message: str) -> None:
         """CoverPanel's add-cover flow failed (too large, unreadable, or a

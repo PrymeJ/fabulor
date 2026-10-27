@@ -229,7 +229,8 @@ def build_metadata(mw):
     scan_layout.addStretch()            # eat remaining space below the button
     mw.visual_layout.addWidget(mw.scan_section, 1)  # stretch 1: claims remaining space
 
-    # Metadata (Book Info) — shared with player state (shows "Author - Title" for no-cover books)
+    # Metadata (Book Info). No longer shows the no-cover "Author - Title" line — that text is
+    # painted into the cover placeholder now (cover_placeholder.py); kept hidden in every state.
     mw.metadata_label = QLabel("")
     mw.metadata_label.setAlignment(Qt.AlignCenter)
     mw.metadata_label.setWordWrap(True)
