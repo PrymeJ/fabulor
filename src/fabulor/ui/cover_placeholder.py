@@ -17,23 +17,26 @@ import os
 import re
 
 from PySide6.QtCore import Qt, QByteArray, QRectF
-from PySide6.QtGui import QPixmap, QPainter, QFont, QFontMetrics, QRawFont, QColor
+from PySide6.QtGui import QPixmap, QPainter, QFont, QFontMetricsF, QRawFont, QColor
 from PySide6.QtSvg import QSvgRenderer
 
 from .ui_helpers import _ASSETS_DIR, COVER_AREA_HEIGHT
 from . import cover_placeholder_layout as L
 
 
-def make_font(family: str, role: str) -> QFont:
+def make_font(family: str, role: str, spacing: float = 0.0) -> QFont:
     """The exact QFont used both to measure and to paint ``role`` text.
-    Letter-spacing is applied here (not via QSS) so measurement and painting
-    agree."""
+    Letter-spacing (author only, chosen per name by the layout) is applied
+    here (not via QSS) so measurement and painting agree."""
     f = QFont(family)
+    weight = L.ROLE_WEIGHTS.get((family, role), L.FAMILY_WEIGHTS.get(family))
+    if weight:
+        f.setWeight(QFont.Weight(weight))
     if role == L.ROLE_AUTHOR:
-        f.setPixelSize(L.AUTHOR_PX_SIZE)
-        f.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, L.AUTHOR_LETTER_SPACING_PX)
+        f.setPixelSize(L.ROLE_PX_SIZES.get((family, role), L.AUTHOR_PX_SIZE))
+        f.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, spacing)
     else:
-        f.setPixelSize(L.TITLE_PX_SIZE)
+        f.setPixelSize(L.ROLE_PX_SIZES.get((family, role), L.TITLE_PX_SIZE))
     return f
 
 
@@ -45,20 +48,23 @@ class QtFontMeasurer:
         self._metrics = {}
         self._raw = {}
 
-    def metrics(self, family: str, role: str) -> QFontMetrics:
-        key = (family, role)
+    def metrics(self, family: str, role: str, spacing: float = 0.0) -> QFontMetricsF:
+        key = (family, role, spacing)
         fm = self._metrics.get(key)
         if fm is None:
-            fm = self._metrics[key] = QFontMetrics(make_font(family, role))
+            fm = self._metrics[key] = QFontMetricsF(make_font(family, role, spacing))
         return fm
 
-    def text_width(self, text: str, family: str, role: str) -> int:
-        return self.metrics(family, role).horizontalAdvance(text)
+    def text_width(self, text: str, family: str, role: str, spacing: float = 0.0) -> float:
+        # Qt's advance includes letter-spacing after the LAST glyph too, which
+        # is never drawn; drop it so fitting and centering match the ink.
+        adv = self.metrics(family, role, spacing).horizontalAdvance(text)
+        return adv - spacing if text else 0.0
 
     def supports_char(self, family: str, ch: str) -> bool:
         raw = self._raw.get(family)
         if raw is None:
-            raw = self._raw[family] = QRawFont.fromFont(QFont(family))
+            raw = self._raw[family] = QRawFont.fromFont(make_font(family, L.ROLE_TITLE))
         # ord(): PySide6's str overload of supportsCharacter returns False for
         # every non-ASCII character (checked 2026-10-27: 'Ă' False, ord('Ă') True).
         return raw.isValid() and raw.familyName() == family and raw.supportsCharacter(ord(ch))
@@ -113,16 +119,19 @@ class CoverPlaceholder:
         painter.setPen(QColor(color))
         fm = self._measurer.metrics(layout.title_family, L.ROLE_TITLE)
         painter.setFont(make_font(layout.title_family, L.ROLE_TITLE))
-        baseline = logo_top + logo_size + L.LOGO_TITLE_GAP_PX + fm.capHeight()
+        baseline = logo_top + logo_size + L.LOGO_TITLE_GAP_PX + round(fm.capHeight())
         for i, line in enumerate(layout.title_lines):
             if i:
                 baseline += L.TITLE_LINE_PITCH_PX
             painter.drawText(int(round((w - fm.horizontalAdvance(line)) / 2)), baseline, line)
         if layout.author_text:
-            afm = self._measurer.metrics(layout.author_family, L.ROLE_AUTHOR)
-            painter.setFont(make_font(layout.author_family, L.ROLE_AUTHOR))
-            baseline += L.TITLE_AUTHOR_GAP_PX + afm.capHeight()
-            x = int(round((w - afm.horizontalAdvance(layout.author_text)) / 2))
+            sp = layout.author_letter_spacing
+            afm = self._measurer.metrics(layout.author_family, L.ROLE_AUTHOR, sp)
+            painter.setFont(make_font(layout.author_family, L.ROLE_AUTHOR, sp))
+            baseline += L.TITLE_AUTHOR_GAP_PX + round(afm.capHeight())
+            text_w = self._measurer.text_width(layout.author_text, layout.author_family,
+                                               L.ROLE_AUTHOR, sp)
+            x = int(round((w - text_w) / 2))
             painter.drawText(x, baseline, layout.author_text)
         painter.end()
         return pm
