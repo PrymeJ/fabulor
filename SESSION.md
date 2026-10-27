@@ -1,3 +1,55 @@
+## Session Summary — 2026-10-27 Session 1 — Spans 2026-10-27/28: the no-cover placeholder now paints title and author under the logo; Versa replaced by Saira after a license check, with per-script font chains
+
+Branch `feature/placeholder-title-author-layout` (not merged). Commits `9bddfde` (feature),
+`b543e36` (docs), `460be19` (font swap, chains, spacing), plus this docs commit.
+
+**Built from Pryme's spec and Photopea mockup.** `ui/cover_placeholder_layout.py` (pure, injected
+`text_width`/`supports_char`, headless-tested) decides two discrete states — one- or two-line title
+— and the logo moves up one line pitch for two. `ui/cover_placeholder.py` paints logo + text into
+the cover label's pixmap at the label's DPR, so measured width = painted width. Constants were
+calibrated against real widget geometry (280×280), not the screenshot.
+
+**Versa dropped.** Pryme asked whether the bundled Versa was the free one. Its name table says
+"Versa Versa" v1.000 (the free Font Squirrel single style), but the license is the James Lewis
+agreement, not OFL: free use for the downloader, but clause 3 forbids copying the file. Bundling
+isn't clearly permitted. Pryme chose to replace it rather than email the designer.
+
+**Choosing the replacement — four rendered rounds.** Candidates were rendered through the app's own
+`_render` at the real cover size, matched to Versa's cap height and stroke density, across real
+themes (Shai-Hulud, Solaris, Rivendell, Miss Havisham). Out: Fira/Roboto/Sofia/Barlow Condensed
+(too plain), Hubot Sans, Chakra Petch, Bai Jamjuree (identical at 14px — same foundry; the
+fontsource subset files lack basic A–Z, so they had to be merged to preview), Russo One (missing
+Ț, Maltese, Welsh, Vietnamese). Final two: Saira Semi Condensed and Exo 2. Exo 2's R and B have
+small, high bowls that fill in at 14px ExtraBold (glyph IDs checked against the file — design, not
+substitution). **Saira Semi Condensed ExtraBold** won; Exo 2's Cyrillic looked good, so it became
+the Cyrillic fallback.
+
+**Font chains, per string.** Author: Saira → Exo 2 ExtraBold → Roboto. Title: François One →
+Roboto. The first family covering the WHOLE string is used; never mixed per glyph. Roboto replaced
+the original Oswald fallback, which had no Greek. Qt filled each Greek glyph from a system font,
+and a pixel diff identified it as Roboto Medium, which Pryme liked; Open Sans Condensed was tried
+in between and rejected. Roboto on the author line is Black (closest ink density to Saira
+ExtraBold) at 13px, because at 14px its caps painted 11px tall vs Saira's 9.
+
+**Size and spacing.** 14px, letter-spacing +0.5px (tried 15px and +1px). If a name doesn't fit,
+spacing drops to 0, and only if that fits the whole name; otherwise it elides at 0.5. This is a
+deliberate exception to the spec's "no shrink-to-fit" — spacing only, never size.
+
+**Smaller fixes found on the way:** Greek all-caps now drops accents (Καλημέρα → ΚΑΛΗΜΕΡΑ; τσάι →
+ΤΣΑΪ), Latin accents untouched. Qt's advance includes the letter-spacing after the last glyph, so
+the author line was centered half a pixel left; the measurer now subtracts it.
+
+**Wrong claim, retracted in-session.** "WILLIAM GASS" looked unevenly spaced; Claude first said Qt
+snaps glyphs to whole pixels, based on a probe that could only ever report whole pixels. A 0.25px
+shift test disproved it. Measuring Pryme's own screenshot showed the gaps match Saira's design. The
+unevenness is letter shape (L's open side, I/M stems next to W/A diagonals); Saira's kerning is
+applied but has no pairs for LL/LI/WI/AM. Recorded as a Debugging discipline bullet in CLAUDE.md.
+
+**Open (TODO.md):** placeholder text illegible on six themes whose `placeholder_cover` is
+deliberately dark (Plum Island and Not the Only Fruit confirmed by Pryme's screenshots), plus
+Pryme's idea of a slightly different text colour than the logo on the rest; and Book Detail
+metadata edits not refreshing the placeholder.
+
 ## Session Summary — 2026-10-20 Session 1 — Book Detail's backdrop grab stopped hiding the panel: fixes edits reverting, tag suggestions closing and the exclusion confirm self-dismissing in Frosty/Opaque
 
 **Report (Pryme).** In Book Detail, typing in Title/Author/Narrator/Year lost focus and reverted after

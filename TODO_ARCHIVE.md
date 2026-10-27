@@ -5,6 +5,21 @@ list scannable. Kept, not deleted, per the project's normal practice of not thro
 that isn't fully duplicated in NOTES.md/SESSION.md/a commit message. Order is the same relative
 order these entries had in TODO.md before the split (2026-07-30).
 
+- **[2026-10-27, CLOSED] No-cover placeholder's "author - title" text needed a visual pass
+  (logged 2026-09-17 as VISUAL, MAJOR).** Replaced on `feature/placeholder-title-author-layout`
+  (`9bddfde`, `460be19`): title (François One, 1-2 lines) and author (Saira Semi Condensed
+  ExtraBold, all caps) painted under the logo, with per-script font chains. NOTES.md 2026-10-27.
+- **[2026-09-17, FIXED] Placeholder showed "None - Book Title" for an empty author** — original
+  entry, moved here 2026-10-28:
+  no-cover-art placeholder showed the literal text "None - Book Title" instead
+  of blank/just-the-title when a book's author field was empty. `app.py:3602`'s `metadata_label`
+  text built `f"{book.author} - {book.title}"` with no guard for `book.author` being `None`, unlike
+  every other author-display site in the codebase (`library.py`, which uses `book.author or ""`
+  throughout). Pryme's own note when logging this: "BUG no author - none > just blank. I am not
+  sure what I meant when I wrote this. I'll wipe author and title fields to check" — found and
+  fixed from the code alone before he could reproduce it live; matches his description exactly.
+  Fixed to fall back to just the title (no dangling " - ") when author is empty.
+
 - **[2026-10-03, CLOSED] Some themes need a preset-ramp colour override (`fa6d301`'s honest
   `bg_main` -> `accent` blend exposed low-contrast ramps on themes whose accent/background are
   close in luminance or hue) — AND the two 2026-09-17 theme-pass-adjacent items it generalized

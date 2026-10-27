@@ -278,6 +278,18 @@ The real library used for day-to-day testing has been ~400 books. That is not re
   truthiness as a success signal — `is not None` is the only check that's unambiguous regardless.
   See NOTES.md, 2026-09-26, for the full investigation and the two Book Detail layout bugs found
   in the same session.
+- **Qt font facts that cost time on the no-cover placeholder (2026-10-27)** — each checked, not
+  assumed: (1) `QRawFont.supportsCharacter(str)` returns False for EVERY non-ASCII character in
+  PySide6; pass `ord(ch)`. (2) `QFont.setPointSizeF`/fractional sizes snap to whole pixels — 14.2
+  measures and paints exactly like 14, and `PreferNoHinting` doesn't change that; only a painter
+  `scale()` gives a fractional size. (3) `QFontMetrics(F).horizontalAdvance` includes letter-spacing
+  after the LAST glyph, which is never painted — subtract it before centering or fitting. (4) Font
+  px sizes don't mean the same visible size across families: Roboto's caps at 14px paint 11px tall
+  vs Saira's 9 — compare painted cap heights, not px. Also a probe lesson from the same session: an
+  ink-or-not column threshold can only ever report whole-pixel gaps, so it cannot tell whether
+  painting snapped glyphs to pixels — that wrong conclusion was drawn from it and retracted (a
+  0.25px-shift test showed painting honors fractional positions). Check a probe can represent the
+  quantity before concluding from it.
 
 ---
 
@@ -1615,7 +1627,7 @@ All mode detection happens in `_resolve_playlist()` (run async on a `QThreadPool
 - **`_set_bg_suppressed`** — sets `_bg_suppressed` (read by `ThemeManager._apply_stylesheets`), toggles `visual_area.setAutoFillBackground`, and regenerates `content_container`'s stylesheet with `get_player_stylesheet(theme, suppress_bg_image=…)` (uses `_active_display_theme` when a cover theme is live, to avoid a pool-color flash). Re-asserts transparent chapter-slider colors when `_chapter_ui_active` is False.
 - **Right-click suppression after folder dialog** — `_get_new_folder_path` restarts `_dialog_close_time` (`QElapsedTimer`); `_on_drag_area_pressed` ignores right-clicks within 500 ms of the dialog closing. Drag-area right-click is also only forwarded when `db.get_book_count() > 0`.
 - **Drag-area press** — `visual_area.mousePressEvent` is monkey-patched to `_on_drag_area_pressed`: left-click closes open panels, else toggles play/pause; empty library short-circuits. (No window-move logic lives here.)
-- **Cover scaling** — `_update_cover_art_scaling()` implements four fit modes (`fit` KeepAspectRatio / `stretch` IgnoreAspectRatio / `crop` center-crop / `top` top-aligned on black canvas), all sized to `COVER_AREA_HEIGHT` (module constant), not the live label height. No-cover books render a themed `fabulor.svg` placeholder. Cover-theme application defers while a panel is open (`_pending_cover_pixmap` → `_apply_pending_cover_theme`).
+- **Cover scaling** — `_update_cover_art_scaling()` implements four fit modes (`fit` KeepAspectRatio / `stretch` IgnoreAspectRatio / `crop` center-crop / `top` top-aligned on black canvas), all sized to `COVER_AREA_HEIGHT` (module constant), not the live label height. No-cover books render a themed `fabulor.svg` placeholder with the title (1-2 lines, François One) and author (1 line, all caps, Saira Semi Condensed ExtraBold) painted beneath it — see `ui/cover_placeholder_layout.py` for the font chains and layout constants. Cover-theme application defers while a panel is open (`_pending_cover_pixmap` → `_apply_pending_cover_theme`).
 - **200 ms `ui_timer` (`_update_ui_sync`)** — the heartbeat. Reads time/dur/pause/speed/eof; feeds `session_recorder.update_furthest_position`; on EOF synthesizes `pos = dur`, sets the restart icon, writes one `'finished'` event, shows the revert/close banner, and closes the session. Delegates to `_sync_playback_state`, `_sync_ui_render`, `_sync_progress_sliders` (skips setValue during flow anim / seeking / `flow_pending_progress`), `_sync_chapter_ui` (derives chapter from `pos`, skips during reload / no chapters / `flow_pending_chapter` / seeking), `_sync_persistence` (saves position every 0.1%, skips during drag / deadzone). Stopped during the flow animation; resumed via `_resume_ui_timer`.
 - **Keyboard** — global keys route through `ShortcutDispatcher` (`shortcuts.py`), wired in `MainWindow.keyPressEvent`. `C` opens/closes the chapter dropdown (2+ chapters only); `T` rotates theme (`COOLDOWN_COALESCE` 2s — leading fire, repeats coalesce to one trailing fire, migrated from the old `_theme_rotate_cooldown`/`_pending` attrs); `Q` rotates the no-book quote (testing-only); `L` opens the library (`COOLDOWN_DROP` 500ms — open-only, no-op if the library/any full panel is already open or in the empty state, sidebar-open flows via `_open_library_flow`). The dispatcher owns binding + spam-guard ONLY; each action's app-state gating stays in its handler. **Transport keys (added 2026-07-11)** — `Space` play/pause, `Up`/`Down` volume (repeats on hold), `Alt+Up`/`Alt+Down` speed (repeats on hold, self-throttled — `_SPEED_NUDGE_THROTTLE_S`), `Shift+Left`/`Shift+Right` long skip, `Ctrl+Left`/`Ctrl+Right` chapter prev/next, `m` mute, `u` undo (only while the undo affordance is shown) — each calls the exact method its on-screen button/wheel already uses; volume/speed share `_nudge_volume`/`_nudge_speed` with `wheelEvent`. Added real modifier support to `Binding`/the dispatcher (masked to Shift/Ctrl/Alt) — a bare-key binding now matches only an unmodified press (Ctrl+T no longer rotates the theme). **Gated by the focus-ownership invariant** (see the CLAUDE.md rule of that name): the dispatcher only acts when `QApplication.focusWidget()` is `None` or `MainWindow` itself, never when a panel/overlay's own widget holds real focus — this is what stops these keys from leaking into text fields or firing while any panel is open. Full input map (incl. chapter-list keys, text-field Escape handlers, mouse/wheel) in `KEYBINDINGS.md`.
 - **Wheel zones** — over `visual_area`: volume ±5 (2s overlay); over `speed_button`: speed ±`speed_increment`, clamped 0.25–8.0; over `progress_slider`: chapter Prev/Next (up → next chapter, down → previous; no-op when no chapters or at last/first boundary — delegates to `handle_next`/`handle_prev` so all guards are inherited); over `chapter_progress_slider`: seek by `max(10, chap_dur × 0.05)` with undo capture.
@@ -1625,7 +1637,7 @@ All mode detection happens in `_resolve_playlist()` (run async on a `QThreadPool
 
 ### UI — Player view
 
-- Cover art (four fit modes, above). Themed SVG placeholder for no-cover books.
+- Cover art (four fit modes, above). Themed SVG placeholder plus painted title/author for no-cover books.
 - **Chapter list overlay** (`chapter_list.py`, `ChapterList`) — `QListWidget` child positioned absolutely; fade in 450 ms / out 300 ms (opacity → 0.94); `ROW_HEIGHT 24`, default `VISIBLE_ROWS 5`. Expand/collapse (button shown only when count > visible; Left/Right arrows toggle). Keyboard: Up/Down nav, Enter activate (no force-play), Space activate (force-play), Esc/`C` close. Digit jump: buffer + 800 ms debounce; `by_index` (1-based) or `by_name` (word-boundary regex); autoplay configurable. Activation uses `seek_async(+epsilon)` for VT/CUE, native `chapter = idx` for embedded M4B.
 - Progress slider with chapter notch markers + notch reveal animation; separate chapter-progress slider; flow animation on book switch (both sliders animate between positions); UI-timer guards skip setValue during animation.
 - `self._switch.in_deadzone` (`book_switch.py`) prevents stale position display during the library slide-out.
@@ -1832,7 +1844,8 @@ src/fabulor/
     ├── carousel.py           # CoverCarousel — ambient scrolling strip in no-book state
     ├── flow_layout.py        # FlowLayout (heightForWidth implemented)
     ├── icon_utils.py         # load_themed_icon, load_currentcolor_icon, render_logo_placeholder(_bordered) — icon/SVG renderers
-    ├── cover_placeholder.py  # Cover-art placeholder logo rendering (no-cover books, in the cover label)
+    ├── cover_placeholder.py  # No-cover placeholder: paints logo + title/author into the cover label; real QFont measurement (QtFontMeasurer)
+    ├── cover_placeholder_layout.py # Pure layout for it: font chains per script, wrap/elide, author spacing steps, Greek caps — headless-tested
     ├── ui_helpers.py         # _load_svg_pixmap/_load_svg_icon (+ LRU cache) — shared by app.py and main_window_builders
     ├── main_window_builders.py # build_* functions extracted from MainWindow._build_* — each takes `mw` and assigns widgets onto it
     ├── transport_bar_blur.py # TransportBarBlurOverlay — live backdrop blur for the mini transport bar behind an open panel
@@ -1874,7 +1887,15 @@ Any `QWidget` subclass (not `QFrame`, not `QLabel`) that owns a background-color
 
 *Reorganization note (2026-07-13): the "Critical Architecture Rules" section was restructured to remove repetition — it previously existed as two passes (a full-prose section and a later condensed second pass covering many of the same rules). The two were merged: rules that appeared in both now appear once, under whichever fact they share, with no information dropped. Rules unique to either pass are unchanged. See the note directly under the "Critical Architecture Rules" heading for detail.*
 
-*Last updated: 2026-10-20 Session 1 — Book Detail's backdrop grab stopped hiding the panel
+*Last updated: 2026-10-27 Session 1 (spans 10-27/28) — the no-cover placeholder now paints the
+title (François One, 1-2 lines) and author (Saira Semi Condensed ExtraBold, 14px, all caps) under
+the logo. Versa, the author font in Pryme's mockup, was dropped because its license forbids
+redistributing the file. Per-string font chains: author Saira → Exo 2 ExtraBold (Cyrillic) → Roboto
+Black 13px (Greek), title François One → Roboto Medium. Author spacing is 0.5px and tightens to 0
+only if that fits the whole name. Greek all-caps drops accents. See NOTES.md 2026-10-27 and the
+new Qt-font Debugging discipline bullet.*
+
+*Previously: 2026-10-20 Session 1 — Book Detail's backdrop grab stopped hiding the panel
 (`exclude_by_move`), and its grab gates became Frosty-only. Fixes edits reverting, tag suggestions
 closing and the exclusion confirm self-dismissing every ~10s in Frosty/Opaque. See the "DO NOT hide
 Book Detail to grab its backdrop" rule.*

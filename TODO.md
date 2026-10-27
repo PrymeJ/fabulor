@@ -9,14 +9,27 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
 
 ## Summary index
 
-### No-cover placeholder doesn't update after a Book Detail metadata edit (noted by Pryme, not scheduled)
+### No-cover placeholder text is illegible on some themes, and could differ from the logo color (raised by Pryme)
+- [2026-10-28] Title/author are painted in the logo's color (`_placeholder_color()`:
+  `placeholder_cover` → `library_narrator` → `text`). Several themes set `placeholder_cover`
+  deliberately dark — right for a faint logo, unreadable for text. Contrast vs `bg_main`, lowest
+  first: Plum Island 1.15:1, Blood Meridian 1.32, Not the Only Fruit 1.51, Alzabo 1.58, Darlington
+  Hall 1.64, Castle Dracula 1.97 (median theme 4.50). Pryme's screenshots confirmed Plum Island
+  and Not the Only Fruit. `bg_main` only — gradient/bg-image themes may sit on another colour.
+- Same mechanism answers Pryme's second idea: on legible themes, a slightly different text colour
+  than the logo "to break the monotony". Likely shape: a new optional theme key for the placeholder
+  text (and maybe a second for the author line), falling back to `placeholder_cover`, with
+  per-theme overrides for the low-contrast themes above. If "The Color Purple" ever sets it, add
+  it to `_NO_BASE_INHERIT_KEYS` (CLAUDE.md rule). Alternative for the variation: derive a lighter/
+  shifted tone from the logo colour instead of hand-picking per theme. Not decided.
+
+### No-cover placeholder doesn't update after a Book Detail metadata edit (noted by Pryme)
 - [2026-10-27] Editing the playing book's title/author in Book Detail leaves the main window's
   no-cover placeholder showing the old text. `MainWindow._on_book_metadata_saved` updates only the
   library model and Stats; nothing calls `_show_cover_placeholder` again. Not a regression: the old
   dash-joined `metadata_label` line was never refreshed there either. Likely fix: when
   `book_id` matches the current book and `_cover_placeholder.is_showing`, re-show it with the new
-  title/author (the layout cache key changes, so it re-measures). Branch
-  `feature/placeholder-title-author-layout`.
+  title/author (the layout cache key changes, so it re-measures). Raised again by Pryme 2026-10-28 as one of the two open placeholder issues.
 
 ### Move the other five panels' backdrop grab to move-aside too (deferred by Pryme — regression risk)
 - [2026-10-20] `TransportBarBlurOverlay._grab_and_blur` now excludes Book Detail from its grab by
@@ -649,17 +662,6 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
 
 ### Small visual/cosmetic bugs (batch logged 2026-09-17, mostly not yet reproduced in detail)
 - [2026-09-17] Restart button has jagged edges — visual, minor. Not yet investigated.
-- [2026-09-17] No-cover-art placeholder's "author - title" text: font, style, and position need a
-  visual pass — flagged VISUAL, MAJOR (the strongest severity in this batch). Not yet scoped
-  further than "needs a look."
-- [2026-09-17] FIXED — no-cover-art placeholder showed the literal text "None - Book Title" instead
-  of blank/just-the-title when a book's author field was empty. `app.py:3602`'s `metadata_label`
-  text built `f"{book.author} - {book.title}"` with no guard for `book.author` being `None`, unlike
-  every other author-display site in the codebase (`library.py`, which uses `book.author or ""`
-  throughout). Pryme's own note when logging this: "BUG no author - none > just blank. I am not
-  sure what I meant when I wrote this. I'll wipe author and title fields to check" — found and
-  fixed from the code alone before he could reproduce it live; matches his description exactly.
-  Fixed to fall back to just the title (no dangling " - ") when author is empty.
 
 ### Cover/metadata scan gaps (batch logged 2026-09-17, need reproduction)
 - [2026-09-17, SEQUENCED behind the ID refactor 2026-09-18] POSSIBLE BUG, needs repro: changing a

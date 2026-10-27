@@ -48,17 +48,68 @@ non-ASCII character ('Ă', 'Д' → False even in fonts that have them). `suppor
 is correct. Without the `ord()`, every non-ASCII string silently went to the fallback font.
 
 **Coverage (logged by the real-font test):** François One and Versa cover Latin Extended, but not
-Cyrillic, Greek or CJK. Oswald covers Cyrillic but **not Greek**, so a Greek title or author goes
-through Oswald and Qt then falls back per glyph for those characters. Not handled; it's rare.
+Cyrillic, Greek or CJK. The fallback was first Oswald (Medium), which covers Cyrillic but **not
+Greek** — Qt then drew every Greek glyph from a system font. Pixel-diffing the app's rendering
+against candidates identified it as **Roboto Medium** (59 differing pixels vs. 900+ for Noto Sans,
+DejaVu, Open Sans); the Medium weight carried over from the Oswald request. Pryme preferred that
+look, and Open Sans Condensed (tried in between) was rejected, so the fallback is now **Roboto
+Medium** for every non-Latin string: `Roboto-Medium.ttf` v2.138, copied from openSUSE's
+`google-roboto-fonts` package so it matches what was seen, Apache 2.0 (`Roboto Apache
+LICENSE.txt`). `make_font` sets weight Medium for it, because a system Roboto Regular may share
+the family name. Covers Cyrillic and Greek; CJK still falls back per glyph to the system.
+
+**Greek all-caps.** `str.upper()` keeps the tonos (Καλημέρα → ΚΑΛΗΜΈΡΑ), which is wrong in Greek
+all-caps. The author line now goes through `caps()` in the layout module: on Greek letters only it
+drops accents and breathings, keeps the diaeresis, and turns an accent that split a diphthong into
+a diaeresis on the second vowel (τσάι → ΤΣΑΪ). Latin accents are untouched.
 
 **Fonts and licenses.** Registered in `main.py` right after Open Sans Condensed, using the same
 `QFontDatabase.addApplicationFont(os.path.join(_FONTS_DIR, …))` call. The file list is
 `PLACEHOLDER_FONT_FILES` in the layout module. Family names as reported by Qt: `Francois One`,
-`Versa`, `Oswald`. Only `Oswald-Regular.ttf` is registered; the other five Oswald weights in
-`assets/fonts/` are unused. Packaging: `pyproject.toml` declares no package data for any font
+`Saira SemiCondensed`, `Roboto`. Oswald is no longer used. Packaging: `pyproject.toml` declares no package data for any font
 (Open Sans Condensed included), so there was nothing to mirror. License files present:
-`FrancoisOne OFL.txt`, `Oswald OFL.txt`. **Missing: a license file for `Versa.otf`**, and also
-for `OpenSans-CondensedRegular.ttf`, which predates this change.
+`Francois One OFL.txt`, `Open Sans OFL.txt`, `Roboto Apache LICENSE.txt`. **`Versa.otf` is NOT OFL.** Its
+internal name table says family "Versa Versa", PostScript `Versa-Versa`, version 1.000, and the
+foundry is unset — this is the free single-style James Lewis "Versa" distributed via Font Squirrel,
+not the paid 17-style family. Its license is the "James Lewis Font License Agreement" (RTF text):
+free use "by the downloader in creative and commercial projects", credit required, but clause 3
+forbids copying the file "except for backup purposes" and sublicensing/lending, and clause 6 only
+covers embedding in *documents*. Bundling the .otf in a distributed app is not clearly permitted;
+**Resolved the same day by replacement:** the author font is now **Saira Semi Condensed ExtraBold**
+(OFL, `Saira OFL.txt`), chosen by Pryme from rendered comparisons against Versa (Chakra Petch, Bai
+Jamjuree, Exo 2, Russo One, Hubot Sans; Fira/Roboto/Sofia/Barlow Condensed before that).
+`Versa.otf` was untracked from git and is no longer registered. Each face is asked for by weight
+(`FAMILY_WEIGHTS`), since QFont(family) alone could resolve to another installed weight. Coverage:
+Saira has full Latin incl. Vietnamese but no Cyrillic or Greek, so those authors fall back to
+Exo 2 ExtraBold, then Roboto Medium: the author line uses the chain Saira → Exo 2 → Roboto
+(`AUTHOR_FONT_CHAIN`), the title François One → Roboto (`TITLE_FONT_CHAIN`); `pick_font` takes
+the first family that covers the WHOLE string. Exo 2 was also tried as the main author font and
+rejected: its R and B have small, high bowls that fill in at 14px ExtraBold and read as dark blobs
+(glyph IDs checked identical to the font file — design, not substitution). Its Cyrillic looks good,
+hence the fallback role. Roboto on the AUTHOR line is Black (900, `ROLE_WEIGHTS`), on the title Medium:
+Medium looked lighter than the ExtraBold author fonts next to it (measured caps ink density:
+Saira XB 0.60, Exo 2 XB 0.56, Roboto Black 0.53, Bold 0.47, Medium 0.40). `Roboto-Black.ttf` is
+the same openSUSE v2.138 / Apache 2.0 as Medium. It is also 13px, not 14 (`ROLE_PX_SIZES`): Roboto's caps are taller per
+px, and at 14px they painted 11px tall vs 9 for Saira/Exo 2 — Pryme saw it as "bigger"; at 13px
+they paint 9.
+
+**Author size and spacing (same day).** 14px, letter-spacing +0.5px. Tried 15px (more legible
+but competed with the title: as wide as short titles and darker) and +1px (Pryme moved the
+default to 0.5). Deliberate exception to the spec's "no shrink-to-fit": when a name
+doesn't fit at the default, spacing steps down (0.5 → 0) and the first step that fits the WHOLE
+name wins (e.g. CHIMAMANDA NGOZI ADICHIE at 0); if none fits, it goes back to the default and is
+elided. Font size never changes.
+`AUTHOR_LETTER_SPACING_STEPS_PX`; the chosen value is `PlaceholderLayout.author_letter_spacing`.
+Qt's `horizontalAdvance` includes the letter-spacing after the last glyph, which is never drawn —
+`QtFontMeasurer.text_width` subtracts it, so fitting and centering match the ink (the old fixed
++1 centered half a pixel left). Measurement is now `QFontMetricsF`; cap heights are rounded
+explicitly, so vertical positions are unchanged.
+**"WILLIAM GASS" looks unevenly spaced:** measured in Pryme's screenshot, the rendered gaps match
+Saira's design (1.4–2.4px); Saira's kerning is applied by Qt (AV/TA/LY kern), it simply has no
+pairs for LL/LI/WI/AM — normal. The unevenness is letter shape: L's open right side and the
+I/M stems next to W/A diagonals. Not a rendering bug. (An earlier claim in-session that Qt
+snapped glyphs to whole pixels was wrong — a binary ink-threshold probe can only report whole
+pixels; a 0.25px shift test showed painting honors fractional positions.)
 
 **`metadata_label` elsewhere.** Its only text writer was `_show_no_cover_state`.
 `_update_metadata_ui` (via `UIInterface`/`AppInterface.update_metadata`) can set text, but all
