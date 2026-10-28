@@ -19,7 +19,7 @@ from PySide6.QtGui import QPixmap, QColor, QIcon, QPainter, QKeyEvent, QCursor, 
 from .player import Player, _CHAPTER_BOUNDARY_EPSILON, _CHAPTER_WALK_TOLERANCE
 from .config import Config
 from . import themes
-from .themes import _resolve_theme, get_player_stylesheet
+from .themes import _resolve_theme, get_player_stylesheet, placeholder_colors
 from .ui.chapter_list import ChapterList # Keep ChapterList here as it's a direct child of MainWindow
 from .ui.excluded_books import ExcludedBooksPopup # Same reason — direct child of MainWindow, not nested in the settings tab
 from .ui.speed_controls import SpeedControlsPanel
@@ -3131,7 +3131,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             bg_color = t.get('carousel_bg', t.get('slider_overall_bg', '#1a1a1a'))
             line_color = t.get('carousel_stripe') or None
             self._carousel.set_stripe_color(bg_color, line_color=line_color)
-        self._cover_placeholder.refresh(self.cover_art_label, self._placeholder_color())
+        self._cover_placeholder.refresh(self.cover_art_label, self._placeholder_colors())
         # Refresh whichever play/pause/restart icon is currently showing
         if self.current_file and self.player.eof_reached:
             self._set_play_icon("restart")
@@ -3901,12 +3901,11 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         else:
             self._show_cover_placeholder("Unknown book", "")
 
-    def _placeholder_color(self):
-        t = _resolve_theme(self.theme_manager._current_theme_name)
-        return t.get('placeholder_cover', t.get('library_narrator', t.get('text', '#888888')))
+    def _placeholder_colors(self):
+        return placeholder_colors(_resolve_theme(self.theme_manager._current_theme_name))
 
     def _show_cover_placeholder(self, title: str, author: str):
-        self._cover_placeholder.show(self.cover_art_label, self._placeholder_color(),
+        self._cover_placeholder.show(self.cover_art_label, self._placeholder_colors(),
                                      title, author)
 
     def _on_cover_error(self, message: str) -> None:

@@ -119,6 +119,8 @@ cover_preview_bg:     Background color for book cover previews in the library. F
 
 GROUP 10 — PLACEHOLDER COVERS
 placeholder_cover:    Color for the Fabulor logo shown in the player cover area when a book has no cover art. Fallback chain: library_narrator → text → #888888.
+placeholder_title:    (Optional) Color for the title painted under the no-cover logo in the player. Fallback: placeholder_author lightened and desaturated slightly (themes.derive_placeholder_title_color). Set on low-contrast themes, and on light-background themes where lightening lowers contrast.
+placeholder_author:   (Optional) Color for the author line painted under the no-cover logo in the player. Fallback: placeholder_cover's resolved color. Set on themes whose logo color is too dark to read as text.
 placeholder_library:  Color for the Fabulor logo shown in library thumbnail grid cells (no-cover books, all four view modes). Fallback chain: placeholder_cover → library_narrator → text → #888888.
 placeholder_stats:    Color for the Fabulor logo shown in stats panel book thumbnails (BookDayRow, FinishedBookThumb). Fallback chain: placeholder_cover → library_narrator → text → #888888.
 placeholder_tags:     Color for the Fabulor logo shown in tag panel book thumbnails. Fallback chain: placeholder_stats → placeholder_cover → library_narrator → text → #888888.
@@ -207,6 +209,8 @@ THEMES = {
         "focus_marker_palette":         ["#FD0000", "#6D0707"],
         "audio_slider_bg":               "#230C49",
         "placeholder_cover":             "#6D1212",
+        "placeholder_title":             "#FF5F5F",
+        "placeholder_author":            "#EF2727",
         "carousel_bg":                   "#2E184B",
         "carousel_stripe":               "#C31111",
     },
@@ -268,6 +272,8 @@ THEMES = {
         "tassel_fringe":                 "#8A5A2E",
         "focus_marker_palette":         ["#FFFB00", "#540404"],
         "placeholder_cover":             "#8A5A2E",
+        "placeholder_title":             "#FFBC7F",
+        "placeholder_author":            "#F49F51",
         "carousel_bg":                   "#DED0B4",
         "carousel_stripe":               "#8A5A2E",
     },
@@ -330,6 +336,8 @@ THEMES = {
         "tassel_fringe":                 "#4A0000",
         "focus_marker_palette":         ["#FF0000", "#4A0000"],
         "placeholder_cover":             "#8A0000",
+        "placeholder_title":             "#FF4040",
+        "placeholder_author":            "#F20000",
         "carousel_bg":                   "#140606",
         "carousel_stripe":               "#8A0000",
     },
@@ -454,6 +462,7 @@ THEMES = {
         "tassel_fringe":                 "#2E7A6A",
         "focus_marker_palette":         ["#FFFB00", "#540404"],
         "placeholder_cover":             "#2E7A6A",
+        "placeholder_title":             "#346258",
         "carousel_bg":                   "#AEBAB8",
         "carousel_stripe":               "#2E7A6A",
     },
@@ -490,6 +499,7 @@ THEMES = {
         "tassel_fringe":                 "#FFBF00",
         "focus_marker_palette":         ["#FF0000", "#FFFFFF"],
         "placeholder_cover":             "#FFBF00",
+        "placeholder_title":             "#FFFFFF",
         "carousel_bg":                   "#241203",
         "carousel_stripe":               "#B07E09",
     },
@@ -663,6 +673,8 @@ THEMES = {
         "tassel_fringe":                 "#E51717",
         "focus_marker_palette":         ["#FF0000", "#511356"],
         "placeholder_cover":             "#480505",
+        "placeholder_title":             "#D33F3F",
+        "placeholder_author":            "#BA1A1A",
         "placeholder_library":           "#A71F1F",
         "placeholder_stats":             "#B3593E",
         "placeholder_tags":              "#B3593E",
@@ -713,7 +725,10 @@ THEMES = {
         "tassel_head":                   "#2A0664",
         "tassel_fringe":                 "#39FF14",
         "focus_marker_palette":         ["#8EFF74", "#18630C"],
+        "placeholder_title":             "#478AF5",
+        "placeholder_author":            "#00B202",
         "placeholder_library":           "#39FF14",
+
     },
     "Camorr": {
         "bg_deep":                       "#0F1419",
@@ -864,6 +879,7 @@ THEMES = {
         "tassel_fringe":                 "#B8EFFA",
         "focus_marker_palette":         ["#FFFF00", "#A8AF25"],
         "placeholder_cover":             "#FFFF00",
+        "placeholder_title":             "#00FFFF",
         "placeholder_library":           "#9DFF00",
         "placeholder_stats":             "#FF00FF",
         "placeholder_tags":              "#00FFEE",
@@ -1507,6 +1523,8 @@ THEMES = {
         "tassel_cord":                   "#F2FF4B",
         "tassel_head":                   "#83E054",
         "tassel_fringe":                 "#EC00CB",
+        "placeholder_title":             "#FF00F4",
+        "placeholder_author":            "#00E0FF",
         "placeholder_library":           "#00FFF8",
         "carousel_bg":                   "#0E004D",
         "carousel_stripe":               "#FF00FF",
@@ -1563,6 +1581,8 @@ THEMES = {
         "tassel_fringe":                 "#FF0000",
         "focus_marker_palette":         ["#6E2E2C", "#CEC5A4E9"],
         "placeholder_cover":             "#FFF600",
+        "placeholder_title":             "#fdc105",
+        "placeholder_author":            "#FF0000",
         "placeholder_library":           "#FF0000",
         "placeholder_stats":             "#FDA605",
         "placeholder_tags":              "#FDA605",
@@ -1947,6 +1967,8 @@ THEMES = {
         "bookmark_icon":                 "#4C5F70",
         "tassel_head":                   "#AF0C11",
         "placeholder_cover":             "#222D38",
+        "placeholder_title":             "#AAAAAA",
+        "placeholder_author":            "#888888",
         "placeholder_library":           "#F05948",
         "placeholder_stats":             "#B3D5DE",
         "placeholder_tags":              "#EAADA6",
@@ -2179,6 +2201,8 @@ THEMES = {
         "tassel_fringe":                 "#B871B8",
         "focus_marker_palette":         ["#C80DC8", "#7C1D39"],
         "placeholder_cover":             "#4F2147",
+        "placeholder_title":             "#B971AD",
+        "placeholder_author":            "#8B4E9A",
         "placeholder_library":           "#8A608A",
         "placeholder_stats":             "#8A608A",
         "placeholder_tags":              "#8A608A",
@@ -2301,6 +2325,7 @@ THEMES = {
         "tassel_head":                   "#A336FC",
         "focus_marker_palette":         ["#00FFFF", "#C000FF"],
         "placeholder_cover":             "#A336FC",
+        "placeholder_title":             "#00FFFF",
         "placeholder_library":           "#00FFFF",
         "carousel_stripe":               "#CF0E9C",
     },
@@ -2643,6 +2668,8 @@ THEMES = {
         "tassel_cord":                   "#DC4A0F",
         "tassel_head":                   "#EA7B36",
         "tassel_fringe":                 "#971A2A",
+        "placeholder_title":             "#C0851E",
+        "placeholder_author":            "#B6543A",
         "placeholder_library":           "#CC6C54",
     },
     "Slow Regard": {
@@ -2916,6 +2943,8 @@ THEMES = {
         "tassel_cord":                   "#9843AA",
         "tassel_head":                   "#F2F0B4",
         "kbdnav_fill_highlight":         "#53117B",
+        "placeholder_title":             "#b258d1",
+        "placeholder_author":            "#7B2CBF",
         "placeholder_cover":             "#DF5AB7"
     },
     "The Eyrie": {
@@ -3028,6 +3057,8 @@ THEMES = {
         "tassel_head":                   "#DB4825",
         "focus_marker_palette":         ["#FFFE00", "#B21E15"],
         "placeholder_cover":             "#FFCF99",
+        "placeholder_title":             "#FFFFFF",
+        "placeholder_author":            "#FFFFFF",
         "placeholder_library":           "#F05632",
         "carousel_bg":                   "#6B0F1E",
         "carousel_stripe":               "#F05632",
@@ -3307,6 +3338,8 @@ THEMES = {
         "bookmark_icon":                 "#8A582D",
         "carousel_bg":                   "#381D19",
         "carousel_stripe":               "#B4691D",
+        "placeholder_title":             "#E0AE51",
+        "placeholder_author":            "#E67E22",
     },
     "Waste Lands": {
         "bg_deep":                       "#1A1A1A",
@@ -3341,6 +3374,7 @@ THEMES = {
         "tassel_head":                   "#4B0D45",
         "tassel_fringe":                 "#247078",
         "placeholder_cover":             "#938B64",
+        "placeholder_author":            "#B8860B",
         "carousel_stripe":               "#C7C69F",
     },
     "Winterfell": {
@@ -4317,6 +4351,37 @@ def derive_lighter_accent_rgb(accent_hex: str) -> str:
     return ",".join(str(round(c * 255)) for c in (nr, ng, nb))
 
 
+# No-cover placeholder title tone: the author/logo color, slightly lighter and
+# less saturated, so the title reads as related to the logo but not identical.
+_PLACEHOLDER_TITLE_VALUE_BOOST = 24 / 255
+_PLACEHOLDER_TITLE_SAT_FACTOR = 0.75
+
+
+def derive_placeholder_title_color(base_hex: str) -> str:
+    """"#rrggbb": `base_hex` lightened by _PLACEHOLDER_TITLE_VALUE_BOOST and
+    desaturated by _PLACEHOLDER_TITLE_SAT_FACTOR (same hue). Always lighter —
+    a light-background theme where that lowers contrast sets
+    `placeholder_title` instead (Rivendell)."""
+    h = base_hex.lstrip('#')
+    if len(h) != 6:
+        h = '888888'
+    r, g, b = (int(h[i:i + 2], 16) / 255 for i in (0, 2, 4))
+    hue, sat, val = colorsys.rgb_to_hsv(r, g, b)
+    nr, ng, nb = colorsys.hsv_to_rgb(hue, sat * _PLACEHOLDER_TITLE_SAT_FACTOR,
+                                     min(1.0, val + _PLACEHOLDER_TITLE_VALUE_BOOST))
+    return "#" + "".join(f"{round(c * 255):02x}" for c in (nr, ng, nb))
+
+
+def placeholder_colors(t: dict) -> tuple:
+    """(logo, title, author) colors for the player's no-cover placeholder.
+    Logo: placeholder_cover → library_narrator → text. Author: placeholder_author
+    → logo. Title: placeholder_title → derived from the author color."""
+    logo = t.get('placeholder_cover', t.get('library_narrator', t.get('text', '#888888')))
+    author = t.get('placeholder_author', logo)
+    title = t.get('placeholder_title') or derive_placeholder_title_color(author)
+    return logo, title, author
+
+
 def _audio_slider_bg_hex(t: dict) -> str:
     """The Audio tab's balance/EQ slider groove color: the per-theme `audio_slider_bg`
     override if set, else `slider_chapter_bg` lightened. Added 2026-09-19 — reusing
@@ -4398,7 +4463,7 @@ def _get_gradient_style(t, prefix, fallback_color, opacity=1.0):
 # or falls back to one of its own other keys (slider_progress -> text_on_light_bg
 # -> text). Letting them inherit from the base template made The Color Purple's
 # explicit value leak into every theme that doesn't set its own.
-_NO_BASE_INHERIT_KEYS = ("bookmark_body", "bookmark_icon", "tassel_cord", "tassel_head", "tassel_fringe", "streak_grid_outline", "streak_grid_dot", "slider_progress", "placeholder_cover", "focus_marker_palette", "focus_marker_tab_palette", "focus_marker_selected_palette", "excluded_scrollbar", "kbdnav_fill_highlight")
+_NO_BASE_INHERIT_KEYS = ("bookmark_body", "bookmark_icon", "tassel_cord", "tassel_head", "tassel_fringe", "streak_grid_outline", "streak_grid_dot", "slider_progress", "placeholder_cover", "focus_marker_palette", "focus_marker_tab_palette", "focus_marker_selected_palette", "excluded_scrollbar", "kbdnav_fill_highlight", "placeholder_title", "placeholder_author")
 
 
 # Panel-backdrop alpha override (2026-07-28). None = use each theme's own

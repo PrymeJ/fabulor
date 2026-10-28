@@ -11,7 +11,8 @@ this module supplies the real font measurement and paints the result into
 the label's pixmap. Text is painted rather than set on QLabels so the width
 that was measured is exactly the width that is drawn — no QLabel word-wrap
 or elision can re-flow the pre-elided strings. The theme-color resolution
-stays at the call site in app.py; this module just takes the resolved color.
+stays in themes.placeholder_colors; this module just takes the resolved
+(logo, title, author) colors.
 """
 import os
 import re
@@ -81,8 +82,9 @@ class CoverPlaceholder:
         self._measurer = None          # built lazily: needs a running QGuiApplication
         self._layouts = L.PlaceholderLayoutCache()
 
-    def show(self, cover_art_label, color: str, title: str, author: str) -> None:
-        """Render and display the placeholder in ``cover_art_label``."""
+    def show(self, cover_art_label, colors, title: str, author: str) -> None:
+        """Render and display the placeholder in ``cover_art_label``.
+        ``colors`` is (logo, title, author)."""
         self._title = title or ""
         self._author = author or ""
         try:
@@ -91,14 +93,15 @@ class CoverPlaceholder:
             layout = self._layouts.get(self._title, self._author, L.TEXT_MAX_WIDTH_PX,
                                        self._measurer.text_width,
                                        self._measurer.supports_char)
-            cover_art_label.setPixmap(self._render(cover_art_label, color, layout))
+            cover_art_label.setPixmap(self._render(cover_art_label, colors, layout))
             cover_art_label.show()
             self._showing = True
         except Exception:
             cover_art_label.hide()
             self._showing = False
 
-    def _render(self, cover_art_label, color: str, layout) -> QPixmap:
+    def _render(self, cover_art_label, colors, layout) -> QPixmap:
+        logo_color, title_color, author_color = colors
         w = cover_art_label.width() or 280
         h = COVER_AREA_HEIGHT
         dpr = cover_art_label.devicePixelRatioF()
@@ -112,11 +115,11 @@ class CoverPlaceholder:
         # Logo
         logo_size = L.LOGO_SIZE_PX[layout.state]
         logo_top = L.LOGO_TOP_PX[layout.state]
-        _logo_renderer(color).render(
+        _logo_renderer(logo_color).render(
             painter, QRectF((w - logo_size) / 2, logo_top, logo_size, logo_size))
 
         # Title lines, then author, each horizontally centered.
-        painter.setPen(QColor(color))
+        painter.setPen(QColor(title_color))
         fm = self._measurer.metrics(layout.title_family, L.ROLE_TITLE)
         painter.setFont(make_font(layout.title_family, L.ROLE_TITLE))
         baseline = logo_top + logo_size + L.LOGO_TITLE_GAP_PX + round(fm.capHeight())
@@ -125,6 +128,7 @@ class CoverPlaceholder:
                 baseline += L.TITLE_LINE_PITCH_PX
             painter.drawText(int(round((w - fm.horizontalAdvance(line)) / 2)), baseline, line)
         if layout.author_text:
+            painter.setPen(QColor(author_color))
             sp = layout.author_letter_spacing
             afm = self._measurer.metrics(layout.author_family, L.ROLE_AUTHOR, sp)
             painter.setFont(make_font(layout.author_family, L.ROLE_AUTHOR, sp))
@@ -140,11 +144,12 @@ class CoverPlaceholder:
         """Mark the placeholder as no longer showing (a real cover loaded)."""
         self._showing = False
 
-    def refresh(self, cover_art_label, color: str) -> None:
-        """Re-render at ``color`` only if the placeholder is currently showing
-        (used on theme change). Same title/author, so the layout is a cache hit."""
+    def refresh(self, cover_art_label, colors) -> None:
+        """Re-render with ``colors`` (logo, title, author) only if the
+        placeholder is currently showing (used on theme change). Same
+        title/author, so the layout is a cache hit."""
         if self._showing:
-            self.show(cover_art_label, color, self._title, self._author)
+            self.show(cover_art_label, colors, self._title, self._author)
 
     @property
     def is_showing(self) -> bool:
