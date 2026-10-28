@@ -42,6 +42,9 @@ class _ElidingLineEdit(DragSafeLineEdit):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._text_color = QColor()
+        # False: an empty field paints nothing at rest (narrator/year), instead of its dim
+        # placeholder. The field stays shown either way, so its blank row is still clickable.
+        self.placeholder_at_rest = True
 
     @Property(QColor)
     def text_color(self):
@@ -73,6 +76,9 @@ class _ElidingLineEdit(DragSafeLineEdit):
         if text:
             painter.setPen(self.palette().text().color())
         else:
+            if not self.placeholder_at_rest:
+                painter.end()
+                return
             text = self.placeholderText()
             colour = QColor(self.palette().text().color())
             colour.setAlphaF(0.45)
@@ -294,6 +300,9 @@ class BookDetailPanel(QWidget):
             QRegularExpressionValidator(QRegularExpression(r'^-?\d{0,4}$'))
         )
         for _f in (self._narrator_label, self._year_label):
+            # Always shown, blank when empty at rest: a hidden widget gets no clicks, so an
+            # empty narrator/year used to be reachable only by clicking another field first.
+            _f.placeholder_at_rest = False
             _sp = _f.sizePolicy()
             _sp.setRetainSizeWhenHidden(True)
             _f.setSizePolicy(_sp)
@@ -372,7 +381,10 @@ class BookDetailPanel(QWidget):
         _cfc_layout.setContentsMargins(0, 0, 0, 0)
         _cfc_layout.setSpacing(0)
         _cfc_layout.addStretch()
-        _cfc_layout.addWidget(self._confirm_finished_label)
+        # AlignVCenter keeps the label at its own height. Without it the label stretched to
+        # the narrator row's (taller, a line edit's) height and its border boxed 2px taller
+        # than _confirm_remove_label's.
+        _cfc_layout.addWidget(self._confirm_finished_label, 0, Qt.AlignmentFlag.AlignVCenter)
 
         # Stacked (not side-by-side) so _confirm_remove_label owns the FULL row width when
         # shown, rather than sharing it with _duration_label's reserved (retain-size-when-
@@ -1397,8 +1409,6 @@ class BookDetailPanel(QWidget):
         year = self._book_data.get('year')
         self._year_label.setText(str(year) if year else '')
         if not self._editing:
-            self._narrator_label.setVisible(bool(narrator))
-            self._year_label.setVisible(bool(year))
             for field in (self._title_label, self._author_label,
                           self._narrator_label, self._year_label):
                 field.setCursorPosition(0)
@@ -1670,11 +1680,6 @@ class BookDetailPanel(QWidget):
     def _cancel_finished_confirm(self) -> None:
         self._confirming_finished = False
         self._narrator_stack.setCurrentWidget(self._narrator_label)
-        # StackOne re-shows the narrator page on switch — but a no-narrator book
-        # keeps its narrator label hidden (empty slot), so re-apply that visibility
-        # rather than leaving an empty line behind.
-        if not self._editing:
-            self._narrator_label.setVisible(bool(self._book_data.get('narrator')))
         if self._finished_cancel_timer:
             self._finished_cancel_timer.stop()
             self._finished_cancel_timer = None
@@ -2288,8 +2293,6 @@ class BookDetailPanel(QWidget):
         self._orig_author   = self._author_label.text()
         self._orig_narrator = self._narrator_label.text()
         self._orig_year     = self._year_label.text()
-        self._narrator_label.setVisible(True)
-        self._year_label.setVisible(True)
         target = focus_field or self._title_label
         for field in (self._title_label, self._author_label,
                       self._narrator_label, self._year_label):
@@ -2349,10 +2352,6 @@ class BookDetailPanel(QWidget):
             self._sync_header_from_fields()
             if self._pre_edit_meta_state is not None:
                 self._set_meta_state(self._pre_edit_meta_state)
-        narrator = self._book_data.get('narrator', '')
-        year = self._book_data.get('year')
-        self._narrator_label.setVisible(bool(narrator))
-        self._year_label.setVisible(bool(year))
         # setReadOnly(True) does NOT clear Qt focus — whichever field was being edited can
         # still hold real focus after this, leaving MainWindow's dispatcher gate open to
         # global shortcuts instead of this panel's own keyPressEvent (same class of bug fixed
