@@ -1,7 +1,8 @@
-## Session Summary — 2026-10-27 Session 1 — Spans 2026-10-27/28: the no-cover placeholder now paints title and author under the logo; Versa replaced by Saira after a license check, with per-script font chains
+## Session Summary — 2026-10-27 Session 1 — Spans 2026-10-27/28: the no-cover placeholder now paints title and author under the logo; Versa replaced by Saira after a license check, with per-script font chains; own title/author colours; merged
 
-Branch `feature/placeholder-title-author-layout` (not merged). Commits `9bddfde` (feature),
-`b543e36` (docs), `460be19` (font swap, chains, spacing), plus this docs commit.
+Branch `feature/placeholder-title-author-layout`, merged into `main` without squashing. Commits
+`9bddfde` (feature), `b543e36` (docs), `460be19` (font swap, chains, spacing), `d33d5b5` (docs),
+`00d7b9e` (metadata refresh), `43b8e33` (colours), `438a28f` (docs), plus this docs commit.
 
 **Built from Pryme's spec and Photopea mockup.** `ui/cover_placeholder_layout.py` (pure, injected
 `text_width`/`supports_char`, headless-tested) decides two discrete states — one- or two-line title
@@ -45,10 +46,23 @@ shift test disproved it. Measuring Pryme's own screenshot showed the gaps match 
 unevenness is letter shape (L's open side, I/M stems next to W/A diagonals); Saira's kerning is
 applied but has no pairs for LL/LI/WI/AM. Recorded as a Debugging discipline bullet in CLAUDE.md.
 
-**Open (TODO.md):** placeholder text illegible on six themes whose `placeholder_cover` is
-deliberately dark (Plum Island and Not the Only Fruit confirmed by Pryme's screenshots), plus
-Pryme's idea of a slightly different text colour than the logo on the rest; and Book Detail
-metadata edits not refreshing the placeholder.
+**Metadata refresh (`00d7b9e`).** `_on_book_metadata_saved` repaints the placeholder after a
+Book Detail edit, only when it is showing and the edited book is the one playing — a book with a
+real cover pays nothing. Live-verified by Pryme.
+
+**Title/author colours (`43b8e33`).** `themes.placeholder_colors` returns (logo, title, author).
+Author defaults to the logo colour; title to a slightly lighter, less saturated tone of the author
+colour (`derive_placeholder_title_color`, +24/255 value, ×0.75 saturation). New optional keys
+`placeholder_title`/`placeholder_author`, added to `_NO_BASE_INHERIT_KEYS`. Claude supplied
+starting overrides for the six themes under 2:1 logo contrast (author ≈4.5:1, title higher) and a
+darker title for Rivendell, the one light-background theme where lightening lowers contrast. Pryme
+checked every theme and set overrides on 18 in total.
+
+**Accepted, not scheduled:** Turkish dotted i uppercases to I (no per-book language to go on);
+long titles/authors stay elided rather than scrolling (scrolling only one of two title lines reads
+oddly; adding a cover removes the placeholder). Untested scripts: CJK titles have no spaces so they
+elide on one line instead of wrapping; scripts outside the bundled fonts rely on Qt's per-glyph
+system fallback under Roboto.
 
 ## Session Summary — 2026-10-20 Session 1 — Book Detail's backdrop grab stopped hiding the panel: fixes edits reverting, tag suggestions closing and the exclusion confirm self-dismissing in Frosty/Opaque
 
