@@ -5,6 +5,15 @@ list scannable. Kept, not deleted, per the project's normal practice of not thro
 that isn't fully duplicated in NOTES.md/SESSION.md/a commit message. Order is the same relative
 order these entries had in TODO.md before the split (2026-07-30).
 
+- **[2026-10-28, FIXED] No-cover placeholder text illegible on low-contrast themes, and same
+  colour as the logo.** `43b8e33`: author defaults to the logo colour, title to a slightly
+  lighter, less saturated tone of it (`themes.derive_placeholder_title_color`). New optional
+  keys `placeholder_title`/`placeholder_author` (in `_NO_BASE_INHERIT_KEYS`); 18 themes set them,
+  Pryme's final values after Claude's starting picks for Plum Island, Blood Meridian, Not the Only
+  Fruit, Alzabo, Darlington Hall, Castle Dracula and Rivendell (light background, darker title).
+- **[2026-10-28, FIXED] No-cover placeholder didn't update after a Book Detail metadata edit.**
+  `00d7b9e`: `_on_book_metadata_saved` repaints it when it is showing and the edited book is the
+  one playing. Live-verified by Pryme.
 - **[2026-10-27, CLOSED] No-cover placeholder's "author - title" text needed a visual pass
   (logged 2026-09-17 as VISUAL, MAJOR).** Replaced on `feature/placeholder-title-author-layout`
   (`9bddfde`, `460be19`): title (François One, 1-2 lines) and author (Saira Semi Condensed
