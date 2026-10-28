@@ -1,3 +1,36 @@
+## No-cover placeholder: title and author under the logo — 2026-10-27/28
+
+Background: a book with no cover shows the Fabulor logo with the title (1-2 lines, François One)
+and author (1 line, all caps, Saira Semi Condensed ExtraBold) painted beneath it. Per-string font
+fallback: author Saira → Exo 2 (Cyrillic) → Roboto Black 13px (Greek); title François One → Roboto
+Medium. Merged `1e4fd33`. Layout and colour resolution are unit-tested
+(`test_cover_placeholder_layout.py`, `test_placeholder_colors.py`); everything below needs eyes.
+
+### Layout
+- [ ] Short title: one line, logo in the upper position for one line. Long title: wraps to two
+      lines and the logo moves up; a title too long for two lines ends in "…" on line 2.
+- [ ] Empty title shows "Unknown book"; empty author shows no author line (no stray gap or dash).
+- [ ] Long author that fits only with spacing tightened shows in full; one that still doesn't fit
+      ends in "…" at normal spacing.
+- [ ] Switching from a no-cover book to a book with a cover and back: placeholder disappears and
+      returns with the right text, no leftover text over the real cover.
+
+### Scripts
+- [ ] Latin with accents (e.g. Cărtărescu, García Márquez): Saira, accents intact.
+- [ ] Cyrillic author: Exo 2. Greek author: Roboto, same cap height as Saira, accents dropped in caps.
+- [ ] Greek or Cyrillic title: Roboto Medium, same size feel as François One.
+
+### Colours
+- [ ] Author matches the logo colour; title is a slightly lighter, softer tone — on several themes.
+- [ ] The 18 themes with overrides (Plum Island, Not the Only Fruit, Castle Dracula, Rivendell…):
+      text readable against the background.
+- [ ] Theme change (manual, rotation, cover-art theme off): placeholder repaints in the new colours.
+
+### Refresh after a metadata edit
+- [ ] Playing a no-cover book, edit title/author in Book Detail and save: placeholder updates at once.
+- [ ] Editing a DIFFERENT book's metadata leaves the main placeholder unchanged.
+- [ ] Playing a book WITH a cover, edit its metadata: cover stays, no placeholder appears.
+
 ## Book Detail backdrop grab no longer tears down in-progress work — 2026-10-20 Session 1
 
 Background: in Frosty and Opaque backdrop modes, Book Detail re-grabbed its backdrop every 10s by
