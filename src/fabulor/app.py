@@ -19,7 +19,7 @@ from PySide6.QtGui import QPixmap, QColor, QIcon, QPainter, QKeyEvent, QCursor, 
 from .player import Player, _CHAPTER_BOUNDARY_EPSILON, _CHAPTER_WALK_TOLERANCE
 from .config import Config
 from . import themes
-from .themes import _resolve_theme, get_player_stylesheet
+from .themes import _resolve_theme, get_player_stylesheet, placeholder_colors
 from .ui.chapter_list import ChapterList # Keep ChapterList here as it's a direct child of MainWindow
 from .ui.excluded_books import ExcludedBooksPopup # Same reason — direct child of MainWindow, not nested in the settings tab
 from .ui.speed_controls import SpeedControlsPanel
@@ -1911,6 +1911,12 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.library_panel._refresh_search_match_state()
         if self.stats_panel.isVisible():
             self.stats_panel.refresh_all()
+        # The no-cover placeholder paints title/author into its pixmap. Repaint
+        # only when it is the thing on screen and the edited book is the one
+        # playing; a book with a real cover has nothing to refresh.
+        if (self._cover_placeholder.is_showing and self._current_book is not None
+                and self._current_book.id == book_id):
+            self._show_cover_placeholder(title, author)
 
     def _on_session_written(self):
         if self.stats_panel.isVisible():
@@ -3125,7 +3131,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             bg_color = t.get('carousel_bg', t.get('slider_overall_bg', '#1a1a1a'))
             line_color = t.get('carousel_stripe') or None
             self._carousel.set_stripe_color(bg_color, line_color=line_color)
-        self._cover_placeholder.refresh(self.cover_art_label, self._placeholder_color())
+        self._cover_placeholder.refresh(self.cover_art_label, self._placeholder_colors())
         # Refresh whichever play/pause/restart icon is currently showing
         if self.current_file and self.player.eof_reached:
             self._set_play_icon("restart")
@@ -3886,20 +3892,21 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         else:
             self.theme_manager.clear_cover_theme()
             self._pending_cover_pixmap = None
-        self._show_cover_placeholder()
-        self.metadata_label.show()
+        # Title/author are painted into the placeholder itself (see
+        # cover_placeholder_layout); metadata_label no longer carries the old
+        # dash-joined "Author - Title" line.
+        self.metadata_label.hide()
         if book:
-            text = f"{book.author} - {book.title}" if book.author else (book.title or "")
+            self._show_cover_placeholder(book.title or "", book.author or "")
         else:
-            text = "Unknown book"
-        self.metadata_label.setText(text)
+            self._show_cover_placeholder("Unknown book", "")
 
-    def _placeholder_color(self):
-        t = _resolve_theme(self.theme_manager._current_theme_name)
-        return t.get('placeholder_cover', t.get('library_narrator', t.get('text', '#888888')))
+    def _placeholder_colors(self):
+        return placeholder_colors(_resolve_theme(self.theme_manager._current_theme_name))
 
-    def _show_cover_placeholder(self):
-        self._cover_placeholder.show(self.cover_art_label, self._placeholder_color())
+    def _show_cover_placeholder(self, title: str, author: str):
+        self._cover_placeholder.show(self.cover_art_label, self._placeholder_colors(),
+                                     title, author)
 
     def _on_cover_error(self, message: str) -> None:
         """CoverPanel's add-cover flow failed (too large, unreadable, or a

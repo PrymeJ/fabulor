@@ -274,8 +274,8 @@ class LibraryController(QObject):
                 # Ambient cover carousel — reshuffled on each no-book entry.
                 self.ui.show_carousel()
             else:
-                # Leave metadata_label visibility to _load_cover_art — it controls
-                # whether to show "author - title" when no cover exists.
+                # Leave metadata_label visibility to _load_cover_art (it keeps it
+                # hidden; no-cover title/author are painted by the cover placeholder).
                 self.ui.update_metadata(None, show_go_to_lib=False)
                 self.ui.hide_carousel()
                 self.ui.set_bg_suppressed(False)  # restore theme bg image for the loaded book

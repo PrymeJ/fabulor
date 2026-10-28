@@ -640,17 +640,6 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
 
 ### Small visual/cosmetic bugs (batch logged 2026-09-17, mostly not yet reproduced in detail)
 - [2026-09-17] Restart button has jagged edges — visual, minor. Not yet investigated.
-- [2026-09-17] No-cover-art placeholder's "author - title" text: font, style, and position need a
-  visual pass — flagged VISUAL, MAJOR (the strongest severity in this batch). Not yet scoped
-  further than "needs a look."
-- [2026-09-17] FIXED — no-cover-art placeholder showed the literal text "None - Book Title" instead
-  of blank/just-the-title when a book's author field was empty. `app.py:3602`'s `metadata_label`
-  text built `f"{book.author} - {book.title}"` with no guard for `book.author` being `None`, unlike
-  every other author-display site in the codebase (`library.py`, which uses `book.author or ""`
-  throughout). Pryme's own note when logging this: "BUG no author - none > just blank. I am not
-  sure what I meant when I wrote this. I'll wipe author and title fields to check" — found and
-  fixed from the code alone before he could reproduce it live; matches his description exactly.
-  Fixed to fall back to just the title (no dangling " - ") when author is empty.
 
 ### Cover/metadata scan gaps (batch logged 2026-09-17, need reproduction)
 - [2026-09-17, SEQUENCED behind the ID refactor 2026-09-18] POSSIBLE BUG, needs repro: changing a

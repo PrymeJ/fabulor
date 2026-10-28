@@ -1,3 +1,136 @@
+## 2026-10-27 — No-cover placeholder: title/author layout (branch `feature/placeholder-title-author-layout`)
+
+The no-cover placeholder no longer shows the dash-joined `"{author} - {title}"` line in
+`metadata_label`. Title (1-2 lines, François One) and author (1 line, upper-cased, Versa) are now
+painted into the placeholder pixmap under the logo. Pure layout logic lives in
+`ui/cover_placeholder_layout.py` (injected `text_width`/`supports_char`, headless-tested in
+`tests/test_cover_placeholder_layout.py`); `ui/cover_placeholder.py` supplies real
+`QFontMetrics`/`QRawFont` measurement and does the painting.
+
+**Why paint instead of two QLabels.** `visual_area` is exactly 280×280 in the has-book state and
+`cover_art_label` is pinned to 280 inside it, so `metadata_label` never had real room: measured, it
+sat at label-local y=264-280, overlapping the bottom of `cover_art_label`. Adding two more labels
+to that `QVBoxLayout` would mean fighting the same fixed budget (see the "constraining a lone
+stretch participant" rule in CLAUDE.md). Painting into the one 280×280 pixmap avoids it, and the
+font that measures the text is the font that paints it, so pre-elided strings can't be re-wrapped.
+`metadata_label` is now hidden in every state.
+
+**Real space available** (measured offscreen in an isolated `HOME`/XDG, with `cover_art_label`
+positioned at window (10, 66)): 280 wide (300 window − 2×10 content margin) × 280 tall
+(`COVER_AREA_HEIGHT`) for logo and text together. Pryme's "about 200 px" works out to the text
+**width**. The mockup screenshot is offset from the real window by (−3, −2) px (calibrated
+against `prev_button` (10, 430) and `speed_button` (230, 356)).
+
+**Constants set** (all in `cover_placeholder_layout.py`, starting from the mockup):
+- `TEXT_MAX_WIDTH_PX = 190`, not 200. With greedy wrapping, the mockup's break ("Colorless
+  Tsukuru Tazaki" / "and His Years of Pilgrimage") only reproduces between ~182 and ~191px; at
+  200, "and" lands on line 1. Side effect: `CĂRTĂRESCU LÁSZLÓ ÖĞİŞE` (193px at Versa 15 / spacing
+  0) now elides to `CĂRTĂRESCU LÁSZLÓ ÖĞİ…`. Tightening the author letter spacing would let it fit again.
+- `TITLE_PX_SIZE = 16`: François One 16px gives 165/182px for the mockup's two lines (mockup
+  ink: 164/180).
+- `AUTHOR_PX_SIZE = 14` (Pryme's call after a first look; it started at 15px, chosen to match
+  the mockup's 11px cap height), `AUTHOR_LETTER_SPACING_PX = 0`. The mockup author is 108px wide, which corresponds to about **−2px** spacing at 15px
+  (measured: 0 → 149px ink, −1 → 131px, −2 → 113px). Left at 0 per the brief, for Pryme to tune.
+- Logo size 182 in both states (unchanged). The SVG's ink starts 3px into its box.
+  `LOGO_TOP_PX`: TWO_LINE = 12 (the mockup's logo ink top is at local y 15), ONE_LINE = 31.
+  `LOGO_TITLE_GAP_PX = 26`, `TITLE_LINE_PITCH_PX = 19`, `TITLE_AUTHOR_GAP_PX = 15`. Rendered
+  two-line output puts the author caps at local y 266-276, the same as the mockup's. The text
+  block is bottom-anchored and the logo moves by one pitch between states. The old placeholder
+  had the logo top at 49 (centered), so the one-line state now sits 18px higher than before.
+
+**Measured vs painted, author with letter spacing.** They agree: `horizontalAdvance` vs painted
+ink width = 150/149 (spacing 0), 131/131 (−1), 112/113 (−2). The ±1px is side bearings, not
+drift. Spacing is applied with `QFont.setLetterSpacing(AbsoluteSpacing, …)` on the single
+`make_font()` used for both measuring and painting.
+
+**PySide6 gotcha found on the way:** `QRawFont.supportsCharacter(str)` returns False for every
+non-ASCII character ('Ă', 'Д' → False even in fonts that have them). `supportsCharacter(ord(ch))`
+is correct. Without the `ord()`, every non-ASCII string silently went to the fallback font.
+
+**Coverage (logged by the real-font test):** François One and Versa cover Latin Extended, but not
+Cyrillic, Greek or CJK. The fallback was first Oswald (Medium), which covers Cyrillic but **not
+Greek** — Qt then drew every Greek glyph from a system font. Pixel-diffing the app's rendering
+against candidates identified it as **Roboto Medium** (59 differing pixels vs. 900+ for Noto Sans,
+DejaVu, Open Sans); the Medium weight carried over from the Oswald request. Pryme preferred that
+look, and Open Sans Condensed (tried in between) was rejected, so the fallback is now **Roboto
+Medium** for every non-Latin string: `Roboto-Medium.ttf` v2.138, copied from openSUSE's
+`google-roboto-fonts` package so it matches what was seen, Apache 2.0 (`Roboto Apache
+LICENSE.txt`). `make_font` sets weight Medium for it, because a system Roboto Regular may share
+the family name. Covers Cyrillic and Greek; CJK still falls back per glyph to the system.
+
+**Greek all-caps.** `str.upper()` keeps the tonos (Καλημέρα → ΚΑΛΗΜΈΡΑ), which is wrong in Greek
+all-caps. The author line now goes through `caps()` in the layout module: on Greek letters only it
+drops accents and breathings, keeps the diaeresis, and turns an accent that split a diphthong into
+a diaeresis on the second vowel (τσάι → ΤΣΑΪ). Latin accents are untouched.
+
+**Fonts and licenses.** Registered in `main.py` right after Open Sans Condensed, using the same
+`QFontDatabase.addApplicationFont(os.path.join(_FONTS_DIR, …))` call. The file list is
+`PLACEHOLDER_FONT_FILES` in the layout module. Family names as reported by Qt: `Francois One`,
+`Saira SemiCondensed`, `Roboto`. Oswald is no longer used. Packaging: `pyproject.toml` declares no package data for any font
+(Open Sans Condensed included), so there was nothing to mirror. License files present:
+`Francois One OFL.txt`, `Open Sans OFL.txt`, `Roboto Apache LICENSE.txt`. **`Versa.otf` is NOT OFL.** Its
+internal name table says family "Versa Versa", PostScript `Versa-Versa`, version 1.000, and the
+foundry is unset — this is the free single-style James Lewis "Versa" distributed via Font Squirrel,
+not the paid 17-style family. Its license is the "James Lewis Font License Agreement" (RTF text):
+free use "by the downloader in creative and commercial projects", credit required, but clause 3
+forbids copying the file "except for backup purposes" and sublicensing/lending, and clause 6 only
+covers embedding in *documents*. Bundling the .otf in a distributed app is not clearly permitted;
+**Resolved the same day by replacement:** the author font is now **Saira Semi Condensed ExtraBold**
+(OFL, `Saira OFL.txt`), chosen by Pryme from rendered comparisons against Versa (Chakra Petch, Bai
+Jamjuree, Exo 2, Russo One, Hubot Sans; Fira/Roboto/Sofia/Barlow Condensed before that).
+`Versa.otf` was untracked from git and is no longer registered. Each face is asked for by weight
+(`FAMILY_WEIGHTS`), since QFont(family) alone could resolve to another installed weight. Coverage:
+Saira has full Latin incl. Vietnamese but no Cyrillic or Greek, so those authors fall back to
+Exo 2 ExtraBold, then Roboto Medium: the author line uses the chain Saira → Exo 2 → Roboto
+(`AUTHOR_FONT_CHAIN`), the title François One → Roboto (`TITLE_FONT_CHAIN`); `pick_font` takes
+the first family that covers the WHOLE string. Exo 2 was also tried as the main author font and
+rejected: its R and B have small, high bowls that fill in at 14px ExtraBold and read as dark blobs
+(glyph IDs checked identical to the font file — design, not substitution). Its Cyrillic looks good,
+hence the fallback role. Roboto on the AUTHOR line is Black (900, `ROLE_WEIGHTS`), on the title Medium:
+Medium looked lighter than the ExtraBold author fonts next to it (measured caps ink density:
+Saira XB 0.60, Exo 2 XB 0.56, Roboto Black 0.53, Bold 0.47, Medium 0.40). `Roboto-Black.ttf` is
+the same openSUSE v2.138 / Apache 2.0 as Medium. It is also 13px, not 14 (`ROLE_PX_SIZES`): Roboto's caps are taller per
+px, and at 14px they painted 11px tall vs 9 for Saira/Exo 2 — Pryme saw it as "bigger"; at 13px
+they paint 9.
+
+**Author size and spacing (same day).** 14px, letter-spacing +0.5px. Tried 15px (more legible
+but competed with the title: as wide as short titles and darker) and +1px (Pryme moved the
+default to 0.5). Deliberate exception to the spec's "no shrink-to-fit": when a name
+doesn't fit at the default, spacing steps down (0.5 → 0) and the first step that fits the WHOLE
+name wins (e.g. CHIMAMANDA NGOZI ADICHIE at 0); if none fits, it goes back to the default and is
+elided. Font size never changes.
+`AUTHOR_LETTER_SPACING_STEPS_PX`; the chosen value is `PlaceholderLayout.author_letter_spacing`.
+Qt's `horizontalAdvance` includes the letter-spacing after the last glyph, which is never drawn —
+`QtFontMeasurer.text_width` subtracts it, so fitting and centering match the ink (the old fixed
++1 centered half a pixel left). Measurement is now `QFontMetricsF`; cap heights are rounded
+explicitly, so vertical positions are unchanged.
+**"WILLIAM GASS" looks unevenly spaced:** measured in Pryme's screenshot, the rendered gaps match
+Saira's design (1.4–2.4px); Saira's kerning is applied by Qt (AV/TA/LY kern), it simply has no
+pairs for LL/LI/WI/AM — normal. The unevenness is letter shape: L's open right side and the
+I/M stems next to W/A diagonals. Not a rendering bug. (An earlier claim in-session that Qt
+snapped glyphs to whole pixels was wrong — a binary ink-threshold probe can only report whole
+pixels; a 0.25px shift test showed painting honors fractional positions.)
+
+**`metadata_label` elsewhere.** Its only text writer was `_show_no_cover_state`.
+`_update_metadata_ui` (via `UIInterface`/`AppInterface.update_metadata`) can set text, but all
+three callers in `library_controller.apply_library_state` pass `text=None` and only toggle
+visibility. The text under the transport controls in the screenshots is the chapter label, not
+`metadata_label`. Left the widget, `_update_metadata_ui` and its visibility toggles alone; only
+updated two comments that described the dash text.
+
+**Theme imagery.** The ten `bg_image` themes are 284×284 images centered on the 280×280 area. The
+GoT banners are transparent in the text band: their vertical slogans sit at x≈255-280, outside
+the 190px column (x 45-235). Their bottom-left sigils reach label x≈46, y≈243-280, so a
+**max-width author line can touch the Winterfell/Pyke sigil edge** by about 1px; shorter author
+lines can't. **The Overlook** (tiled rug, 100% opaque) collides with everything, as already
+known; that's a separate task.
+
+**Awkward bits in `app.py`.** None blocking. `_placeholder_color()` reaches into
+`theme_manager._current_theme_name`. The theme-refresh path (`_cover_placeholder.refresh`) needed
+no change, because `CoverPlaceholder` keeps the last title/author and the layout cache makes the
+recolor a cache hit. The placeholder pixmap is now rendered at the label's `devicePixelRatioF()`;
+the old 1x pixmap was blurry on HiDPI, so the logo is also sharper there.
+
 ## 2026-09-26 — `mutagen.FileType`'s dict-subclass truthiness silently dropped duration for real, valid, untagged audio files — one book's duration lost, another book's VT stitching broken (4 of 5 parts missing from `book_files`)
 
 **The bug.** `ScannerWorker._extract_metadata` (`scanner.py`) decided whether `mutagen.File(af)`
