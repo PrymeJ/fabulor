@@ -801,13 +801,6 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
   without an obvious place to hide when unused. Needs feasibility/layout thinking before deciding,
   not just a yes/no.
 
-### Keyboard/mouse focus quality-of-life gaps (batch logged 2026-09-17)
-- [2026-09-17] In Book Detail's metadata edit mode, if the Year or Narrator field is empty, it can't
-  be tabbed/arrowed to directly — another field has to be clicked first before keyboard navigation
-  can reach the empty one. QOL, minor. Not yet traced to a specific mechanism (candidate: an empty
-  field's edit-mode widget may not be constructed/shown until some other field interaction triggers
-  it — needs checking against `_cycle_metadata_field`/`_enter_edit_mode` in `book_detail_panel.py`).
-
 ### Theme-pass-adjacent items (batch logged 2026-09-17 — group with the eventual full theme pass)
 - [2026-09-17, unblocked 2026-10-03] Book Detail's session-history row colors are wrong when a
   cover-based theme is selected — `build_cover_theme` (cover_theme.py) never sets

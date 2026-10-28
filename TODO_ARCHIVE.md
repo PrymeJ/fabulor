@@ -5,6 +5,13 @@ list scannable. Kept, not deleted, per the project's normal practice of not thro
 that isn't fully duplicated in NOTES.md/SESSION.md/a commit message. Order is the same relative
 order these entries had in TODO.md before the split (2026-07-30).
 
+- **[2026-10-28, FIXED] An empty Narrator/Year in Book Detail couldn't be clicked directly.**
+  The 2026-09-17 entry described it as a Tab/arrow problem; Pryme corrected that — Tab always
+  reached them, only a click on the blank row didn't. Cause: empty fields were hidden (their rows
+  kept their space, so the panel looked the same), and a hidden widget gets no clicks. Now always
+  shown, painting nothing at rest when empty (`_ElidingLineEdit.placeholder_at_rest`). Same commit
+  stopped the mark-finished confirm stretching 2px taller than the exclude confirm.
+  `tests/test_book_detail_empty_field_click.py`.
 - **[2026-10-28, FIXED] No-cover placeholder text illegible on low-contrast themes, and same
   colour as the logo.** `43b8e33`: author defaults to the logo colour, title to a slightly
   lighter, less saturated tone of it (`themes.derive_placeholder_title_color`). New optional
