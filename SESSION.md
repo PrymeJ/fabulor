@@ -1,8 +1,53 @@
-## Session Summary — 2026-10-27 Session 1 — Spans 2026-10-27/28: the no-cover placeholder now paints title and author under the logo; Versa replaced by Saira after a license check, with per-script font chains; own title/author colours; merged
+## Session Summary — 2026-10-28 Session 1 — placeholder title/author colours and metadata refresh, branch merged; TESTING.md trimmed to checks; empty Book Detail narrator/year clickable, year field sized to its value
 
-Branch `feature/placeholder-title-author-layout`, merged into `main` without squashing. Commits
-`9bddfde` (feature), `b543e36` (docs), `460be19` (font swap, chains, spacing), `d33d5b5` (docs),
-`00d7b9e` (metadata refresh), `43b8e33` (colours), `438a28f` (docs), plus this docs commit.
+Continues the 2026-10-27 placeholder work. Merged `feature/placeholder-title-author-layout` into
+`main` without squashing (`1e4fd33`), then worked on `main`. Commits: `00d7b9e`, `43b8e33`,
+`438a28f`, `413bbd8`, `2fc0475`, `7dccf72`, `7bdbe63`, `1910dea`, `e30b2bb`, plus this docs commit.
+
+**Metadata refresh (`00d7b9e`).** `_on_book_metadata_saved` repaints the placeholder after a
+Book Detail edit, only when it is showing and the edited book is the one playing — a book with a
+real cover pays nothing. Live-verified by Pryme.
+
+**Title/author colours (`43b8e33`).** `themes.placeholder_colors` returns (logo, title, author).
+Author defaults to the logo colour; title to a slightly lighter, less saturated tone of the author
+colour (`derive_placeholder_title_color`, +24/255 value, ×0.75 saturation). New optional keys
+`placeholder_title`/`placeholder_author`, added to `_NO_BASE_INHERIT_KEYS`. Claude supplied
+starting overrides for the six themes under 2:1 logo contrast (author ≈4.5:1, title higher) and a
+darker title for Rivendell, the one light-background theme where lightening lowers contrast. Pryme
+checked every theme and set overrides on 18 in total.
+
+**Accepted, not scheduled:** Turkish dotted i uppercases to I (no per-book language to go on);
+long titles/authors stay elided rather than scrolling (scrolling only one of two title lines reads
+oddly; adding a cover removes the placeholder). Untested scripts: CJK titles have no spaces so they
+elide on one line instead of wrapping; scripts outside the bundled fonts rely on Qt's per-glyph
+system fallback under Roboto.
+
+**TESTING.md trimmed (`7dccf72`).** Pryme: the file is his pre-release manual checklist and needs
+only headings and checks. Background paragraphs, fix stories, commit lists and mechanism notes were
+removed from ~30 sections; testing instructions were kept, shortened. Everything removed was already
+in SESSION.md/NOTES.md/TODO_ARCHIVE.md/CLAUDE.md except the book-based EQ story and one Book Detail
+grab-count note, both moved to NOTES.md. A placeholder checklist section was added (`2fc0475`).
+
+**Empty narrator/year clickable (`7bdbe63`).** The TODO entry said they couldn't be tabbed to; Pryme
+corrected that — Tab worked, a click on the blank row didn't. Empty fields were hidden (their rows
+kept their space, so nothing looked different) and a hidden widget gets no clicks. Now always shown,
+painting nothing at rest when empty (`_ElidingLineEdit.placeholder_at_rest`). Live-checked by Pryme,
+including against the 10s frost grab. Found while testing: the mark-finished confirm stretched to
+the narrator row's height, 2px taller than the exclude confirm — pre-existing; fixed with
+`AlignVCenter`.
+
+**Year field width (`e30b2bb`).** Pryme's call: the year's click/hover area spanned the whole row.
+Now sized to "-0000" (the validator's maximum) in its own font, re-measured on font/style change
+because the QSS font arrives after construction. Open Sans Condensed's digits are all one width
+(measured). Live-checked by Pryme.
+
+**Also:** Claude pushed once without being asked (it failed on an SSH key error); Pryme: push only
+when told — saved to memory. The ship-triage artifact lost its placeholder and empty-field rows.
+
+## Session Summary — 2026-10-27 Session 1 — the no-cover placeholder now paints title and author under the logo; Versa replaced by Saira after a license check, with per-script font chains
+
+Branch `feature/placeholder-title-author-layout` (merged 2026-10-28 — see that entry). Commits
+`9bddfde` (feature), `b543e36` (docs), `460be19` (font swap, chains, spacing), `d33d5b5` (docs).
 
 **Built from Pryme's spec and Photopea mockup.** `ui/cover_placeholder_layout.py` (pure, injected
 `text_width`/`supports_char`, headless-tested) decides two discrete states — one- or two-line title
@@ -45,24 +90,6 @@ snaps glyphs to whole pixels, based on a probe that could only ever report whole
 shift test disproved it. Measuring Pryme's own screenshot showed the gaps match Saira's design. The
 unevenness is letter shape (L's open side, I/M stems next to W/A diagonals); Saira's kerning is
 applied but has no pairs for LL/LI/WI/AM. Recorded as a Debugging discipline bullet in CLAUDE.md.
-
-**Metadata refresh (`00d7b9e`).** `_on_book_metadata_saved` repaints the placeholder after a
-Book Detail edit, only when it is showing and the edited book is the one playing — a book with a
-real cover pays nothing. Live-verified by Pryme.
-
-**Title/author colours (`43b8e33`).** `themes.placeholder_colors` returns (logo, title, author).
-Author defaults to the logo colour; title to a slightly lighter, less saturated tone of the author
-colour (`derive_placeholder_title_color`, +24/255 value, ×0.75 saturation). New optional keys
-`placeholder_title`/`placeholder_author`, added to `_NO_BASE_INHERIT_KEYS`. Claude supplied
-starting overrides for the six themes under 2:1 logo contrast (author ≈4.5:1, title higher) and a
-darker title for Rivendell, the one light-background theme where lightening lowers contrast. Pryme
-checked every theme and set overrides on 18 in total.
-
-**Accepted, not scheduled:** Turkish dotted i uppercases to I (no per-book language to go on);
-long titles/authors stay elided rather than scrolling (scrolling only one of two title lines reads
-oddly; adding a cover removes the placeholder). Untested scripts: CJK titles have no spaces so they
-elide on one line instead of wrapping; scripts outside the bundled fonts rely on Qt's per-glyph
-system fallback under Roboto.
 
 ## Session Summary — 2026-10-20 Session 1 — Book Detail's backdrop grab stopped hiding the panel: fixes edits reverting, tag suggestions closing and the exclusion confirm self-dismissing in Frosty/Opaque
 

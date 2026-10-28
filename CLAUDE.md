@@ -1647,7 +1647,7 @@ All mode detection happens in `_resolve_playlist()` (run async on a `QThreadPool
 
 `QTabWidget` (`stats_tabs`) with four tabs + a header:
 
-- **Header** — four inline-editable `_ElidingLineEdit` fields (title/author/narrator/year, read-only at rest, click to edit; year has a `-?\d*` validator; narrator+year always shown in edit mode). Escape / click-outside cancels via the app event filter. 80px-wide / 120px-max header cover (`_render_logo_placeholder` fallback, grayscale for archived books). `_finished_label` (always visible) toggles manual finish/unfinish with a 7s confirm. `_remove_btn` excludes the book (7s confirm); archived books show `_ghost_label` instead.
+- **Header** — four inline-editable `_ElidingLineEdit` fields (title/author/narrator/year, read-only at rest, click to edit; year has a `-?\d{0,4}` validator and is sized to fit "-0000"; an empty narrator/year stays shown but paints nothing at rest, so its blank row is clickable). Escape / click-outside cancels via the app event filter. 80px-wide / 120px-max header cover (`_render_logo_placeholder` fallback, grayscale for archived books). `_finished_label` (always visible) toggles manual finish/unfinish with a 7s confirm. `_remove_btn` excludes the book (7s confirm); archived books show `_ghost_label` instead.
 - **Metadata locks** — `_locks` dict (title/author/narrator/year). The unified `_meta_action_btn` (24×24) is driven by `_MetaActionState`: `HIDDEN` / `DIRTY` (save icon → save + lock changed fields) / `LOCKED` (lock icon → clear all locks) / `UNLOCKED` (lock-open, auto-reverts after 2500 ms).
 - **Stats tab** — furthest-position `_RangeBar` + %; a grid of Remaining (speed-aware) / Total listened / Sessions / Last session / Started / Finished; a non-scrolling `_RecentHistoryWidget` (up to 4 recent sessions).
 - **History tab** — full scrollable `_HistoryRow` list; per-row hover-reveal trash → slide-in "Delete this session?" confirm; "Delete listening history" with a 7s confirm; emits `history_deleted`.
@@ -1887,7 +1887,12 @@ Any `QWidget` subclass (not `QFrame`, not `QLabel`) that owns a background-color
 
 *Reorganization note (2026-07-13): the "Critical Architecture Rules" section was restructured to remove repetition — it previously existed as two passes (a full-prose section and a later condensed second pass covering many of the same rules). The two were merged: rules that appeared in both now appear once, under whichever fact they share, with no information dropped. Rules unique to either pass are unchanged. See the note directly under the "Critical Architecture Rules" heading for detail.*
 
-*Last updated: 2026-10-27 Session 1 (spans 10-27/28) — the no-cover placeholder now paints the
+*Last updated: 2026-10-28 Session 1 — placeholder title/author colours (`themes.placeholder_colors`,
+optional `placeholder_title`/`placeholder_author` keys, 18 themes set them) and repaint after a Book
+Detail metadata edit; branch merged (`1e4fd33`). TESTING.md trimmed to headings and checks. Book
+Detail: empty narrator/year clickable, year field sized to its longest value. See SESSION.md.*
+
+*Previously: 2026-10-27 Session 1 — the no-cover placeholder now paints the
 title (François One, 1-2 lines) and author (Saira Semi Condensed ExtraBold, 14px, all caps) under
 the logo. Versa, the author font in Pryme's mockup, was dropped because its license forbids
 redistributing the file. Per-string font chains: author Saira → Exo 2 ExtraBold (Cyrillic) → Roboto
