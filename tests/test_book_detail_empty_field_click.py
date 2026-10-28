@@ -70,3 +70,17 @@ def test_clicking_an_empty_field_edits_it(qapp, tmp_path, field_name):
     qapp.processEvents()
     assert field.isVisible() and field.text() == ""
     mw.close()
+
+
+def test_year_field_is_sized_to_its_longest_value(qapp, tmp_path):
+    from fabulor.themes import get_stats_stylesheet
+    mw, bdp = _panel(qapp, tmp_path, "N", -1234)
+    mw.setStyleSheet(get_stats_stylesheet("Solaris"))
+    qapp.processEvents()
+    year = bdp._year_label
+    assert year.width() < bdp._narrator_label.width() / 2
+    assert year.x() == bdp._narrator_label.x()
+    # The widest value the validator allows still fits (at the QSS font, not the default).
+    from PySide6.QtGui import QFontMetrics
+    assert QFontMetrics(year.font()).horizontalAdvance("-0000") + 5 <= year.width()
+    mw.close()

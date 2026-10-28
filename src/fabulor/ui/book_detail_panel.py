@@ -45,6 +45,25 @@ class _ElidingLineEdit(DragSafeLineEdit):
         # False: an empty field paints nothing at rest (narrator/year), instead of its dim
         # placeholder. The field stays shown either way, so its blank row is still clickable.
         self.placeholder_at_rest = True
+        self._width_sample = ""
+
+    def set_width_sample(self, sample: str) -> None:
+        """Fix the field's width to fit ``sample`` in its current font, re-measured
+        whenever the font or style changes (the QSS font arrives after construction)."""
+        self._width_sample = sample
+        self._apply_width_sample()
+
+    def _apply_width_sample(self) -> None:
+        if not self._width_sample:
+            return
+        # +10: the at-rest text inset (3px left, 2px right, see paintEvent), the 1px QSS
+        # border each side, and room for the caret after the last character.
+        self.setFixedWidth(QFontMetrics(self.font()).horizontalAdvance(self._width_sample) + 10)
+
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        if event.type() in (QEvent.Type.FontChange, QEvent.Type.StyleChange):
+            self._apply_width_sample()
 
     @Property(QColor)
     def text_color(self):
@@ -299,6 +318,10 @@ class BookDetailPanel(QWidget):
         self._year_label.setValidator(
             QRegularExpressionValidator(QRegularExpression(r'^-?\d{0,4}$'))
         )
+        # The validator caps the year at "-" plus 4 digits, so the field (and its click/hover
+        # area) is sized to that rather than spanning the row like the free-text fields.
+        # Open Sans Condensed's digits are all one width, so "0" stands in for any of them.
+        self._year_label.set_width_sample("-0000")
         for _f in (self._narrator_label, self._year_label):
             # Always shown, blank when empty at rest: a hidden widget gets no clicks, so an
             # empty narrator/year used to be reachable only by clicking another field first.
@@ -414,7 +437,7 @@ class BookDetailPanel(QWidget):
         meta_block.addWidget(self._title_label)
         meta_block.addWidget(self._author_label)
         meta_block.addLayout(self._narrator_stack)
-        meta_block.addWidget(self._year_label)
+        meta_block.addWidget(self._year_label, 0, Qt.AlignmentFlag.AlignLeft)
         meta_block.addLayout(dur_save_row)
         meta_block.addStretch()
 
