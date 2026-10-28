@@ -1911,6 +1911,12 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.library_panel._refresh_search_match_state()
         if self.stats_panel.isVisible():
             self.stats_panel.refresh_all()
+        # The no-cover placeholder paints title/author into its pixmap. Repaint
+        # only when it is the thing on screen and the edited book is the one
+        # playing; a book with a real cover has nothing to refresh.
+        if (self._cover_placeholder.is_showing and self._current_book is not None
+                and self._current_book.id == book_id):
+            self._show_cover_placeholder(title, author)
 
     def _on_session_written(self):
         if self.stats_panel.isVisible():
