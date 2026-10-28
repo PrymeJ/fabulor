@@ -1,11 +1,5 @@
 ## No-cover placeholder: title and author under the logo — 2026-10-27/28
 
-Background: a book with no cover shows the Fabulor logo with the title (1-2 lines, François One)
-and author (1 line, all caps, Saira Semi Condensed ExtraBold) painted beneath it. Per-string font
-fallback: author Saira → Exo 2 (Cyrillic) → Roboto Black 13px (Greek); title François One → Roboto
-Medium. Merged `1e4fd33`. Layout and colour resolution are unit-tested
-(`test_cover_placeholder_layout.py`, `test_placeholder_colors.py`); everything below needs eyes.
-
 ### Layout
 - [ ] Short title: one line, logo in the upper position for one line. Long title: wraps to two
       lines and the logo moves up; a title too long for two lines ends in "…" on line 2.
@@ -33,11 +27,7 @@ Medium. Merged `1e4fd33`. Layout and colour resolution are unit-tested
 
 ## Book Detail backdrop grab no longer tears down in-progress work — 2026-10-20 Session 1
 
-Background: in Frosty and Opaque backdrop modes, Book Detail re-grabbed its backdrop every 10s by
-HIDING the panel, which ran its close teardown each time. The grab now moves the panel aside instead
-of hiding it, and only Frosty grabs at all. Commit `06407e3`; Pryme confirmed the fix live
-("The fix worked") — boxes left for item-by-item regression runs. Each check below should hold for 30+ seconds (three
-refresh ticks) — the old bug hit within 10s.
+Each check below should hold for 30+ seconds.
 
 ### Frosty glass (the mode that still grabs)
 - [ ] Open a book's detail, click into Title, start typing, then stop and wait 30s — text stays,
@@ -59,22 +49,6 @@ refresh ticks) — the old bug hit within 10s.
 - [ ] Unchanged: same three checks still pass, as they did before.
 
 ## Book-based EQ+balance override — Book Detail EQ tab, Settings > Audio superseded-indicator — 2026-10-02
-
-Background: the global EQ (shipped 2026-09-18, On/Off toggle 2026-10-02, see the section below)
-isn't enough on its own — not every book needs EQ processing, and the ones that do won't all need
-the same settings. Added a per-book 3-state override (Global/Off/Custom) for EQ + balance on a new
-Book Detail tab ("EQ", placed after "Cover"), with Settings > Audio's own EQ+balance sliders
-staying purely global but showing a superseded note + dimming when the loaded book has an active
-override. On branch `feature/book-based-eq`, not yet merged to `main`. Voice boost/mono/swap are
-NOT part of this override — they remain global-only. Commit `2e984ff`.
-
-A real bug was caught and fixed during this round of testing: `BookEqualizerTab.audio_settings_
-changed` had nowhere to go (defined and emitted, but never connected in `app.py`/
-`main_window_builders.py`), so changing a book's mode/gains in Book Detail never reached Settings >
-Audio or the player until the book was reloaded — fixed via `MainWindow._on_book_audio_settings_
-changed`. A separate L/R balance issue was also found during this session but confirmed unrelated
-to this feature (reproducible on `main`, pre-existing) — deferred to be fixed once back on `main`,
-not part of this checklist.
 
 ### Book Detail: EQ tab placement and basics
 - [X] Open any book's detail panel — a new "EQ" tab appears immediately after "Cover" (tab order:
@@ -141,14 +115,6 @@ to check the result — never "both panels open simultaneously."
 
 ## Tags panel count display, Book Detail tag-cap message, Audio tab EQ On/Off toggle — 2026-10-01/02
 
-Background: three separate, unrelated pieces of work across two days. (1) A TODO item questioning
-whether Tags should migrate to Stats' model/delegate pattern before adding a tag count — answered
-(no migration needed, see `review/Investigation_261001_tags_model_delegate_feasibility.md`), then
-the display feature itself shipped. (2) The 5-band EQ (shipped 2026-09-18, see the section below)
-had no way to compare processed vs. unprocessed audio without manually zeroing every band — added
-an On/Off toggle, dimmed (not hidden) when Off so the 5 bands stay a stable visual reference.
-Commits `3679af7` (Tags), `2172695` (EQ toggle + layout).
-
 ### Tags panel count display
 - [ ] Settings → Library → Tag management (or wherever the Tags panel opens from) shows "N/50"
   next to the "Tag management" header, reflecting the current number of distinct tags
@@ -211,15 +177,7 @@ Commits `3679af7` (Tags), `2172695` (EQ toggle + layout).
 
 ## Resuming a book left at its own EOF — 2026-09-21 Session 1
 
-Background: TODO.md's "Resuming an M4B after unfinishing it freezes the app" investigation, ten
-fixes across one sustained session (see TODO_ARCHIVE.md for the full root-cause writeup). This is
-squarely CLAUDE.md's documented "known-fragile" seek/EOF/VT zone, and per that file's own standing
-rule, every fix here must be re-checked against BOTH book types (VT and M4B/embedded) even when a
-fix looks like it only touches one — several of the ten fixes were found precisely because a VT
-fix didn't automatically cover the M4B case, or vice versa. `tests/test_restore_position_eof.py`
-and `tests/test_vt_seek.py` cover the state-machine logic directly; this list is for what only a
-live app can show (visible timing, banner behavior, real DB writes). Commits `94c5187`, `8cd5a9d`,
-`bd1ffde`, `8b14231`, and the fix-10 commit for the stale-`_current_book` finished-write bug.
+Re-check every item on BOTH a multi-file (VT) book and an M4B book.
 
 ### The original freeze + VT chapter retreat (fixes 1-2)
 - [ ] Finish a book (VT and separately M4B) to 100% via real playback all the way to natural EOF
@@ -293,12 +251,6 @@ live app can show (visible timing, banner behavior, real DB writes). Commits `94
 
 ## Book Detail Tags tab — tag chip grid keyboard navigation — 2026-09-19 Session 2
 
-Background: TODO.md's Book Detail Tags tab entry ("chip navigation design settled, not yet
-implemented") was implemented directly against its own settled design the same day. Automated
-tests (`tests/test_book_detail_tag_chips_keys.py`) cover the navigation logic itself against real
-`FlowLayout` geometry; this list is for the parts that need a live app (visual highlight, real
-mouse/keyboard interplay, real DB-backed tag removal). Commit `1a268a7`.
-
 ### Entering and moving through the grid
 - [ ] Open Book Detail on a book with 3+ tags, land on the Tags tab, press Down from wherever
   focus currently is on the tab — the FIRST tag chip highlights
@@ -355,13 +307,6 @@ mouse/keyboard interplay, real DB-backed tag removal). Commit `1a268a7`.
 
 ## EQ/balance gradient fills, Audio tab reorder, EQ keyboard/wheel nav — 2026-09-19
 
-Background: after the 5-band EQ shipped (below), live feedback across multiple themes and
-screenshots found the sliders' flat fill hard to read, the tab order awkward for keyboard nav,
-and — while digging into keyboard behavior — two real functional gaps: the 5 EQ rows were
-completely invisible to arrow-key navigation (a layout-nesting bug, not a design choice), and
-mouse wheel did nothing on any of the 6 sliders. A third gap, focusing a slider under the "fill
-highlight" keyboard-nav style, was found and fixed in the same pass. Commit `9ce9e83`.
-
 ### Audio tab order and slider sizing
 - [ ] Settings → Audio tab order, top to bottom: Voice boost / Stereo-Mono / Channel swap /
   Equalizer / L/R balance (EQ moved above balance, off the very top of the tab)
@@ -405,12 +350,6 @@ section below for the shipped behavior
 
 ## EQ/balance: label alignment, fill-highlight brightening, midpoint-snap stepping — 2026-09-19 (cont.)
 
-Direct continuation of the section above, same session. Three more rounds of live feedback:
-the freq labels had uneven left/right spacing around the slider, the traveling-marker fallback
-for sliders under "fill highlight" (shipped in the section above) didn't feel right in practice,
-and wheel/arrow-key stepping couldn't land exactly on a slider's midpoint the way a mouse
-click/drag already could. Commits `718b466`, `7b8af25`.
-
 ### EQ freq label alignment
 - [ ] Each EQ slider's freq label ("100"/"300"/"1K"/"3K"/"8K") sits flush against the slider's
   own right edge — no visible gap between slider and label bigger than the slider's own left
@@ -448,16 +387,7 @@ click/drag already could. Commits `718b466`, `7b8af25`.
 
 ## 5-band EQ + Settings tab spacing/row fixes — 2026-09-18 Session 3
 
-Background: added a 5-band EQ to Settings → Audio (replacing Normalization), then fixed a
-tab-to-tab header-pitch drift and a stray row-spacing override discovered along the way while
-checking the new EQ's layout. Commits `119a2e6`, `1cc3ba9`, `b4f1325`.
-
-**Update, 2026-09-19:** the Up/Down and Left/Right item below was checked at the time but the
-EQ rows were in fact NOT reachable by arrow-key Up/Down at all — a layout-nesting bug (the 5 EQ
-rows sat inside a QVBoxLayout wrapper invisible to panels.settings_tab_button_rows()'s
-single-level walk) let Left/Right-on-a-focused-slider work correctly wherever focus DID land,
-which is what made this read as passing. Fixed in the 2026-09-19 section above — re-verify there,
-not here.
+Re-verify EQ arrow-key navigation in the 2026-09-19 section above, not here.
 
 ### Equalizer
 - [x] Settings → Audio shows an "Equalizer" section with 5 sliders (100, 300, 1K, 3K, 8K), each
@@ -479,8 +409,6 @@ not here.
   button row in Settings (was visibly tighter before the fix)
 
 ## Settings Off/On toggle defaults + day-starts-at spinbox — 2026-09-18 Session 2
-
-Background: TODO_ARCHIVE.md's 2026-09-18 closure entry has the full audit (`a41b407`).
 
 ### Toggle default flips (config-only changes — first app launch on a fresh profile, or after
 clearing the relevant QSettings key, is what actually exercises the new default)
@@ -507,10 +435,6 @@ clearing the relevant QSettings key, is what actually exercises the new default)
 
 ## Cover-art-theme hover previews from Off mode — 2026-09-18 Session 2/3
 
-Regression found and fixed same-day (Session 3, `5757f4e`): the preview applied synchronously with
-no debounce, so a brief pass-over (no lingering) fired it instantly — fixed by routing through the
-same 150ms `_hover_debounce_timer` queue every theme swatch already uses. Live-confirmed by Pryme.
-
 - [x] Quickly passing the cursor over the "Cover art based theme" entry (no lingering) does NOT
   trigger a preview — matches every theme swatch's own quick-pass-over behavior
 - [x] With cover-art-theme mode set to Off and a book with a cover loaded, hovering (lingering on)
@@ -523,10 +447,6 @@ same 150ms `_hover_debounce_timer` queue every theme swatch already uses. Live-c
 - [ ] Confirm a book with NO cover art still no-ops correctly on hover (no crash, no stale preview)
 
 ## Library keyboard-selection highlight unification + pagination hover-jump fix — 2026-09-18 Session 1
-
-Two changes shipped together (`9058136`). **Both confirmed live by Pryme.** Background: CLAUDE.md's
-"Keyboard-selection visual, per view mode" note and the `StatsRowListView` hover-poll mechanism
-this was ported from.
 
 ### Keyboard highlight color (1-per-row only)
 - [x] 1-per-row view mode: arrow-navigate to a book with the mouse elsewhere — the keyboard
@@ -553,9 +473,6 @@ this was ported from.
 
 ## Book Detail Tags tab — tag-add field completer, five bugs fixed — 2026-09-18 Session 1
 
-All five **live-confirmed fixed by Pryme** (`3794231`, `5de212c`). Background: TODO_ARCHIVE.md's
-2026-09-18 closure entry has the full per-bug root-cause writeup.
-
 - [x] Type a broad shared-prefix (e.g. `ai:`) with 10+ matching tags — the full list should show,
   not just the first 10
 - [x] Type a prefix, then immediately type a more specific continuation (e.g. `ai:` then a space
@@ -570,9 +487,6 @@ All five **live-confirmed fixed by Pryme** (`3794231`, `5de212c`). Background: T
 
 ## Sleep timer end-of-chapter mode fade-out — 2026-09-18 Session 1
 
-Not yet live-verified by Pryme. Background: TODO_ARCHIVE.md's 2026-09-18 closure entry;
-`tests/test_sleep_eoc_fade.py` pins the math in isolation.
-
 - [ ] Arm sleep timer in end-of-chapter mode with a fade duration configured, let it play down
   toward the chapter's end — volume should audibly fade out approaching the boundary, not snap
   straight from full to paused
@@ -585,10 +499,6 @@ Not yet live-verified by Pryme. Background: TODO_ARCHIVE.md's 2026-09-18 closure
   left, not jump straight to near-silent
 
 ## Smart rewind: per-book scoping and chapter confinement — 2026-09-16 Session 1
-
-Two bugs, both live-verified this session. Background/full mechanism: CLAUDE.md's "Smart rewind
-must be reset per book" and "DO NOT use `self.player.chapter`" rules; `tests/test_smart_rewind.py`
-covers the chapter-clamp logic in isolation (no mpv/QApplication).
 
 ### Per-book scoping (no cross-book leak)
 - [x] Enable smart rewind (Speed panel), pause a book long enough to arm the wait threshold, then
@@ -616,13 +526,6 @@ covers the chapter-clamp logic in isolation (no mpv/QApplication).
   new bug introduced by this session's fixes.
 
 ## Undo: spree anchoring, boundary no-ops, and coverage across all seek inputs — 2026-09-16 Session 1
-
-Four fixes, all live-verified this session, all sharing one mechanism: `Player.save_seek_position`
-now captures the undo anchor unconditionally within a coalescing spree (rapid calls inside
-`undo_duration`, default 3s) and gates only whether the overlay SHOWS on cumulative distance from
-that anchor (`60s * speed` for most call sites). Background: CLAUDE.md's "Undo must anchor to a
-seek spree's start" rule and its two follow-up rules; `tests/test_undo_position.py` covers the
-anchor/threshold logic in isolation (no mpv/QApplication).
 
 ### Spree anchoring (Next/Prev, chapter-list click, slider release, chapter-slider release)
 - [x] Sit in a short chapter (well under a minute), press Next through it into a longer chapter
@@ -665,9 +568,8 @@ anchor/threshold logic in isolation (no mpv/QApplication).
 
 ## Hover-pickup keyboard navigation + tab-bar mouse-reclaim — 2026-09-15 Session 1
 
-Two directions on each surface: keys picking up from wherever the mouse is hovering (no keyboard
-cursor active yet), and mouse hover reclaiming a stale keyboard highlight once it's genuinely the
-most-recent input. All confirmed live in this session except where noted.
+Two directions on each surface: keys picking up from wherever the mouse is hovering,
+and mouse hover taking over from a stale keyboard highlight.
 
 ### Keys pick up from mouse hover (Settings, Speed, Sleep, Sprint, Stats)
 - [x] Settings, any arrow-nav tab (Look/Controls/Audio/Library/Themes): rest the mouse over a
@@ -716,14 +618,10 @@ most-recent input. All confirmed live in this session except where noted.
 - [ ] Book Detail's own tab bar: no keyboard arrow-nav, no mouse-reclaim styling change (never
   wired into this system at all — confirm nothing broke, not that it now works)
 
-(Library's own keyboard/mouse hover coexistence shipped 2026-09-18 — see that entry below; it is
-no longer an open gap as of this session.)
-
 ## Confirmation-dialog keyboard consistency — Escape/Delete/swallow-and-dismiss — 2026-09-09 Session 1
 
-Nine sites total. All nine share the same two rules now: Escape (and every other non-Space/
-Enter key) cancels JUST the confirmation, panel/tab stays open; Delete arms a confirmation
-where one was added this session (Stats/Sprint reset, Book Detail's history-delete).
+Nine sites. At each: Escape (and every key other than Space/Enter) cancels only the
+confirmation, and the panel/tab stays open; Delete arms the confirmation where it has one.
 
 ### Escape cancels the confirmation, not the whole panel
 - [ ] Stats ⚙ tab → "Reset all listening stats" → arm it → Escape: confirmation reverts, Stats panel stays open
@@ -757,8 +655,7 @@ same press. A second press of the same key, now that nothing is armed, should be
 - [ ] Tags panel, delete-a-tag confirm armed → Up/Down/Left/Right: reverts (this one already worked before this session — regression-check only)
 
 ### Tab specifically (the gap that recurred three times in one pass)
-Tab in Book Detail is dispatched in `eventFilter`, separately from every other key — verify it
-independently, not just as "one of the arrow keys" above.
+Check Tab in Book Detail separately, not only as one of the keys above.
 - [ ] Book Detail → arm "Remove/exclude book" (from ANY tab, since the confirm is header-level, not tab-local) → Tab: dismisses, does NOT enter metadata edit mode
 - [ ] Book Detail → arm "Mark finished/unfinished" → Tab: dismisses, same check
 - [ ] Book Detail → History tab → arm "Delete listening history" → Tab: dismisses, does NOT enter metadata edit mode
@@ -767,11 +664,7 @@ independently, not just as "one of the arrow keys" above.
 
 ## Stats Day/Week/Month row-list keyboard nav — hover/cursor fixes, blur interaction — 2026-09-08 Session 4
 
-**LIVE-ONLY, blur specifically.** The two central bugs here (mouse/keyboard hover fight, marker
-bleeding onto Book Detail) only reproduce with the transport-bar blur setting ON — it drives the
-5-15x/sec hide/show grab cycle both bugs trace back to. All 507 automated tests passed throughout
-every attempt in this area, including the two that later failed live — do not treat a green test
-run as coverage for anything in this section.
+**Blur ON.** These only reproduce with the transport-bar blur setting on — test with it on.
 
 ### Row-list cursor shape
 - [ ] Day/Week/Month, a period with few sessions (Finished-books carousel hidden): hover down past
@@ -813,12 +706,6 @@ run as coverage for anything in this section.
       be clean
 
 ## Traveling focus marker — keyboard/mouse modality, Look-tab arrows — 2026-09-04
-
-**LIVE-ONLY.** Every bug in this section was invisible to scripted checks: three separate offscreen
-harnesses rendered the marker's geometry pixel-correct against a reference line while the live app
-showed a 1px offset, and the modality bugs were all found by tracing the running app, never by
-reading the code. Two of them were *introduced* by a fix that reasoned correctly from a passing
-test. Do not treat green tests or a clean render as coverage here.
 
 ### Marker appearance (Settings > Look)
 - [ ] Tab into the Look tab's buttons: the marker traces the button's **rounded** corners, following the real border — not a sharp-cornered box, and not offset outside it
@@ -931,9 +818,9 @@ shortcuts, which are Themes-specific.
 - [ ] Both follow `focus_audio_tab_reset` if a theme overrides it
 
 ### Library — Manage folders list (cursor and selection are independent facts)
-No traveling marker here — the current row is shown as a small dot at the row's right edge
-(`_FolderListItemDelegate`), separate from the accent fill a selected row gets. Arrow keys never
-change selection, on entry, mid-list, or exit; Space/Enter is the only thing that does.
+The current row shows as a small dot at its right edge, separate from a selected row's
+accent fill. Arrow keys never change selection, on entry, mid-list, or exit; only
+Space/Enter does.
 - [ ] **Down** from the tab bar enters the box **on the first path**, with **nothing selected** —
   the dot shows on row 0, no accent fill anywhere
 - [ ] **Up** from the Add row enters the box **on the last path**, same: dot only, nothing selected
@@ -964,10 +851,8 @@ change selection, on entry, mid-list, or exit; Space/Enter is the only thing tha
   is ever merely omitted rather than set to 0px)
 
 ### Excluded Books popup (Settings → Library, below Persist search filter)
-Self-managed overlay with its own `keyPressEvent` — mirrors `ChapterList`'s conventions rather than
-`_handle_settings_arrows`'s button-row model. No separate marker/fill/dot: the row's own hover-
-reveal eye slide IS the "you are here" indicator, driven by keyboard exactly like a real mouse hover
-would.
+No separate marker: the row's sliding eye icon is the position indicator, driven by the
+keyboard as a mouse hover would.
 - [ ] **Down** from any Persist search filter button enters the box on row 0, eye revealed
 - [ ] **Right** from Persist search filter's rightmost button also enters the box on row 0
 - [ ] With 0 excluded books, the box is invisible and never becomes a keyboard stop at all
@@ -1011,10 +896,8 @@ would.
 - [ ] Switching tabs with no preview showing: no added delay, behaves exactly as before
 
 ### Speed / Sleep / Sprint panels — keyboard navigation (added 2026-09-07 Session 1)
-These three panels have no tabs — one flat row-of-rows per panel (`PanelManager.
-flat_panel_rows`), with each panel's own preset grid a single stop that owns its own internal
-navigation (`MainWindow._handle_panel_grid_arrows`). Run the row-to-row checks on **all three**
-panels; the mechanism is shared.
+These three panels have no tabs; each preset grid is one stop with its own arrow-key
+movement inside. Run the row-to-row checks on all three panels.
 
 **Row-to-row**
 - [ ] Down/Up move between rows (the preset grid, custom-duration row, and whatever else the
@@ -1122,15 +1005,6 @@ inputs)**
 - [x] Smart Rewind: Selection persists, respects chapter boundaries, and triggers on resume 
      (if away_duration >= (wait_min * 60) in player.py to test)
 
-## Automated tests (pytest) — 2026-06-15
-
-First automated tests exist. Run: `source fabulorenv/bin/activate && pytest tests/ -q` (pytest is
-dev-only, in `requirements-dev.txt`). `tests/` drives `Player._on_time_pos_change`/seek-state directly
-with NO mpv and NO QApplication (it's a near-pure state machine). Covers: seek-settle clears
-is_seeking (forward + backward, VT + non-VT), cache never freezes, chapter walk/emit, VT file-switch,
-the VT cross-file coordinate fix (RED→GREEN), and boundary-nav no-op contract guards. Keep these green
-on any seek-path change — they catch the desync class that caused repeated regressions this session.
-
 ## VT / nav chapter-UI freezes — 2026-06-15 (both FIXED, soak-confirmed)
 
 - [ ] **VT cross-file seek (rapid backward seek to start):** chapter slider + remaining-time keep
@@ -1147,12 +1021,6 @@ on any seek-path change — they catch the desync class that caused repeated reg
   serialized — a real desync, not expected).
 
 ## Chapter-seek precision & freeze (embedded M4B) — Session 3+4, 2026-06-13
-
-Background: mpv's exact seek overshoots a chapter boundary by ~0.09s while **playing** and
-undershoots by ~0.37s while **paused**. Three constants handle this (`player.py`):
-`_EMBEDDED_CHAPTER_SEEK_OFFSET = -0.09` (embedded seek targets), `_PAUSED_SEEK_UNDERSHOOT_COMP = 0.37`
-(forward correction on paused embedded seeks), `_CHAPTER_WALK_TOLERANCE = 0.5` (position→index walks).
-VT/CUE keep `_CHAPTER_BOUNDARY_EPSILON = 0.35`.
 
 ### First-word audio fidelity (embedded M4B)
 - [ ] Next chapter (playing) into a chapter that opens with a hard word/number ("Part 3", "Nineteen"): the **full first word** plays — not "3" / "teen" (no ~0.44s clip)
@@ -1185,10 +1053,6 @@ VT/CUE keep `_CHAPTER_BOUNDARY_EPSILON = 0.35`.
 - [ ] CUE: chapter-list clicks unchanged
 
 ## Panel blur — clip, timing, carousel, opaque-tab skip — 2026-07-27
-
-**All of these are LIVE-ONLY checks.** Every bug in this section was invisible to offscreen
-harnesses — the double-render came back byte-identical in every scripted comparison and was only
-ever visible in the running app. Do not treat a passing script as coverage here.
 
 ### Sliver clip (cover art / theme bg_image / quotes — all one `visual_area` widget)
 - [ ] Open Settings over a book with cover art: the ~20px sliver to the RIGHT of the panel stays sharp; the area behind the panel blurs
@@ -1223,11 +1087,6 @@ ever visible in the running app. Do not treat a passing script as coverage here.
 
 ### Slider drags while a panel is blurred — 2026-07-31
 
-The grab hides the active panel, and hiding a widget mid-drag destroys `QAbstractSlider`'s drag
-state. Grabs are now suspended for the length of any slider drag. **All live-only** — the offscreen
-harness could reproduce the value-pinning but said nothing about what the screen looked like, which
-is exactly how the first attempted fix shipped a worse bug.
-
 - [ ] Stats → Week or Month (pick a period with enough rows to overflow), drag the scrollbar handle: it tracks the mouse for the full length of the drag
 - [ ] **Switch tabs, then drag again** — this is the repro that made the original bug appear tab-dependent; it must work on every tab, every time, with no close/reopen needed
 - [ ] Drag with a book **playing** (the grab only ticks when something repaints) — still tracks
@@ -1240,14 +1099,6 @@ is exactly how the first attempted fix shipped a worse bug.
 - [ ] Start a drag, then close the panel mid-drag: no stuck state, no leftover polling (the drag watcher must not outlive the overlay)
 
 ### Declined-tick re-arm (hover / hover-out / gutter click / tab click after hovering / Change now) — 2026-08-05
-
-`refresh_dirty`'s hover-active and post-restyle-cooldown gates decline a tick without consuming its
-dirty union, on the assumption a later real paint will pick it up — which fails specifically when
-the eventual snapback is a genuine no-op (the hovered theme never diverged from what's already
-applied) and produces no Paint event of its own. `_rearm_after_decline`/`_fire_rearm` retry a
-declined tick on a delay instead of waiting on a paint that may never come. Fixed 2026-07-27
-(`ac87e0a`), live-verified 2026-08-05 (`tools/blur_rearm_live_probe.py` — see NOTES.md). **All
-live-only**, same as the rest of this section.
 
 - [ ] Open Settings with a panel blurred, hover a theme swatch different from the committed one, hold the hover a few seconds: the blurred transport bar keeps refreshing (no visible freeze on an old frame)
 - [ ] Un-hover (move off the swatch) back to the committed theme without ever selecting anything: the blurred transport bar is NOT left showing stale colors — it should match the live (committed) theme within about half a second
@@ -1262,12 +1113,6 @@ live-only**, same as the rest of this section.
 - [ ] General tell for this bug class: if closing and reopening the panel fixes the visual, it is a missed repaint, not wrong state — look for a content change that produced no Paint event on a tracked widget
 
 ### Book Detail panel backdrop — 2026-08-01
-
-Book Detail is the only panel that opens ON TOP of another one, and the only one that owns its frost
-as its own child (the shared overlay is a child of `content_container` and can never rise above a
-panel parented to `main_window` — that attempt shipped completely invisible). **Live-only**: the
-first failed attempt logged a correct rect, a non-null pixmap and a completed grab while showing
-nothing on screen, so a green log proves the grab ran, never that anything is visible.
 
 Do all of these with **Panel background = Frosty glass**.
 
@@ -1294,12 +1139,6 @@ running again — **the absence of visible stutter does not rule this out**, a ~
 capable of running invisibly.
 
 ### Book Detail blur — park/unpark (2026-08-14)
-
-Opening Book Detail used to tear the underlay's blur down entirely and rebuild it at close; that
-produced a crisp main window at open-start and again at close-start, the second followed by a 1500ms
-fade. The blur is now **parked** — grabbing stops, the last frame stays on screen — so Book Detail's
-own geometry occludes and uncovers it with no rebuild. **Live-only**: an offscreen harness returned
-byte-identical output for a plainly-visible compositing bug on this exact code (2026-07-27).
 
 All with **Panel background = Frosty glass** and **a book playing** (the grab loop must be genuinely
 active before the open, or there is nothing to park).
@@ -1351,11 +1190,6 @@ grep -n "park_for_panel\|unpark_for_panel\|_grab_and_blur\|DIRTY-TRACE" \
 ```
 Log path is `~/.local/state/fabulor/log/fabulor.log` — **not** `/tmp/fabulor_run.log`. As above, the
 absence of visible stutter does not rule this out.
-
-**Cost, stated honestly:** grabs per open/close cycle stay at **2** (Book Detail's own frost, plus
-one at unpark). This does not reduce the count — it moves one grab *off* the visible transition.
-Read ~10 consecutive cycles **chronologically, unsorted**, before aggregating: the first cycle in a
-process differs in kind (cold pixmap) and sorting would hide exactly that.
 
 ## Finish-book status banner (revert/dismiss)
 
@@ -1637,8 +1471,7 @@ while muted, which shows a transient confirmation for ~2s before reverting to th
 
 ## End-of-chapter sleep mode (added 2026-08-10)
 
-Test against both an embedded-M4B/CUE book AND a multi-file (VT) book — see NOTES.md 2026-08-10 for
-the mechanism (anchor chapter, `user_seek_pending`/`sleep_fired` flags) and why VT specifically.
+Test against both an embedded-M4B/CUE book AND a multi-file (VT) book.
 
 ### Natural arrival (no interaction after arming)
 - [ ] Arm end-of-chapter sleep, take no action, let it reach the anchor chapter's own end — playback
@@ -1683,13 +1516,6 @@ the mechanism (anchor chapter, `user_seek_pending`/`sleep_fired` flags) and why 
       an actual switch to a different book does
 
 ## Listening Sprint (added 2026-08-10/11, extended 2026-08-11 and 2026-08-12)
-
-Sprint (sidebar, `R` key) is a structural sibling of the sleep timer — same 200ms-polled indicator
-zone, same shared `sleep_timer_label`. See NOTES.md 2026-08-10/11 for the original mechanism (grace
-pool, `time.time()`-based clock, shared-label interference bug), NOTES.md 2026-08-11 for the
-backward-seek unit-mismatch bug, book-switch cancellation, and end-of-chapter mode, and NOTES.md
-2026-08-12 for stats tracking, grace-warning pulsation, and the Reset all sprint data button's
-three-round layout/styling fix trail.
 
 ### Basic run
 - [x] Set a short sprint (e.g. 5 min) — indicator shows `-MM:SS | TT:TT`, remaining ticking down,
@@ -1890,10 +1716,6 @@ three-round layout/styling fix trail.
 
 ## App-wide Tab / Escape key policy (added 2026-07-09)
 
-Global behavior installed in MainWindow's app-wide event filter. Library's own Tab/Escape
-handling (search field, list) is a separate, more specific mechanism — see the Library panel
-"Keyboard navigation" section above; it composes with this policy rather than being replaced by it.
-
 - [ ] In EVERY context (no panel open; Library; Settings; Speed; Sleep; Tags; Book Detail open) — repeatedly pressing Tab NEVER moves focus to the window's minimize or close button
 - [ ] With no panel open: Tab does nothing
 - [ ] Settings panel open: Tab cycles through the ACTIVE tab's controls in a sensible order, wrapping at the end back to the first; Shift+Tab (Backtab) cycles backward; never lands on minimize/close
@@ -1913,9 +1735,7 @@ handling (search field, list) is a separate, more specific mechanism — see the
 
 ## Main-window transport keyboard shortcuts (added 2026-07-11)
 
-Each key below calls the exact same method the corresponding on-screen button/wheel already
-uses — see KEYBINDINGS.md's "Transport / player keys" table for the reuse mapping. Test with a
-book loaded unless noted.
+Test with a book loaded unless noted.
 
 - [ ] `Space`: toggles play/pause, at startup and mid-playback — does NOT open the speed menu
 - [ ] `Up` / `Down`: volume ±5, same visual overlay as the wheel; holding the key repeats
@@ -1941,12 +1761,8 @@ book loaded unless noted.
 
 ## Keyboard focus ownership (added 2026-07-11)
 
-The invariant: exactly one widget owns real keyboard focus at a time, and global shortcuts only
-fire when that owner is MainWindow itself or nothing panel-local — never while a panel/overlay is
-open and one of its own widgets holds focus. See CLAUDE.md's "Keyboard focus ownership" rule and
-NOTES.md's "Keyboard focus ownership" writeup for the full mechanism and the two dead ends found
-while fixing it (do not re-attempt clearing focus BEFORE `hide()` — confirmed live to be silently
-undone by `hide()` itself).
+Only one widget holds keyboard focus at a time; global shortcuts fire only when no panel
+widget has focus.
 
 - [ ] **Startup, nothing clicked:** `Space` toggles play/pause immediately (not the speed menu);
       no widget shows a focus highlight
@@ -2175,7 +1991,8 @@ Applies to every panel that blurs the mini transport bar: Settings, Speed, Sleep
 
 ## No-audiobooks state (library path configured, zero indexed audiobooks)
 
-This state fires when `has_locations=True` but `get_visible_book_count()=0` (e.g. folder of text files, wrong directory, unmounted drive). Soft-deleted and excluded books do not count toward the visible book count.
+Reached with a library folder added but no audiobooks found in it (e.g. a folder of text
+files, wrong directory, unmounted drive).
 
 - [ ] "No audiobooks in the folders added." label visible (not "No library folders.")
 - [ ] "Scan now" button visible
@@ -2316,10 +2133,8 @@ This state fires when `has_locations=True` but `get_visible_book_count()=0` (e.g
 
 ## Scrollbar right-click jump / row-snap (`ui/scrollbar_jump.py`)
 
-App-wide: right-clicking any scrollbar's gutter jumps the handle to the cursor instead of opening
-the native "Scroll here / Top / Bottom / ..." context menu (`1ac70b2`, 2026-07-31). As of
-2026-08-12 (`a343b6c`) and 2026-08-13 (`0cbddbd`), five of those scrollbars additionally snap the
-jump to a row boundary instead of a pixel-exact position.
+App-wide: right-clicking any scrollbar's gutter jumps the handle to the cursor instead of
+opening the native context menu. Five scrollbars also snap the jump to a row boundary.
 
 ### Right-click jump (all scrollbars, base behaviour)
 - [ ] Right-click a scrollbar gutter (not the handle) at various points: handle jumps to that

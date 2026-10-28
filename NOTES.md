@@ -1,3 +1,15 @@
+## 2026-10-28 — TESTING.md trimmed to headings and checks; one background note moved here
+
+TESTING.md is Pryme's pre-release manual checklist, so section backgrounds, fix stories, commit
+lists and mechanism notes were removed from it. Everything removed was already recorded in
+SESSION.md, NOTES.md, TODO_ARCHIVE.md or CLAUDE.md, except this note from the Book Detail
+"blur parked, not rebuilt" checks:
+
+**Grab cost of parking.** Grabs per Book Detail open/close cycle stay at **2** (Book Detail's own
+frost, plus one at unpark). Parking does not reduce the count — it moves one grab *off* the visible
+transition. Read ~10 consecutive cycles **chronologically, unsorted**, before aggregating: the first
+cycle in a process differs in kind (cold pixmap) and sorting would hide exactly that.
+
 ## 2026-10-27 — No-cover placeholder: title/author layout (branch `feature/placeholder-title-author-layout`)
 
 The no-cover placeholder no longer shows the dash-joined `"{author} - {title}"` line in
@@ -130,6 +142,26 @@ known; that's a separate task.
 no change, because `CoverPlaceholder` keeps the last title/author and the layout cache makes the
 recolor a cache hit. The placeholder pixmap is now rendered at the label's `devicePixelRatioF()`;
 the old 1x pixmap was blurry on HiDPI, so the logo is also sharper there.
+
+## 2026-10-02 — Book-based EQ+balance override (Book Detail EQ tab); its settings never reached the player until reload
+
+Moved here 2026-10-28 from TESTING.md, where it sat above the checklist.
+
+**Why it exists.** The global EQ (shipped 2026-09-18, On/Off toggle 2026-10-02) isn't enough on its
+own — not every book needs EQ processing, and the ones that do won't all need the same settings.
+Added a per-book 3-state override (Global/Off/Custom) for EQ + balance on a new Book Detail tab
+("EQ", after "Cover"). Settings > Audio's own EQ+balance sliders stay purely global but show a
+superseded note and dim when the loaded book has an active override. Voice boost/mono/swap are NOT
+part of the override — they remain global-only. Commit `2e984ff`; merged in `f74fcc0`.
+
+**Bug caught during testing.** `BookEqualizerTab.audio_settings_changed` was defined and emitted but
+never connected in `app.py`/`main_window_builders.py`, so changing a book's mode/gains in Book
+Detail never reached Settings > Audio or the player until the book was reloaded. Fixed via
+`MainWindow._on_book_audio_settings_changed`.
+
+**Separate, pre-existing:** an L/R balance inconsistency found in the same session, reproducible on
+`main` and unrelated to this feature — tracked in TODO.md ("L/R balance reported inconsistent
+across books").
 
 ## 2026-09-26 — `mutagen.FileType`'s dict-subclass truthiness silently dropped duration for real, valid, untagged audio files — one book's duration lost, another book's VT stitching broken (4 of 5 parts missing from `book_files`)
 
