@@ -7,6 +7,7 @@ import unicodedata
 from collections import namedtuple
 from PySide6.QtWidgets import (
     QVBoxLayout, QFrame, QPushButton, QHBoxLayout, QComboBox, QLineEdit, QStyledItemDelegate, QListView, QStyleOptionViewItem, QStyle, QStyleOptionComboBox,
+    QStylePainter,
 )
 from PySide6.QtCore import QThreadPool, QEvent, QAbstractListModel, QModelIndex, QSize, QTimer, Property, QPropertyAnimation, QVariantAnimation
 from PySide6.QtCore import Qt, Signal, QRect, QPoint
@@ -141,6 +142,7 @@ SORT_KEY_MAP = {
     "Title":       "title",
     "Author":      "author",
     "Last Played": "last_played",
+    "Last Added":  "date_added",
     "Progress":    "progress",
     "Duration":    "duration",
     "Year":        "year",
@@ -423,12 +425,24 @@ class _ThemedComboBox(QComboBox):
     Paints the base control (background/border/text) normally via the style — only the arrow
     sub-control rect is overridden — so the working parts of the native paint are untouched."""
 
-    def __init__(self, panel: "LibraryPanel", parent=None):
+    def __init__(self, panel: "LibraryPanel", parent=None, closed_labels=None):
         super().__init__(parent)
         self._panel = panel
+        # Item data key → shorter text for the CLOSED box only; the popup keeps the full
+        # label. sort_combo's "Last added" is too wide for its fixed 65px box, but the full
+        # label is what tells the user `l` is its shortcut — so the popup keeps it.
+        self._closed_labels = closed_labels or {}
 
     def paintEvent(self, event):
-        super().paintEvent(event)
+        # Same steps as QComboBox::paintEvent, with currentText swapped for the short label.
+        style_painter = QStylePainter(self)
+        style_painter.setPen(self.palette().color(self.foregroundRole()))
+        base_opt = QStyleOptionComboBox()
+        self.initStyleOption(base_opt)
+        base_opt.currentText = self._closed_labels.get(self.currentData(), base_opt.currentText)
+        style_painter.drawComplexControl(QStyle.ComplexControl.CC_ComboBox, base_opt)
+        style_painter.drawControl(QStyle.ControlElement.CE_ComboBoxLabel, base_opt)
+        style_painter.end()
         theme = self._panel._current_theme or {}
         accent = theme.get('accent', '#ffffff')
         input_bg = theme.get('library_input_bg', theme.get('bg_dropdown', '#1e1e1e'))
@@ -483,6 +497,7 @@ class LibraryPanel(QFrame):
     "Year":        False,  # descending, newest→oldest
     "Duration":    False,  # descending, longest→shortest
     "Last Played": False,  # descending, most recent first
+    "Last Added":  False,  # descending, newest first
     "Progress":    False,  # descending, highest first
     "Finished":    False,  # descending, most recently finished first
     }
@@ -496,7 +511,7 @@ class LibraryPanel(QFrame):
         Qt.Key.Key_P: "Progress",     Qt.Key.Key_T: "Title",
         Qt.Key.Key_A: "Author",       Qt.Key.Key_R: "Last Played",
         Qt.Key.Key_D: "Duration",     Qt.Key.Key_Y: "Year",
-        Qt.Key.Key_F: "Finished",
+        Qt.Key.Key_F: "Finished",     Qt.Key.Key_L: "Last Added",
     }
     # Digit → style_combo index. VIEW_MODES order == dropdown population order, so digit N maps
     # directly to index N-1 (1→1-per-row, 2→2-per-row, 3→3-per-row, 4→Square, 5→List).
@@ -622,11 +637,12 @@ class LibraryPanel(QFrame):
         self.sort_combo.blockSignals(True)
         self.sort_combo.clear()
         for display, key in [
-            ("Title",    "Title"),
-            ("Author",   "Author"),
-            ("Recent",   "Last Played"),
-            ("Duration", "Duration"),
-            ("Year",     "Year"),
+            ("Title",      "Title"),
+            ("Author",     "Author"),
+            ("Duration",   "Duration"),
+            ("Year",       "Year"),
+            ("Last added", "Last Added"),
+            ("Recent",     "Last Played"),
         ]:
             self.sort_combo.addItem(display, key)
         idx = self.sort_combo.findData(saved_sort)
@@ -649,11 +665,12 @@ class LibraryPanel(QFrame):
         has_finished = self.db.has_finished_books()
 
         options = [
-            ("Title",    "Title"),
-            ("Author",   "Author"),
-            ("Recent",   "Last Played"),
-            ("Duration", "Duration"),
-            ("Year",     "Year"),
+            ("Title",      "Title"),
+            ("Author",     "Author"),
+            ("Duration",   "Duration"),
+            ("Year",       "Year"),
+            ("Last added", "Last Added"),
+            ("Recent",     "Last Played"),
         ]
         if has_prog:
             options.insert(0, ("Progress", "Progress"))
@@ -1035,7 +1052,7 @@ class LibraryPanel(QFrame):
         self.top_bar_layout.setContentsMargins(3, 13, 3, 6)
         self.top_bar_layout.setSpacing(3)
 
-        self.sort_combo = _ThemedComboBox(self)
+        self.sort_combo = _ThemedComboBox(self, closed_labels={"Last Added": "Added"})
         self.sort_combo.setObjectName("sort_combo")  # TEMPORARY (2026-08-04): so
         # [COMBO-ARROW-PAINT] can tell this apart from style_combo in the log.
         self.sort_combo.setFixedWidth(65)
@@ -2384,6 +2401,10 @@ class BookModel(QAbstractListModel):
                 return pos / dur if dur > 0 else 0.0
             if field == "finished":
                 return self._finished_dates.get(b.id, dt.min)
+            if field == "date_added":
+                # A batch scan stamps every book with the same second (360+ share one
+                # timestamp), so ties resolve by id — i.e. insertion order.
+                return (b.date_added, b.id)
             val = getattr(b, field, None)
             if isinstance(val, str):
                 # Diacritics folded for sort order only (2026-09-10 live ask: "Ágota Kristóf

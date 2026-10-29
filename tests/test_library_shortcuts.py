@@ -74,9 +74,9 @@ def _apply_view(host, key):
 
 
 # Full set of data keys when every conditional field (Progress, Finished) is present.
-_ALL_SORT_KEYS = ["Progress", "Title", "Author", "Last Played", "Duration", "Year", "Finished"]
+_ALL_SORT_KEYS = ["Progress", "Title", "Author", "Duration", "Year", "Last Added", "Last Played", "Finished"]
 # Base set — no Progress, no Finished (fresh library, nothing played/finished).
-_BASE_SORT_KEYS = ["Title", "Author", "Last Played", "Duration", "Year"]
+_BASE_SORT_KEYS = ["Title", "Author", "Duration", "Year", "Last Added", "Last Played"]
 
 
 # ── Constant-dict shape ──────────────────────────────────────────────────────
@@ -90,6 +90,7 @@ def test_sort_shortcut_letters_map_to_expected_data_keys():
         Qt.Key.Key_D: "Duration",
         Qt.Key.Key_Y: "Year",
         Qt.Key.Key_F: "Finished",
+        Qt.Key.Key_L: "Last Added",
     }
 
 
