@@ -1,3 +1,37 @@
+## Session Summary — 2026-10-30 Session 1 — "Last added" library sort and an Added row in Book Detail Stats
+
+Commits: `e288a91` (sort), `9182a3a` (Stats rows), plus this docs commit. Both live-verified by Pryme.
+
+**No schema change was needed.** `books.date_added DATETIME DEFAULT CURRENT_TIMESTAMP` has existed
+since the first schema commit (`e0927ef`) and was already on `_ALLOWED_SORT_COLUMNS` and the `Book`
+model; nothing ever offered it. Checked against the live DB before deciding: 617 rows, none NULL,
+and zero order inversions between `id` and `date_added`. Neither upsert writes the column, so it is
+set once at row creation. Because books are only ever soft-deleted, a book that returns at the same
+path keeps its original add date; only a moved/renamed folder (a new row) gets a new one. Pryme
+accepted the original-date behaviour. The IDs have large gaps (ids up to ~196k for 617 rows, no
+`DELETE FROM books` anywhere) — probably upserts that hit `ON CONFLICT` still using up an
+AUTOINCREMENT value; unverified, and irrelevant to ordering since IDs only go up.
+
+**Sort (`e288a91`).** `"Last Added": "date_added"`, newest first by default, `l` shortcut, dropdown
+order Progress / Title / Author / Duration / Year / Last added / Recent / Finished. `sort_key`
+returns `(date_added, id)` because 360 books share the one-second timestamp of the original batch
+scan. "Last added" overflowed the fixed 65px sort box (Pryme's screenshot), so `_ThemedComboBox`
+now takes `closed_labels` and paints the closed box with "Added" while the popup keeps "Last added"
+as the hint for `l` (`a` was already Author).
+
+**Stats rows (`9182a3a`).** Before this, every Stats row always showed, with "—" for no data —
+including Last session with no sessions and Finished for an unfinished book. Now: no sessions →
+Remaining / Total listened / Sessions / Added; sessions, unfinished → + Last session, Added,
+Started; finished → Added and Started merge into one "Added · Started" row (a middle dot, Pryme's
+choice over `|`), then Finished unchanged. A manual finish with no sessions keeps Added alone (no
+Started to merge). `date_added` is UTC while every other date is local, so `_fmt_date_added` uses
+`astimezone()`. Confirmed offscreen first that a fully hidden `QGridLayout` row takes no height or
+spacing. The finish/unfinish toggle already called `_refresh_stats()`, so the rows update on toggle
+with no extra wiring. New `tests/test_book_detail_stats_rows.py` (7 tests). Furthest position and
+Recent history untouched.
+
+---
+
 ## Session Summary — 2026-10-29 Session 1 — Derived Book Detail history-row colors for cover-art themes, closing the follow-up flagged (and skipped) back on 2026-10-03.
 
 Pryme caught this directly from his own IDE selection on SESSION.md's 2026-10-27 top-entry line

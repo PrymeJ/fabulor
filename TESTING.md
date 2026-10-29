@@ -1,3 +1,18 @@
+## Library "Last added" sort and Book Detail Added row — 2026-10-30 Session 1
+
+### Last added sort
+- [ ] Sort box closed on Last added reads "Added"; the open list reads "Last added".
+- [ ] Newest additions first by default; the ↑/↓ button reverses it.
+- [ ] `l` with the list focused switches to Last added; pressing it again flips the direction.
+- [ ] Books from one batch scan stay in a stable order (no reshuffling between opens).
+
+### Book Detail Stats rows
+- [ ] Never-played book: Remaining, Total listened, Sessions, Added only.
+- [ ] Played, unfinished: adds Last session, Added, Started.
+- [ ] Finished: "Added · Started" on one row, then Finished. A long pair of dates fits.
+- [ ] Mark finished / unfinish from the panel: rows switch at once.
+- [ ] Furthest position row stays aligned with the History tab's bar on tab switch.
+
 ## No-cover placeholder: title and author under the logo — 2026-10-27/28
 
 ### Layout
