@@ -144,6 +144,26 @@ def build_cover_theme(pixmap: QPixmap) -> dict:
     sec_accent_light = _shift_sv(sr, sg, sb, j(0.50), j(0.92))
     sec_dark         = _shift_sv(sr, sg, sb, j(0.75), j(0.40))
 
+    # Book Detail's History tab row backgrounds — same bg_main-relative formula
+    # derived from the ~38 hand-tuned named themes (2026-10-03): row1 tracks
+    # bg_main's own hue/sat with a slight value lift, row2 a further darken,
+    # with a floor-flip (both lift instead) when bg_main is already near-black.
+    # Anchored on bg_main's OWN (already-jittered) tuple, not a fresh dr/dg/db
+    # shift, so these track whatever jitter bg_main got this call.
+    bg_main_h, bg_main_s, bg_main_v = colorsys.rgb_to_hsv(
+        bg_main[0] / 255, bg_main[1] / 255, bg_main[2] / 255
+    )
+    if bg_main_v <= 0.09:
+        hist_row1_v = min(1.0, bg_main_v + 0.10 + (0.09 - bg_main_v) * 0.3)
+        hist_row2_v = min(1.0, bg_main_v + 0.07 + (0.09 - bg_main_v) * 0.3)
+    else:
+        hist_row1_v = min(1.0, bg_main_v + 0.025)
+        hist_row2_v = max(0.0, hist_row1_v - 0.03)
+    hist_row1_rgb = colorsys.hsv_to_rgb(bg_main_h, bg_main_s, hist_row1_v)
+    hist_row2_rgb = colorsys.hsv_to_rgb(bg_main_h, bg_main_s, hist_row2_v)
+    session_history_row_one = tuple(round(c * 255) for c in hist_row1_rgb)
+    session_history_row_two = tuple(round(c * 255) for c in hist_row2_rgb)
+
     return {
         # Backgrounds
         "bg_deep":                  _hex(*bg_deep),
@@ -189,6 +209,9 @@ def build_cover_theme(pixmap: QPixmap) -> dict:
         "tab_hover_opacity":        0.85,
         "tab_hover_text":           _hex(*bg_deep),
         "settings_theme_names_dimmed": _hex(*text_dim),
+        # Book Detail History tab row backgrounds
+        "session_history_row_one":  _hex(*session_history_row_one),
+        "session_history_row_two":  _hex(*session_history_row_two),
         # Misc
         "dropdown_curr_chap":       _hex(*sec_dark),
         "dropdown_time_text":       _hex(*text_dimmer),
