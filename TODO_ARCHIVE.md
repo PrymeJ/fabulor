@@ -2321,3 +2321,19 @@ order these entries had in TODO.md before the split (2026-07-30).
   (`build_cover_theme`) confirmed to hit the identical bug but deliberately left unfixed this
   session — see TODO.md's updated entry for that follow-up. Commit `91e412c`. Full narrative:
   SESSION.md, 2026-10-03 Session 2.
+
+- [2026-10-29] **Book Detail session-history row colors derived for cover-art themes too,
+  closing the follow-up flagged 2026-10-03** — `build_cover_theme` (cover_theme.py) never set
+  `session_history_row_one`/`two`, so `_resolve_theme`'s base-copy silently inherited The Color
+  Purple's own literal `#22003D`/`#170129` for every cover-art theme — the identical bug the
+  2026-10-03 session fixed for 22 named themes (commit `91e412c`), flagged at the time as a
+  deliberate follow-up for the cover-art path specifically but not actually applied until now
+  (surfaced when Pryme pointed out, from the SESSION.md top entry, that the follow-up had been
+  skipped). Derives both keys from the same bg_main-relative formula used for the named-theme fix:
+  row1 tracks bg_main's own hue/sat with a slight value lift, row2 a further darken, with a
+  floor-flip (both lift instead) below bg_main value 0.09 — anchored on `bg_main`'s OWN
+  already-jittered tuple (not a fresh shift from the cover's dominant color), so the two rows
+  always agree with whatever `bg_main` that specific call produced. New
+  `tests/test_cover_theme_history_rows.py` (5 tests, synthetic covers across the brightness
+  range) confirms no fallback to the Purple literal, hue/sat tracking `bg_main`, and the
+  floor-case flip. Full test suite green (627 tests). Commit `57fe748`.

@@ -1,3 +1,42 @@
+## Session Summary — 2026-10-29 Session 1 — Derived Book Detail history-row colors for cover-art themes, closing the follow-up flagged (and skipped) back on 2026-10-03.
+
+Pryme caught this directly from his own IDE selection on SESSION.md's 2026-10-27 top-entry line
+('You reminded me of that, but I skipped it. We need to fix the cover-based theme history rows the
+same way, actually.') — the 2026-10-03 session had explicitly flagged `build_cover_theme` as
+hitting the identical Purple-literal-inheritance bug the 22-named-theme fix resolved, but the
+cover-art half was never actually applied, just left as a TODO.md follow-up that sat for 26 days.
+
+**The bug, confirmed still present before touching anything:** `build_cover_theme`
+(cover_theme.py) never sets `session_history_row_one`/`session_history_row_two`, so
+`_resolve_theme`'s base-copy (which only excludes keys listed in `_NO_BASE_INHERIT_KEYS`)
+silently inherits The Color Purple's own hardcoded `#22003D`/`#170129` — the exact same mechanism
+documented for the 22 named themes in the 2026-10-03 session (commit `91e412c`), now confirmed
+against the live `cover_theme.py` source rather than assumed still broken from memory.
+
+**The fix** reuses the identical bg_main-relative formula derived that session: row1 tracks
+`bg_main`'s own hue/saturation with a slight value lift (+0.025), row2 a further darken (~0.03),
+with a floor-flip (both lift instead of row2 darkening) when `bg_main`'s value is already at or
+below 0.09 (near-black). The one design choice specific to the cover-art case: the derivation
+reads `bg_main`'s OWN already-jittered RGB tuple (the one `build_cover_theme` just computed and
+is about to return), not a fresh `_shift_sv` call from the cover's raw dominant-hue `(dr, dg, db)`
+— this was deliberate, so the two history-row keys always agree with whatever `bg_main` this
+specific call actually produced, including its own per-session jitter, rather than silently
+drifting from it via a second independent jitter draw.
+
+**Verification, live-mechanism-first per CLAUDE.md's "never substitute a plausible explanation for
+a checked one":** before writing the fix, confirmed directly (not assumed from the old
+investigation) that `cover_theme.py` still had no `session_history_row` references at all. After
+the fix, ran `build_cover_theme` against 5 synthetic solid-color covers spanning the brightness
+range (deep red, forest green, near-black, bright blue, warm tan) and asserted: both keys present,
+neither equal to the Purple literal, hue/sat within 0.02 of `bg_main`'s own, and row2 darker than
+row1 except in the floor case. All 5 passed on the first real run. `tests/test_cover_theme_history_rows.py`
+pins this as a permanent regression net (5 tests). Full suite green (627 tests, up from 622).
+
+Also closed the matching TODO.md entry (the one that had explicitly deferred this) and added a
+consolidated entry to TODO_ARCHIVE.md. Commit `57fe748`.
+
+---
+
 ## Session Summary — 2026-10-28 Session 1 — placeholder title/author colours and metadata refresh, branch merged; TESTING.md trimmed to checks; empty Book Detail narrator/year clickable, year field sized to its value
 
 Continues the 2026-10-27 placeholder work. Merged `feature/placeholder-title-author-layout` into

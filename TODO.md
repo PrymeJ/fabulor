@@ -801,19 +801,6 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
   without an obvious place to hide when unused. Needs feasibility/layout thinking before deciding,
   not just a yes/no.
 
-### Theme-pass-adjacent items (batch logged 2026-09-17 — group with the eventual full theme pass)
-- [2026-09-17, unblocked 2026-10-03] Book Detail's session-history row colors are wrong when a
-  cover-based theme is selected — `build_cover_theme` (cover_theme.py) never sets
-  `session_history_row_one`/`two`, so `_resolve_theme`'s base-copy silently inherits The Color
-  Purple's own literal `#22003D`/`#170129` (confirmed live via a synthetic cover-theme dict,
-  2026-10-03). Was blocked on the manual fixed-theme pass landing first so the derivation formula
-  could be reverse-engineered from already-correct values rather than designed from scratch — that
-  pass landed 2026-10-03 (22 named themes fixed, see SESSION.md 2026-10-03 Session 2 and
-  TODO_ARCHIVE.md), so this is now unblocked. Formula derived that session: row1 = bg_main nudged
-  slightly lighter (+0.025 value), row2 = row1 darkened further (~0.03 value), with a floor-case
-  flip near-black. Not yet applied to `build_cover_theme` itself — the named-theme pass intentionally
-  stopped short of cover-art per Pryme's instruction to fill literal keys only, one theme at a time.
-
 ### Listening Sprint backward-seek compensation doesn't net forward+backward excursions
 - [2026-08-11] The pure tick-to-tick `_last_known_pos` diff in `SprintPanel.update_sprint_state`
   can't tell a genuine rewind from "seeked forward then came back" — seeking forward 20 minutes then
