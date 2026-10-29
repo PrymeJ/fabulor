@@ -1,7 +1,7 @@
 # THEME_ANIM_TODO: BookDetailPanel, _ClickableLabel
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum, auto
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QTabWidget,
@@ -620,24 +620,40 @@ class BookDetailPanel(QWidget):
         grid.addWidget(fp_key,           0, 0, Qt.AlignmentFlag.AlignLeft)
         grid.addWidget(fp_row_container, 0, 1, 1, 2)
 
+        # Grid row per entry. Not every row shows at once — _refresh_stats hides rows that
+        # don't apply (see _set_stat_row_visible), and a QGridLayout row whose widgets are
+        # all hidden collapses together with its spacing, so visible rows stay evenly
+        # pitched. "Added" (row 5) and "Added · Started" (row 7) are the same fact shown
+        # two ways: alone before Started for an unfinished book, merged with Started for a
+        # finished one, which keeps the finished layout one row shorter.
+        # _stat_labels keeps its original 0-5 order (Remaining..Finished); the two Added
+        # rows are separate attributes so those indices stay valid.
         stat_rows = [
-            ("Remaining",      "—"),
-            ("Total listened", "—"),
-            ("Sessions",       "—"),
-            ("Last session",   "—"),
-            ("Started",        "—"),
-            ("Finished",       "—"),
+            ("Remaining",       "—", 1),
+            ("Total listened",  "—", 2),
+            ("Sessions",        "—", 3),
+            ("Last session",    "—", 4),
+            ("Started",         "—", 6),
+            ("Finished",        "—", 8),
+            ("Added",           "—", 5),
+            ("Added · Started", "—", 7),
         ]
 
         self._stat_labels = []
-        for i, (key, default) in enumerate(stat_rows):
+        self._stat_keys = []
+        for key, default, row in stat_rows:
             k = QLabel(key)
             k.setObjectName("stats_key_label")
             v = QLabel(default)
             v.setObjectName("stats_value_label")
-            grid.addWidget(k, i + 1, 0, Qt.AlignmentFlag.AlignLeft)
-            grid.addWidget(v, i + 1, 1, 1, 2, Qt.AlignmentFlag.AlignLeft)
+            grid.addWidget(k, row, 0, Qt.AlignmentFlag.AlignLeft)
+            grid.addWidget(v, row, 1, 1, 2, Qt.AlignmentFlag.AlignLeft)
             self._stat_labels.append(v)
+            self._stat_keys.append(k)
+        self._added_label = self._stat_labels.pop(6)
+        self._added_started_label = self._stat_labels.pop(6)
+        self._added_key = self._stat_keys.pop(6)
+        self._added_started_key = self._stat_keys.pop(6)
 
         grid.setColumnStretch(1, 1)
         # stretch=1 (was 0): grid_widget previously sized to its own sizeHint, which
@@ -2433,6 +2449,7 @@ class BookDetailPanel(QWidget):
         fresh = self.db.get_book_dict(self._book_path)
         if fresh:
             self._book_data['progress'] = fresh.get('progress', 0.0)
+        added_text = self._fmt_date_added(fresh.get('date_added') if fresh else None)
         furthest = stats['furthest_position']
         current  = self._book_data.get('progress') or 0.0
         if duration and duration > 0:
@@ -2479,6 +2496,8 @@ class BookDetailPanel(QWidget):
         else:
             self._stat_labels[4].setText("—")
 
+        started_text = self._stat_labels[4].text()
+
         if stats['finished_count'] == 0:
             self._stat_labels[5].setText("—")
         elif stats['finished_count'] == 1:
@@ -2490,11 +2509,45 @@ class BookDetailPanel(QWidget):
                 f"{stats['finished_count']}× — last {d.strftime('%b')} {d.day}, {d.year}"
             )
 
+        # Row visibility. Last session and Started need at least one session; Finished
+        # needs a finish. A finished book merges Added and Started into one row; a finished
+        # book with no sessions (manual finish) has no Started, so Added stays alone.
+        has_sessions = stats['session_count'] > 0
+        is_finished  = stats['finished_count'] > 0
+        merge_added  = is_finished and has_sessions
+        self._added_label.setText(added_text)
+        self._added_started_label.setText(f"{added_text} · {started_text}")
+        self._set_stat_row_visible(self._stat_keys[3], self._stat_labels[3], has_sessions)
+        self._set_stat_row_visible(self._added_key, self._added_label, not merge_added)
+        self._set_stat_row_visible(self._stat_keys[4], self._stat_labels[4],
+                                   has_sessions and not is_finished)
+        self._set_stat_row_visible(self._added_started_key, self._added_started_label,
+                                   merge_added)
+        self._set_stat_row_visible(self._stat_keys[5], self._stat_labels[5], is_finished)
+
         self._session_list.set_data(sessions[:4], duration or 0.0)
         self._update_finished_icon(stats['finished_count'] > 0)
         if rebuild_history:
             self._populate_history(sessions, duration or 0.0)
             self._apply_bar_colors()
+
+    @staticmethod
+    def _set_stat_row_visible(key_label, value_label, visible: bool) -> None:
+        key_label.setVisible(visible)
+        value_label.setVisible(visible)
+
+    @staticmethod
+    def _fmt_date_added(raw) -> str:
+        """books.date_added is SQLite CURRENT_TIMESTAMP: UTC, no offset in the string.
+        Started/Finished are local, so convert before formatting or a book added late in
+        the evening shows the next day's date."""
+        if not raw:
+            return "—"
+        try:
+            d = datetime.fromisoformat(raw).replace(tzinfo=timezone.utc).astimezone()
+        except (TypeError, ValueError):
+            return "—"
+        return f"{d.strftime('%b')} {d.day}, {d.year}"
 
     def _position_delete_history_confirm(self):
         btn = self._delete_history_btn
