@@ -341,6 +341,15 @@ Root fix (not yet done): rebuild fabulorenv without a conda-symlinked
 interpreter, or pin an explicit libstdc++ resolution in the venv activation
 script so this stops requiring a manual prefix every session.
 
+**Known consequence: a rare startup hang (2026-10-30).** The conda Python loads
+`miniconda3/lib/libsqlite3.so.3.51.0`, which has a unix-VFS lock-order deadlock (fixed in 3.51.2):
+one thread opening a WAL connection while another closes one can freeze the process, CPU idle,
+log stopped. Seen once: the main thread in `findReusableFd` (via `_get_conn`) and the playlist
+resolver in `unixLock`/`sqlite3WalClose`, captured with
+`sudo env "PATH=$PATH" py-spy dump --native --pid <pid>`. Dev-only (kill and relaunch). The venv
+rebuild fixes it (system SQLite is 3.54.1); the shipped build's version is a pre-release check in
+TODO.md.
+
 ## END OF TEMPORARY
 
 

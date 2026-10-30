@@ -1234,7 +1234,7 @@ isolation.
 
 ### Cleanup / process
 - [2026-06-27] Excluded Books popup corner-radius mismatch
-- [2026-06-25] Pre-release cleanup pass (remove Q-key shortcut, stray debug prints)
+- [2026-06-25] Pre-release cleanup pass (remove Q-key shortcut, stray debug prints, check bundled SQLite version)
 
 ### Big deferred architecture
 - [2026-07-14] Incremental `@Property` color animation instead of whole-theme stylesheet swap (40-80h, high risk)
@@ -1734,6 +1734,13 @@ isolation.
     `_close_session`/`_on_file_ready`/`_on_book_selected_from_library` specifically, but session-close
     logic has since moved into `SessionRecorder.close()`, so those exact function names are gone;
     the underlying ask (strip leftover debug prints before release) still applies to what's there now.
+  - **[2026-10-30] Check the shipped build's SQLite is not 3.51.0 or 3.51.1.** Those versions
+    deadlock when one thread opens a connection to a WAL database while another closes one
+    (lock-order bug in the unix VFS, fixed in 3.51.2). `db.py` opens and closes a connection per
+    query from both the main thread and the playlist resolver, so a build carrying them can hang at
+    startup at random. Seen once on the dev machine (2026-10-30 19:41; see CLAUDE.md's TEMPORARY
+    conda section). A packaged build ships the build Python's `libsqlite3`, so check
+    `python -c "import sqlite3; print(sqlite3.sqlite_version)"` in the build environment.
   See NOTES.md "Cleanup Deferrals — Pre-existing, Deliberate" (~line 2108) for original context.
 
 - **[FUTURE REDESIGN, 2026-07-14] Incremental/`@Property` color animation instead of whole-theme
