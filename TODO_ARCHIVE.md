@@ -5,6 +5,15 @@ list scannable. Kept, not deleted, per the project's normal practice of not thro
 that isn't fully duplicated in NOTES.md/SESSION.md/a commit message. Order is the same relative
 order these entries had in TODO.md before the split (2026-07-30).
 
+- **[2026-10-30, FIXED] Excluded Books popup didn't match the folder list above it.** Logged
+  2026-06-27 as a corner-radius mismatch (the selection-color half became moot once the popup
+  disabled selection; the bg_deep/bg_dropdown half had been closed as not worth chasing). Done
+  together in `2ef32d2`: the list now uses `bg_dropdown` like `settings_folder_list`, and has 4px
+  corners except the top-right where the toggle arrow attaches; the scrollbar handle rounds only its
+  bottom, meeting the corner at the end of its travel. Moving onto `bg_dropdown` brought the derived
+  scrollbar close to the background in six themes; Pryme adjusted them in `595a7d9` (five darker
+  `bg_dropdown`, Solaris an `excluded_scrollbar`). Live-checked by Pryme.
+
 - **[2026-10-30, FIXED] Hover preview leaked onto the main window after Settings closed.**
   Seen live 06:04: Anomander selected, Settings dismissed, main window and title bar stayed on
   Yellow Wallpaper. A swatch enter during the close flow's settle gap re-armed the hover debounce;

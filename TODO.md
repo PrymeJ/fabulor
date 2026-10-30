@@ -1233,7 +1233,6 @@ isolation.
 - [2026-07-03] Excluding the currently-playing book behaves differently for M4B vs VT — design decision
 
 ### Cleanup / process
-- [2026-06-27] Excluded Books popup corner-radius mismatch
 - [2026-06-25] Pre-release cleanup pass (remove Q-key shortcut, stray debug prints, check bundled SQLite version)
 
 ### Big deferred architecture
@@ -1707,20 +1706,6 @@ isolation.
   Blocked on: nothing technical — it is a design/scope decision about what the help surface is
   (a panel? a popup? its own overlay?) and it should be built once, after the feature set stops
   moving, so it can cover everything at once rather than growing per-feature.
-
-- **[2026-06-27] Excluded Books popup (`ui/excluded_books.py`) corner-radius mismatch.**
-  The popup's selection highlight is flat/square; `settings_folder_list`'s is rounded (`4px`).
-  Should match (one or the other) since they're both "selected row in a themed list" in the same
-  panel. Narrowed 2026-07-15 from a four-issue entry after audit: the `::item:selected` color
-  inconsistency is moot (the popup now disables selection entirely — `NoSelection`, see
-  `excluded_books.py`'s `set_theme` comment); the bg_deep/bg_dropdown background mismatch was
-  closed as not worth chasing.
-  **Reminder for the eventual full per-theme color pass** (see the "Remove theme inheritance from
-  The Color Purple" entry below, and SESSION.md's alphabetical library-color pass): re-check the
-  Excluded Books popup generally as part of that pass — both this corner-radius mismatch and
-  general contrast/legibility across themes — since the popup is hidden whenever no book is
-  excluded and is easy to forget about otherwise. Not theme-specific; no single theme needs
-  singling out.
 
 - **[2026-06-25] Pre-release cleanup pass (bundle into one commit, not piecemeal).** Narrowed
   2026-07-15 after audit — the third original sub-item (switch VT playlist-resolution temp files
