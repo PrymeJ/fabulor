@@ -1,3 +1,15 @@
+## Library List hover and Book Detail slide-in rows — 2026-10-30 Session 3
+
+### List view hover
+- [ ] A low-alpha theme (Dorian Gray, Solaris) shows a visible hover and trail in List; 1 per row
+      looks as before.
+- [ ] Slow, Normal and Fast trails last the same on a low-alpha and a high-alpha theme.
+- [ ] Keyboard Up/Down in List uses the same strength and trail.
+
+### Book Detail slide-in (Frosty)
+- [ ] Open a book with no history, then one with Last session/Started/Finished, then back: rows are
+      in place during the slide, no spread-out or overlapping rows.
+
 ## Library "Last added" sort and Book Detail Added row — 2026-10-30 Session 1
 
 ### Last added sort

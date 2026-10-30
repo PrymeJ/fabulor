@@ -1,3 +1,50 @@
+## Session Summary — 2026-10-30 Session 3 — streak and library colors for every theme; List hover; Book Detail slide-in rows; sidebar race traced
+
+Commits: `45cf2ab`, `595983e`, `e753e4e`, `259c96a`, `366fcd5`, `109714f`, `13a0a09`, `f4eec54`,
+plus this docs commit. Triage page versions 35 (library pass closed).
+
+**Theme files.** Pryme finished tuning the streak grid keys for every theme, then the library
+colors up to T. Before committing, all 62 theme dicts were put in the docstring's key order (most
+deviations predated today: `settings_theme_names_dimmed`/`tab_hover_*` sat before the Group 8 keys
+in 60 themes), hex uppercased (Pryme's color picker pastes lowercase), trailing commas added
+everywhere, and Midnight Children's opening line re-indented. A re-sort is verified by loading
+`THEMES` before and after with hex case normalized. My first re-sort broke the syntax (keys that
+had been last in a block, without a comma, moved up); caught by that check. I also rewrote the
+file once without a backup while Pryme's tuning existed only there; nothing was lost, and later
+rounds committed his work first, then cleaned up.
+
+**Library colors.** A harness renders the real `LibraryPanel` (1 per row, Recent sort, a copy of
+the library DB, throwaway settings) for every theme; Pryme chose the no-cover rows deliberately to
+see the placeholder logo. Eight themes with no library keys got a design per book (Shai-Hulud,
+Shrike, Sitting in the Wing Chair, The Color Purple, Waknuk, Wasp Factory, Waste Lands,
+Winterfell), and Slow Regard a copper one (Auri's candlelit room; a cool-stone variant was
+rejected because the theme should stay warm). Two traps caught before committing: The Color Purple
+is the base template, so its 16 library keys went into `_NO_BASE_INHERIT_KEYS`; and the no-cover
+logo's fallback chain passes through `library_narrator`, so Wasp Factory and Sitting in the Wing
+Chair pin `placeholder_cover` to their old effective color. Both verified across all 62 themes.
+
+**List hover.** Low hover alphas killed List view's trail: the fade stepped a fixed alpha per
+tick, so a 0.15 theme's trail was fainter and three times shorter than the default's. List now
+adds `_LIST_HOVER_ALPHA_BOOST` (proposed 0.20, Pryme settled on 0.10) and the trail runs a fixed
+duration per Look setting. A first version still rounded steps up and shortened the trail by up
+to ~45ms depending on alpha; the fade value is now fractional.
+
+**Book Detail slide-in rows (regression from Session 1's Added row).** Hiding stats rows per book
+only queued a layout pass, and the Frosty slide grabs the panel before the event loop runs it, so
+the slide showed the previous book's row positions. Reproduced in a harness first. Fixed in
+`_refresh_stats` after two wrong attempts, each measured: activating the layouts alone, then
+invalidating them, both left the outer layout using the grid widget's cached old height; the
+widget's own `updateGeometry()` clears it. Regression test fails on the old code. Live-verified
+by Pryme.
+
+**Sidebar opened over the Library (traced, deferred).** The existing probes caught it at
+15:56:45: a second right-click 243ms into the sidebar's close-for-Library slide was saved by
+`_toggle_sidebar`'s mid-slide deferral and replayed after the Library opened. The replay never
+checks for an open or pending panel. Logged in TODO.md with a deterministic test plan, since
+Pryme can't make the double click on demand.
+
+---
+
 ## Session Summary — 2026-10-30 Session 2 — Streak grid colors reworked into six keys; tests stop writing the real config; a Settings-close hover-preview leak traced and deferred
 
 Commits: `4f448e7` (test isolation), `7df21b3` (TODO), `b1dfcab` (streak grid), plus this docs
