@@ -5,6 +5,11 @@ list scannable. Kept, not deleted, per the project's normal practice of not thro
 that isn't fully duplicated in NOTES.md/SESSION.md/a commit message. Order is the same relative
 order these entries had in TODO.md before the split (2026-07-30).
 
+- **[2026-10-30, DONE] Per-theme library color pass beyond A–S.** Logged 2026-07-07 (`ae4441c`)
+  when the pass stopped at S. Pryme tuned the remaining themes' library colors on 2026-10-30
+  (`595983e`, `366fcd5`); the eight with no library keys at all got a starting design
+  (`e753e4e`, The Color Purple's keys added to `_NO_BASE_INHERIT_KEYS`) and Slow Regard a copper
+  one (`109714f`). List view's hover got its own boost and a fixed-length trail (`259c96a`).
 - **[2026-10-30, FIXED] Tests wrote into the real `~/.config/Fabulor/Fabulor.conf`.** Logged
   2026-08-09 as a latent gap; it had a visible victim all along. `Config()` builds
   `QSettings("Fabulor", "Fabulor")`, which always uses NativeFormat, so the

@@ -9,6 +9,30 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
 
 ## Summary index
 
+### Sidebar opens over an open panel after a fast double right-click (deferred by Pryme — race, not reproducible on demand)
+- [2026-10-30] Seen live, caught by the existing `[RCLICK]`/`[SIDEBAR-TRACE]`/`[SIDEBAR-VIS]`
+  probes (fabulor.log, 15:56:44-15:57:19). Sidebar opened by right-click; Library chosen from it,
+  so the sidebar started its close-for-handoff slide (`pending_panel_open='library'`). A second
+  right-click 243ms into that slide hit `_toggle_sidebar`'s mid-slide deferral
+  (`DEFERRED ... pending_target=True`). The Library slid in and finished (45.878); 35ms later the
+  deferred replay applied the target and opened the sidebar over the open Library, where it stayed
+  33s.
+
+  **Cause:** the replay in `_toggle_sidebar` (panels.py, from `911b4c5`, 2026-07-28 — the fix for
+  the runaway open/close cycle) waits for all animations to settle, then checks only "is the
+  sidebar animating?" and "is it already at the target?". It never checks whether a full panel
+  opened or was committed in the meantime. Pryme hits it when a click lands twice by accident.
+
+  **Proposed fix:** drop the deferred target when a panel open is pending or a full panel is
+  visible (the same rule the one-overlay gate enforces for every other opener). Two lines plus a
+  probe line on the drop.
+
+  **Verification:** Pryme can't produce the double click on demand, so a live pass can't tell a
+  fixed bug from a missed double click (same problem as the Settings hover-preview leak above).
+  Verify with a deterministic test that drives the real sequence (open sidebar, start the Library
+  handoff, inject the second toggle mid-slide, run the event loop, assert the sidebar never opens
+  over the Library), shown to fail on the current code first.
+
 ### Hover preview leaks onto the main window after Settings closes (deferred by Pryme — recurring race)
 - [2026-10-30] Seen live: Anomander selected, Settings closed, and the main window/title bar stayed
   on **Yellow Wallpaper** while Stats and the other panels showed Anomander. Reopening Settings
@@ -1060,7 +1084,6 @@ correctly — the contrast is what made these visible, so they are not regressio
 - Acceptable target per Pryme: does not have to be fully live, just not visibly stuck.
 
 ### Theme color/data
-- [2026-07-07] Per-theme library color pass only covers A–S alphabetically (`library_bg`/`library_row_one`/`_two`/`library_item_hover_color`/`_alpha`/`library_title`/`_author`/`_narrator`/`_elapsed`/`_total`/`_percentage`/`library_slider_bg`/`_fill`/`library_input_bg`/`_text`) — letters T onward still need the same tuning pass (`ae4441c`)
 - [2026-07-28] Three-state panel background shipped and working; clicking an option has perceptible lag
 - [2026-07-21] "Cover art based theme": hover should preview the cover-derived theme regardless
   of the current Off/With pool/Exclusive mode (right-click-to-activate-from-Off half fixed
