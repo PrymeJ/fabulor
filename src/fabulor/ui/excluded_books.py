@@ -161,7 +161,7 @@ class _ExcludedRow(QWidget):
     def set_colors(self, theme: dict | None):
         if not theme:
             return
-        # Popup surface (chapter_dropdown-style: bg_deep + accent border) owns
+        # Popup surface (bg_dropdown + accent border, set in ExcludedBooksPopup.set_theme) owns
         # the background; rows themselves stay transparent — same reasoning
         # as inline rows elsewhere in the app that sit on a themed surface
         # rather than carrying their own per-row card fill.
@@ -502,7 +502,9 @@ class ExcludedBooksPopup(QListWidget):
 
     def set_theme(self, theme: dict):
         self._theme = theme
-        bg_deep = theme.get('bg_deep', '#1a1a1a')
+        # bg_dropdown, the same surface as the folder list above it on the Library tab
+        # (QListWidget#settings_folder_list), so the two boxes read as one family.
+        bg = theme.get('bg_dropdown', theme.get('bg_deep', '#1a1a1a'))
         accent = theme.get('accent', '#888888')
         # A subdued tint of accent, not accent itself — ExcludedBooksSection's expand arrow
         # (directly above this list) is also plain accent, and the two blended into one shape
@@ -510,18 +512,25 @@ class ExcludedBooksPopup(QListWidget):
         # via excluded_scrollbar; falls back to a derived value so no theme needs to set it
         # explicitly (see _derive_subdued).
         scrollbar_color = theme.get('excluded_scrollbar', _derive_subdued(accent))
+        # Rounded like the folder list above (4px) on three corners; the top-right stays
+        # square where the toggle arrow attaches. The scrollbar track and handle round
+        # their bottom only (3px, inside the 1px border), so the handle meets the
+        # rounded corner at the end of its travel and stays square under the arrow.
         # Scrollbar styling copied from chapter_dropdown's (ChapterList) QSS —
         # same popover surface pattern, same slim themed handle instead of
         # the default unthemed OS scrollbar. No ::item:selected rule needed —
         # selection is disabled entirely (NoSelection, see __init__): clicking
         # a row does nothing here, the eye button is the only per-row action.
         self.setStyleSheet(
-            f"QListWidget#excluded_popup {{ background-color: {bg_deep}; "
-            f"border: 1px solid {accent}; outline: none; }}"
+            f"QListWidget#excluded_popup {{ background-color: {bg}; "
+            f"border: 1px solid {accent}; outline: none; "
+            f"border-radius: 4px; border-top-right-radius: 0px; }}"
             f"QListWidget#excluded_popup QScrollBar:vertical {{ width: 8px; "
-            f"background: {bg_deep}; border: none; margin: 0px; }}"
+            f"background: {bg}; border: none; margin: 0px; "
+            f"border-bottom-right-radius: 3px; }}"
             f"QListWidget#excluded_popup QScrollBar::handle:vertical {{ "
-            f"background: {scrollbar_color}; min-height: 20px; border-radius: 0px; }}"
+            f"background: {scrollbar_color}; min-height: 20px; border-radius: 0px; "
+            f"border-bottom-left-radius: 4px; border-bottom-right-radius: 4px; }}"
             f"QListWidget#excluded_popup QScrollBar::add-line:vertical, "
             f"QListWidget#excluded_popup QScrollBar::sub-line:vertical {{ height: 0px; }}"
             f"QListWidget#excluded_popup QScrollBar::add-page:vertical, "
