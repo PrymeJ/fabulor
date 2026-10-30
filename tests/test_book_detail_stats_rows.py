@@ -79,3 +79,31 @@ def test_date_added_is_converted_from_utc_to_local():
     local = datetime(2026, 10, 29, 23, 30, tzinfo=timezone.utc).astimezone()
     assert BookDetailPanel._fmt_date_added(raw) == f"{local.strftime('%b')} {local.day}, {local.year}"
     assert BookDetailPanel._fmt_date_added(None) == "—"
+
+
+@pytest.mark.parametrize("first, second", [((2, 0), (0, 0)), ((0, 0), (2, 0))],
+                         ids=["more_rows_then_fewer", "fewer_rows_then_more"])
+def test_rows_are_in_place_before_the_slide_in_grab(qapp, tmp_path, first, second):
+    """The slide-in grabs the panel right after load_book, before the event loop runs any
+    queued layout pass. Rows must already be where they settle, or the slide shows the
+    previous book's row positions (spread out or overlapping)."""
+    mw, bdp = _panel(qapp, tmp_path, *first)
+    db = bdp.db
+    db.upsert_book({'path': '/x/second', 'folder_name_raw': 'B - U', 'title': 'U', 'author': 'B',
+                    'narrator': None, 'duration': 3600.0, 'progress': None,
+                    'cover_path': None, 'year': None})
+    book = db.get_book_dict('/x/second')
+    for i in range(second[0]):
+        db.write_session('/x/second', 'U', 'B', 3600.0, datetime(2026, 9, i + 1, 10),
+                         datetime(2026, 9, i + 1, 11), 0.0, 600.0, 600.0, 600.0, book_id=book['id'])
+    keys = lambda: bdp._stat_keys + [bdp._added_key, bdp._added_started_key]
+    positions = lambda: [(k.text(), k.y()) for k in sorted(
+        (k for k in keys() if k.isVisibleTo(bdp)), key=lambda k: k.y())]
+    bdp.hide()
+    bdp.load_book(dict(book))
+    bdp.layout().activate()                       # what _start_book_detail_entry does
+    at_grab = positions()
+    bdp.show()
+    qapp.processEvents()
+    assert at_grab == positions()
+    mw.close()

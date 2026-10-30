@@ -566,6 +566,9 @@ class BookDetailPanel(QWidget):
         from PySide6.QtGui import QColor
         grid_widget = QWidget()
         grid = QGridLayout(grid_widget)
+        self._stats_outer_layout = outer
+        self._stats_grid_layout = grid
+        self._stats_grid_widget = grid_widget
         grid.setContentsMargins(0, 4, 0, 0)
         grid.setHorizontalSpacing(16)
         grid.setVerticalSpacing(6)
@@ -2524,6 +2527,17 @@ class BookDetailPanel(QWidget):
         self._set_stat_row_visible(self._added_started_key, self._added_started_label,
                                    merge_added)
         self._set_stat_row_visible(self._stat_keys[5], self._stat_labels[5], is_finished)
+        # Hiding/showing rows only QUEUES a layout pass. The slide-in grabs this panel
+        # before the event loop runs it (PanelManager._start_book_detail_entry), so without
+        # this the slide shows the previous book's row positions: spread out after a book
+        # with more rows, overlapping after one with fewer.
+        # The outer layout caches the grid widget's size hint; only the widget's own
+        # updateGeometry() clears that cache. Then outer first, so the grid widget gets its
+        # new height before the rows are placed in it.
+        self._stats_grid_layout.invalidate()
+        self._stats_grid_widget.updateGeometry()
+        self._stats_outer_layout.activate()
+        self._stats_grid_layout.activate()
 
         self._session_list.set_data(sessions[:4], duration or 0.0)
         self._update_finished_icon(stats['finished_count'] > 0)
