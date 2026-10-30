@@ -3698,6 +3698,29 @@ class PanelManager:
         anim = getattr(self, dict(self._CLOSE_ANIMS).get(key, ""), None)
         return anim is not None and anim.state() == QAbstractAnimation.State.Running
 
+    def settings_accepts_hover_preview(self):
+        """True only while Settings is open and not closing. An opening slide counts as open;
+        a close counts from its start: the settle wait (_settings_close_pending), the slide-out
+        (settings_panel_animation running toward x < 0), and hidden. Gates theme hover
+        previews (ThemeManager._fire_pending_hover / _hover_call_is_stale): a preview that lands
+        once a close has started stays on the main window with Settings gone. See
+        review/Spec_261030_settings_close_hover_leak.md."""
+        # settings_panel_animation runs BOTH slides (open ends at QPoint(0, y), close at
+        # QPoint(-panel_w, y)), so _is_closing("settings") is True during an open slide too;
+        # the direction comes from the end value. It is one object for the app's lifetime
+        # (main_window_builders.py), never replaced or None.
+        anim = self.settings_panel_animation
+        sliding_out = (anim.state() == QAbstractAnimation.State.Running
+                       and anim.endValue().x() < 0)
+        # _settings_close_pending is set at close start and cleared at the top of
+        # _close_settings_flow_after_settle_gap on every path, including its early return,
+        # so this cannot stay False after an abandoned close. It is not set in __init__
+        # (first written by the first close), so the getattr default is load-bearing — the
+        # same way _close_settings_flow already reads it.
+        return (self.settings_panel.isVisible()
+                and not getattr(self, "_settings_close_pending", False)
+                and not sliding_out)
+
     def active_full_panel(self):
         """Which single full panel/overlay is currently open, as a string key
         ('library'/'settings'/'speed'/'sleep'/'sprint'/'stats'/'tags'/'book_detail'/'chapter_list'),

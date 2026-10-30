@@ -70,6 +70,9 @@ class _FakePanelManager:
     def has_settled_waiter(self, coalesce_key):
         return False
 
+    def settings_accepts_hover_preview(self):
+        return True   # these scenarios hover with Settings open
+
 
 class _FakeConfig:
     def get_theme_fade_duration(self):

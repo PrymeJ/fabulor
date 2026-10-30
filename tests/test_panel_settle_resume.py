@@ -270,6 +270,9 @@ class _RecordingPM:
     def has_settled_waiter(self, coalesce_key):
         return False
 
+    def settings_accepts_hover_preview(self):
+        return True   # these scenarios hover with Settings open
+
 
 class _RecordingGuardTimer:
     def __init__(self):

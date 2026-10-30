@@ -12,6 +12,7 @@ from ..themes import (
     get_stats_stylesheet, get_tags_stylesheet, THEMES
 )
 from .title_bar import ThemeItem
+from ..logger_setup import record_tripwire
 
 logger = logging.getLogger(__name__)
 
@@ -1097,6 +1098,12 @@ class ThemeManager(QObject):
         is — this parameter exists specifically because conflating `hover=False`
         with 'safe while a panel is open' caused a real regression once already
         (2026-07-21)."""
+
+        # Backstop: every deferred hover call (queued waiter, panel-guard timer, fade-stash
+        # drains) resumes through here, so none can apply once a Settings close has started.
+        # _fire_pending_hover's guard should stop them first; reaching this means another path.
+        if self._hover_call_is_stale(theme_name, hover):
+            return
 
         if fade_ms is None:
             fade_ms = _THEME_SWITCH_FADE_MS if not hover else self.config.get_theme_fade_duration()
@@ -2443,6 +2450,22 @@ class ThemeManager(QObject):
         self._last_swatch_pos = QCursor.pos()
         self._hover_debounce_timer.start()  # restart on each enter → coalesces the sweep
 
+    def _hover_call_is_stale(self, theme_name, hover):
+        """True for a hover call arriving once a Settings close has started. Previews only
+        originate in the open Themes tab, so such a call is stale by construction. Records a
+        tripwire: with _fire_pending_hover's guard in place nothing should get here, so a
+        line means a path we don't know about. Non-hover calls are never stale."""
+        if not hover:
+            return False
+        pm = getattr(self.main_window, "panel_manager", None)
+        if pm is None or pm.settings_accepts_hover_preview():
+            return False
+        name = theme_name if isinstance(theme_name, str) else "<cover theme>"
+        logger.warning(f"[HOVER-TRACE] hover call for {name!r} DROPPED: Settings is closing")
+        record_tripwire("HOVER-REPLAY-DROPPED-SETTINGS-CLOSING",
+                        f"queued hover call {name!r} dropped during a Settings close")
+        return True
+
     def _fire_pending_hover(self):
         """Debounce timer elapsed without a newer hover — run the real preview."""
         theme_name = self._pending_hover_theme
@@ -2455,6 +2478,16 @@ class ThemeManager(QObject):
                 f"[hover debounce] firing preview for {theme_name!r} "
                 f"{wait_ms:.1f}ms after last enterEvent"
             )
+        # A preview must not land once a Settings close has started: it would stay on the
+        # main window with Settings gone (live 2026-10-30: a swatch enter in the dismiss
+        # settle gap re-armed this debounce, which fired mid-slide). Nothing was applied yet,
+        # so dropping needs no undo; the close flow already snapped back to the active theme.
+        pm = getattr(self.main_window, "panel_manager", None)
+        if pm is not None and not pm.settings_accepts_hover_preview():
+            logger.warning(f"[HOVER-TRACE] preview for {theme_name!r} DROPPED: Settings is closing")
+            record_tripwire("HOVER-PREVIEW-DROPPED-SETTINGS-CLOSING",
+                            f"hover preview {theme_name!r} dropped during a Settings close")
+            return
         fade = int(self.config.get_theme_fade_duration() * 0.5)
         self._on_theme_changed(theme_name, save=False, fade_ms=fade, hover=True)
         # Re-assert the synthetic keyboard-hover look AFTER the real apply above, not before
