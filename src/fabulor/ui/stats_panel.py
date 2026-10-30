@@ -2114,8 +2114,11 @@ class HourlyHeatmap(QWidget):
 class StreakGrid(QWidget):
     """364-day streak calendar. One cell per day: today is the top-left cell,
     days get older moving right then down (day_index = row*N_COLS + col).
-    Listened days are filled with the accent color; the longest consecutive run
-    gets a brighter inside border; days a book was finished show a centered dot.
+    Listened days are filled with the accent color, unlistened days with a subdued
+    shade of it; the longest consecutive run is a deep shade framed by an accent
+    border; days a book was finished show a centered dot. Days before the first listening
+    day are not "no listening" days — listening hadn't started — so they fade almost
+    into the background instead. Colors: apply_theme.
     The left gutter holds the current-streak icon + number.
 
     Geometry mirrors HourlyHeatmap so the two can be swapped in place without
@@ -2130,16 +2133,28 @@ class StreakGrid(QWidget):
     TOP_PAD = 44           # == HourlyHeatmap.DATE_LABEL_H (cells start at same y — grids align)
     BOTTOM_PAD = 14        # keep total 448: 44 + 26*(14+1) + 14 = 44 + 390 + 14 = 448
 
+    # Cell colors come from six optional theme keys; each unset one is derived here.
+    # Lightness targets are CIE L* (perceived lightness), not HSV value, which means
+    # different brightness for different hues. Positions are fractions of the way
+    # from bg_main's L* to the reference color's L*.
+    _DEFAULT_BG = "#1A1A1A"       # bg_main fallback
+    _EMPTY_POS = 0.35             # no_listening_cell: subdued mid-tone of accent
+    _LONGEST_POS = 0.08           # longest_streak_cell: deep shade, framed by the outline
+    _DOT_LIFT = 20.0              # regular_streak_dot: L* above its cell (median of the
+    _DOT_SAT_SCALE = 0.5          #   hand-picked dots), at half its saturation,
+    _DOT_L_MAX = 97.0             #   capped short of white;
+    _DOT_MIN_LIFT = 8.0           #   if the cap leaves less lift than this, go darker
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._accent = QColor("#9B59B6")
         self._label_color = QColor("#9B59B6")
-        self._longest_fill = self._derive_longest_fill(self._accent)
-        self._finished_dot = self._derive_finished_dot(self._accent)
+        self.apply_theme({"accent": self._accent.name(), "bg_main": self._DEFAULT_BG})
         self._cache: dict[str, int] = {}
         self._streak: dict = {}
         self._finished: set[str] = set()
         self._longest_dates: set[str] = set()
+        self._history_start: str | None = None   # ISO date of the first listening day
         self._today: date | None = None
         self._reveal_progress: float = 1.0     # 1.0 = fully shown (default)
         self._label_progress: float = 1.0      # 1.0 = labels fully shown (at rest)
@@ -2323,51 +2338,76 @@ class StreakGrid(QWidget):
         self._label_color = color
         self.update()
 
-    @Property(QColor)
-    def longest_fill_color(self):
-        return self._longest_fill
-
-    @longest_fill_color.setter
-    def longest_fill_color(self, color: QColor):
-        self._longest_fill = color
-        self.update()
-
-    @Property(QColor)
-    def finished_dot_color(self):
-        return self._finished_dot
-
-    @finished_dot_color.setter
-    def finished_dot_color(self, color: QColor):
-        self._finished_dot = color
-        self.update()
-
     def set_accent_color(self, color: QColor):
-        self._accent = color
-        self._label_color = color
-        self._longest_fill = self._derive_longest_fill(color)
-        self._finished_dot = self._derive_finished_dot(color)
+        """Re-derive every unset color from a new accent (no theme dict to hand)."""
+        self.apply_theme({"accent": color.name(), "bg_main": self._bg.name()})
+
+    def apply_theme(self, theme: dict):
+        """Cell colors from a resolved theme dict. Each of the six keys is optional;
+        an unset one is derived (see the class constants). Labels and the streak
+        count stay on accent."""
+        def key(name, fallback):
+            value = theme.get(name)
+            return QColor(value) if value else fallback
+
+        accent = QColor(theme.get("accent", "#9B59B6"))
+        bg = QColor(theme.get("bg_main") or self._DEFAULT_BG)
+        self._accent = accent
+        self._label_color = QColor(accent)
+        self._bg = bg
+        self._regular_cell = key("regular_streak_cell", accent)
+        self._empty = key("no_listening_cell", self._between(bg, accent, self._EMPTY_POS))
+        self._longest_fill = key("longest_streak_cell",
+                                 self._between(bg, self._regular_cell, self._LONGEST_POS))
+        self._longest_outline = key("longest_streak_outline", accent)
+        self._finished_dot = key("regular_streak_dot", self._light_dot(self._regular_cell))
+        self._longest_dot = key("longest_streak_dot", self._finished_dot)
         self.update()
 
     @staticmethod
-    def _derive_longest_fill(accent: QColor) -> QColor:
-        # Now the CELL FILL for the longest run (accent is the border). A hue
-        # rotation works for the 58 hand-picked named themes but cover-art
-        # themes derive accent dynamically from artwork, so a fixed rotation
-        # can land anywhere on the wheel. Instead stay on the same hue and
-        # lighten/desaturate — a subdued tint of the accent itself — which
-        # tracks the cover's palette reliably while still reading as a
-        # distinct, lighter cell against the plain accent-filled ones.
-        h, s, v, a = accent.getHsv()
-        new_s = max(0, int(s * 0.55)) if s else 0
-        new_v = min(255, v + 60) if v >= 0 else 200
-        return QColor.fromHsv(h if h >= 0 else 0, new_s, new_v, a)
+    def _lstar(color: QColor) -> float:
+        from ..themes import _relative_luminance
+        y = _relative_luminance(color.red(), color.green(), color.blue())
+        return 116 * y ** (1 / 3) - 16 if y > 0.008856 else 903.3 * y
 
-    @staticmethod
-    def _derive_finished_dot(accent: QColor) -> QColor:
-        # Dark punch-through: same hue, very low value — reads as a hole in a
-        # filled cell rather than blending into the accent fill.
-        h, s, v, a = accent.getHsv()
-        return QColor.fromHsv(h if h >= 0 else 0, s, max(0, int(v * 0.25)), 255)
+    @classmethod
+    def _shade_at(cls, color: QColor, target_l: float) -> QColor:
+        """color's hue and saturation, HSV value searched so L* lands on target_l."""
+        h, s, _, a = color.getHsv()
+        h = h if h >= 0 else 0
+        lo, hi = 0.0, 255.0
+        for _ in range(14):
+            mid = (lo + hi) / 2
+            if cls._lstar(QColor.fromHsv(h, s, int(mid))) < target_l:
+                lo = mid
+            else:
+                hi = mid
+        return QColor.fromHsv(h, s, int(round(lo)), a)
+
+    @classmethod
+    def _between(cls, bg: QColor, color: QColor, pos: float) -> QColor:
+        bg_l = cls._lstar(bg)
+        return cls._shade_at(color, bg_l + pos * (cls._lstar(color) - bg_l))
+
+    @classmethod
+    def _light_dot(cls, cell: QColor) -> QColor:
+        # Always lighter than its cell: 51 of the 61 hand-picked dots are.
+        # On a very bright cell (e.g. #00FF00) the lift can be out of reach at half
+        # saturation even at full value; desaturate further until it isn't.
+        # A cell already near white (Anomander's #FFFFFF) has no room above it, so
+        # there the dot goes the same distance darker — a light grey, not black.
+        h, s, v, _ = cell.getHsv()
+        h = h if h >= 0 else 0
+        cell_l = cls._lstar(cell)
+        target = min(cls._DOT_L_MAX, cell_l + cls._DOT_LIFT)
+        sat = int(s * cls._DOT_SAT_SCALE)
+        if target - cell_l < cls._DOT_MIN_LIFT:
+            return cls._shade_at(QColor.fromHsv(h, sat, v), cell_l - cls._DOT_LIFT)
+        while True:
+            dot = cls._shade_at(QColor.fromHsv(h, sat, v), target)
+            if sat == 0 or cls._lstar(dot) >= target - 0.5:
+                return dot
+            sat //= 2
 
     # --- data ---
     def set_data(self, cache: dict, streak_info: dict,
@@ -2383,6 +2423,7 @@ class StreakGrid(QWidget):
         self._finished = set(finished_dates)
         self._today = today
         self._longest_dates = self._compute_longest_run(self._cache)
+        self._history_start = min((d for d, v in self._cache.items() if v == 1), default=None)
         if self._streak_count_anim.state() != QPropertyAnimation.State.Running:
             # Keep showing whatever was last animated to until a caller
             # explicitly asks for a new count-up (see animate_streak_count).
@@ -2695,12 +2736,17 @@ class StreakGrid(QWidget):
                     color = QColor(self._longest_fill)
                     color.setAlpha(int(255 * anim_alpha))
                 elif listened:
-                    color = QColor(self._accent)
+                    color = QColor(self._regular_cell)
+                    color.setAlpha(int(255 * anim_alpha))
+                elif (iso in self._cache and self._history_start is not None
+                      and iso >= self._history_start):
+                    color = QColor(self._empty)
                     color.setAlpha(int(255 * anim_alpha))
                 else:
+                    # Before the first listening day (or no record at all): a faint
+                    # accent wash, nearly background.
                     color = QColor(self._accent)
-                    base_a = 30 if iso in self._cache else 12
-                    color.setAlpha(int(base_a * anim_alpha))
+                    color.setAlpha(int(12 * anim_alpha))
                 if anim_scale >= 1.0:
                     painter.fillRect(x, y, self.CELL, self.CELL, color)
                 elif anim_scale > 0.0:
@@ -2711,7 +2757,7 @@ class StreakGrid(QWidget):
                 # Border/dot only once the cell has fully popped to size — avoids
                 # a full-size border floating over a still-shrunk "pop" fill.
                 if is_longest and anim_alpha > 0 and anim_scale >= 0.999:
-                    border = QColor(self._accent)
+                    border = QColor(self._longest_outline)
                     border.setAlpha(int(255 * anim_alpha))
                     painter.save()
                     pen_w = 2
@@ -2729,7 +2775,7 @@ class StreakGrid(QWidget):
 
                 if (not still_pending) and iso in self._finished and anim_alpha > 0 and anim_scale >= 0.999:
                     # Contrasting dark punch-through so the dot reads on filled cells.
-                    dot = QColor(self._finished_dot)
+                    dot = QColor(self._longest_dot if is_longest else self._finished_dot)
                     dot.setAlpha(int(255 * anim_alpha))
                     painter.save()
                     painter.setPen(Qt.PenStyle.NoPen)
@@ -3765,14 +3811,7 @@ class StatsPanel(QWidget):
         if hasattr(self, '_heatmap'):
             self._heatmap.set_accent_color(self._accent_color)
         if hasattr(self, '_streak_grid'):
-            self._streak_grid.set_accent_color(self._accent_color)
-            outline = theme.get("streak_grid_outline")        # per-theme override hook
-            if outline:
-                self._streak_grid.longest_fill_color = QColor(outline)
-            dot = theme.get("streak_grid_dot")                # per-theme override hook
-            if dot:
-                self._streak_grid.finished_dot_color = QColor(dot)
-            self._streak_grid.update()
+            self._streak_grid.apply_theme(theme)
         if hasattr(self, '_tassel'):
             self._tassel.set_colors(self._tassel_body_color)
             self._tassel.set_tassel_colors(
