@@ -2481,7 +2481,7 @@ class BookDelegate(QStyledItemDelegate):
         self._list_hovered_path = ""
         self._hover_fade: dict = {}     # path → current alpha (0–255)
         self._hover_fade_timer = QTimer(self)
-        self._hover_fade_timer.setInterval(16)  # ~60fps
+        self._hover_fade_timer.setInterval(self._HOVER_FADE_TICK_MS)  # ~60fps
         self._hover_fade_timer.timeout.connect(self._advance_hover_fade)
         # Set True only for the duration of a single viewport().grab() call (see
         # PanelManager._start_library_entry's open-start grab) so the captured pixmap never
@@ -2518,6 +2518,9 @@ class BookDelegate(QStyledItemDelegate):
         hc = theme.get('library_item_hover_color', theme.get('accent', '#ffffff'))
         ha = theme.get('library_item_hover_alpha', 0.50)
         self._hover_bg_color = qc(hc, int(ha * 255))
+        # List rows are thin, so they take a stronger highlight than 1-per-row's big cards,
+        # where a high alpha washes out the metadata text. The trail fades from this too.
+        self._list_hover_bg_color = qc(hc, int(min(1.0, ha + self._LIST_HOVER_ALPHA_BOOST) * 255))
         # Keyboard-selection highlight (1-per-row's own tint — the other grid modes reuse the
         # duration/progress overlay instead, and List reuses the mouse hover-fade mechanism; see
         # the CLAUDE.md "Keyboard-selection visual, per view mode" note). Unified onto the SAME
@@ -2722,16 +2725,27 @@ class BookDelegate(QStyledItemDelegate):
         if self._list_hovered_path == path:
             self._list_hovered_path = ""
         if path not in self._hover_fade:
-            self._hover_fade[path] = self._hover_bg_color.alpha()
+            self._hover_fade[path] = self._list_hover_bg_color.alpha()
         if not self._hover_fade_timer.isActive():
             self._hover_fade_timer.start()
 
-    _HOVER_FADE_STEP_OUT = {"Slow": 3, "Normal": 5, "Fast": 7}
+    _LIST_HOVER_ALPHA_BOOST = 0.10
+    # Trail length per Look setting, independent of the theme's hover alpha. It used to step
+    # down a fixed alpha per tick, so a low-alpha theme's trail was both fainter and shorter
+    # (0.15 lasted ~0.2s on Slow). These durations match what the default 0.50 gave then.
+    _HOVER_FADE_OUT_MS = {"Slow": 700, "Normal": 420, "Fast": 300}
+    _HOVER_FADE_TICK_MS = 16
+
+    def _hover_fade_step_out(self, target_alpha: int) -> float:
+        # Fractional, so the fade length doesn't drift with alpha through integer rounding;
+        # _hover_fade holds floats and the painter rounds.
+        duration = self._HOVER_FADE_OUT_MS.get(self._hover_fade_mode, 260)
+        return target_alpha * self._HOVER_FADE_TICK_MS / duration
 
     def _advance_hover_fade(self) -> None:
-        target_alpha = self._hover_bg_color.alpha()
+        target_alpha = self._list_hover_bg_color.alpha()
         step_in  = 25
-        step_out = self._HOVER_FADE_STEP_OUT.get(self._hover_fade_mode, 10)
+        step_out = self._hover_fade_step_out(target_alpha)
         changed = False
         hovered_path = self._list_hovered_path
         for path in list(self._hover_fade):
@@ -2739,11 +2753,11 @@ class BookDelegate(QStyledItemDelegate):
             if path == hovered_path:
                 new = min(target_alpha, current + step_in)
             else:
-                new = max(0, current - step_out)
+                new = max(0.0, current - step_out)
             if new != current:
                 self._hover_fade[path] = new
                 changed = True
-            if new == 0 and path != hovered_path:
+            if new <= 0 and path != hovered_path:
                 del self._hover_fade[path]
         if not self._hover_fade:
             self._hover_fade_timer.stop()
@@ -3444,11 +3458,11 @@ class BookDelegate(QStyledItemDelegate):
         elif self._hover_fade_mode != "Off":
             fade_alpha = self._hover_fade.get(book.path, 0)
             if fade_alpha > 0:
-                fade_color = QColor(self._hover_bg_color)
-                fade_color.setAlpha(fade_alpha)
+                fade_color = QColor(self._list_hover_bg_color)
+                fade_color.setAlpha(round(fade_alpha))
                 painter.fillRect(r, fade_color)
         elif hovered or book.path == self._kbd_hover_path:
-            painter.fillRect(r, self._hover_bg_color)
+            painter.fillRect(r, self._list_hover_bg_color)
 
         if book.path == self._playing_path:
             import math
