@@ -5,6 +5,18 @@ list scannable. Kept, not deleted, per the project's normal practice of not thro
 that isn't fully duplicated in NOTES.md/SESSION.md/a commit message. Order is the same relative
 order these entries had in TODO.md before the split (2026-07-30).
 
+- **[2026-10-30, FIXED] Hover preview leaked onto the main window after Settings closed.**
+  Seen live 06:04: Anomander selected, Settings dismissed, main window and title bar stayed on
+  Yellow Wallpaper. A swatch enter during the close flow's settle gap re-armed the hover debounce;
+  it fired mid-slide, was queued behind the panel animation, and applied after Settings had closed.
+  Fixed by `PanelManager.settings_accepts_hover_preview()` (False from the start of a close: settle
+  wait, slide-out read from the animation's end value, hidden) gating `_fire_pending_hover`
+  (primary) and the top of `_on_theme_changed` for hover calls (backstop). Each guard writes its own
+  tag to `TRIPWIRES.txt`. 18 tests in `tests/test_settings_close_hover_guard.py`, failing against the
+  unguarded code. Live-checked by Pryme: hover browsing (including during the open slide), snapback
+  on leave, and dismiss-with-preview all unchanged. The race itself can't be produced on demand.
+  Full write-up: `review/Spec_261030_settings_close_hover_leak.md`.
+
 - **[2026-10-30, FIXED] Sidebar opened over an open panel after a fast double right-click.**
   Logged the same day from the 15:56:45 trace: a click deferred during the sidebar's
   close-for-handoff slide was replayed after the Library opened, and the replay in

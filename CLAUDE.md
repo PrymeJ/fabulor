@@ -296,6 +296,12 @@ The real library used for day-to-day testing has been ~400 books. That is not re
   theme, grep for `get('<key>'` fallbacks in `src/` and compare the derived colors too; pin the old
   value on the dependent key if it must not move. Session history rows (`library_row_*`) and the
   six streak keys are other examples of chained fallbacks.
+- **`PanelManager._is_closing(key)` is True while a panel slides IN, too.** It only checks that
+  the panel's slide animation is running, and each panel's open and close slides share one
+  `QPropertyAnimation`. To know the direction, read the running animation's `endValue().x()`
+  (`< 0` = sliding out; `settings_accepts_hover_preview` does this). Found 2026-10-30 while
+  reviewing the Settings-close hover guard: the first draft used `_is_closing` and would have
+  dropped legitimate hovers during Settings' open slide.
 - **Qt font facts that cost time on the no-cover placeholder (2026-10-27)** — each checked, not
   assumed: (1) `QRawFont.supportsCharacter(str)` returns False for EVERY non-ASCII character in
   PySide6; pass `ord(ch)`. (2) `QFont.setPointSizeF`/fractional sizes snap to whole pixels — 14.2
@@ -1914,7 +1920,13 @@ Any `QWidget` subclass (not `QFrame`, not `QLabel`) that owns a background-color
 
 *Reorganization note (2026-07-13): the "Critical Architecture Rules" section was restructured to remove repetition — it previously existed as two passes (a full-prose section and a later condensed second pass covering many of the same rules). The two were merged: rules that appeared in both now appear once, under whichever fact they share, with no information dropped. Rules unique to either pass are unchanged. See the note directly under the "Critical Architecture Rules" heading for detail.*
 
-*Last updated: 2026-10-30 Session 3 — streak and library colors tuned for every theme (theme dicts
+*Last updated: 2026-10-30 Session 4 — the Settings-close hover-preview leak fixed
+(`settings_accepts_hover_preview` gates `_fire_pending_hover` and hover calls in
+`_on_theme_changed`); new Debugging-discipline bullet on `_is_closing` being True during an open
+slide; the sidebar-over-panel race fixed; caught races recorded in an untracked `TRIPWIRES.txt`.
+See SESSION.md.*
+
+*Previously: 2026-10-30 Session 3 — streak and library colors tuned for every theme (theme dicts
 now in docstring order, hex uppercase); eight themes got library colors (The Color Purple's
 library keys in `_NO_BASE_INHERIT_KEYS`), Slow Regard copper; List hover boost and fixed-length
 trail; Book Detail's stats rows laid out before the slide-in grab. Sidebar-over-panel race traced,

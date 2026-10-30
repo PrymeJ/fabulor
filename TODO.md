@@ -20,39 +20,12 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
   - `SIDEBAR-DEFERRED-OPEN-DROPPED`: a sidebar click deferred during a slide would have opened
     the sidebar over a panel; the guard in `_toggle_sidebar`'s replay dropped it (fix
     `cd88a32`, see TODO_ARCHIVE.md). A line here means the race recurred and was caught.
+  - `HOVER-PREVIEW-DROPPED-SETTINGS-CLOSING`: a theme hover preview fired after a Settings close
+    had started (the 2026-10-30 Yellow Wallpaper race) and was dropped by `_fire_pending_hover`.
+  - `HOVER-REPLAY-DROPPED-SETTINGS-CLOSING`: a hover call reached `_on_theme_changed` during a
+    Settings close by some path other than the debounce. The backstop held, but find the path.
+  See `review/Spec_261030_settings_close_hover_leak.md`.
   When adding a new tripwire, add its tag here.
-
-### Hover preview leaks onto the main window after Settings closes (deferred by Pryme — recurring race)
-- [2026-10-30] Seen live: Anomander selected, Settings closed, and the main window/title bar stayed
-  on **Yellow Wallpaper** while Stats and the other panels showed Anomander. Reopening Settings
-  cleared it. Trace (fabulor.log, 06:04:42-44):
-  1. Anomander selected; `_close_settings_flow` (42.958) calls `_on_theme_unhovered()`, which stops
-     the hover debounce, then waits for the theme to settle and a settle gap before starting the
-     slide-out (43.341).
-  2. During that wait the cursor swept across Pink Institute, Castle Dracula and Yellow Wallpaper
-     (`ThemeItem.enterEvent PASSED` at 43.198 / 43.236 / 43.250, Settings still visible). Each enter
-     restarted the debounce; it fired for Yellow Wallpaper at 43.397, 56ms INTO the slide-out.
-     `_on_theme_changed` saw `any_panel_animating=True` and queued the `hover=True` call to run once
-     panels settle.
-  3. Slide finished (43.647); `[SWATCH-LEAVE-SUSPECT]` issued a snapback, Anomander applied.
-  4. `[settle-watch] panels settled, draining 1 waiter(s)` (43.933) ran the queued Yellow Wallpaper
-     preview with Settings already closed. `_active_display_theme_internal='Yellow Wallpaper'`,
-     `_is_hover_active=True` from then on; the swatch backstop ticked `outside=False` while hidden,
-     so nothing ended it.
-
-  **The requirement (Pryme):** Settings must not start sliding out while any preview is pending.
-  Every hover preview, including one still inside its debounce, is drained or cancelled BEFORE the
-  slide starts, so a preview can never land on the main window after the panel is gone. Applying
-  the active theme on top afterwards is NOT a fix: by then the main window has already shown the
-  previewed theme, and a second restyle makes it worse. The containment of previews inside Settings
-  took days of work on several occasions; this is the same class of bug resurfacing.
-
-  What the trace shows is missing: the close flow stops the debounce once, at entry, but swatch
-  hovers stay live for the whole settle wait, so a new enter re-arms it after that stop; and the
-  queued settle-watch waiter is not dropped by a later non-hover theme change or by Settings
-  closing. Queue path from `8c348b0` (2026-07-28); unchanged since, so a
-  latent race, not a regression. Rare: needs a debounce to expire inside the ~300ms close animation.
-  If picked up: its own session, live-verified, per CLAUDE.md's theme-hover rules.
 
 ### Move the other five panels' backdrop grab to move-aside too (deferred by Pryme — regression risk)
 - [2026-10-20] `TransportBarBlurOverlay._grab_and_blur` now excludes Book Detail from its grab by

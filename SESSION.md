@@ -1,3 +1,38 @@
+## Session Summary — 2026-10-30 Session 4 — sidebar-over-panel race fixed; tripwire file; Settings-close hover-preview leak fixed
+
+Commits: `5c7223c`, `cd88a32`, `bcfa3f7`, `4e1b400`, plus this docs commit. Triage page version 36
+(Blocking 3 → 2).
+
+**`preset_ramp_light_end` removed.** Pryme deleted both instances after asking what the dark_end
+instances did; grep confirmed nothing ever read `light_end`.
+
+**Sidebar over an open panel (fixed).** The replay of a click deferred during the sidebar's
+close-for-handoff slide now drops a deferred *open* when a panel is open or committed; a deferred
+close and a no-panel deferral still apply. A deterministic test drives the real `_toggle_sidebar`
+with stand-in animation/timer objects, since Pryme can't make the double click on demand. Pryme
+first missed the `return` in the guard and asked where the fix was; it was in the diff as written.
+
+**Tripwires.** A caught race should not depend on someone reading a rotating log.
+`logger_setup.record_tripwire(tag, msg)` appends a dated, tagged line to `TRIPWIRES.txt`, in the
+repo root (untracked, visible in `git status`) when run from a checkout. Tests redirect it to a
+temp file via an autouse fixture. TODO.md keeps a standing reminder with the list of tags.
+
+**Settings-close hover-preview leak (fixed, the last Blocking item from today).** Root cause from
+the 06:04 trace: the close flow stops the hover debounce once, at entry, but swatches stay live
+through the settle wait and gap, so a new enter re-arms it; the preview fires mid-slide, queues
+behind the panel animation, and applies after Settings has closed. Written up first as
+`review/Spec_261030_settings_close_hover_leak.md` and reviewed by a second Claude instance. While
+checking the reviewer's first point I found my own error: the draft predicate used
+`_is_closing("settings")`, which is also True during the OPEN slide (one animation runs both), and
+would have dropped legitimate hovers. `settings_accepts_hover_preview()` reads the direction from
+the animation's end value. Primary guard in `_fire_pending_hover`, backstop for any hover call in
+`_on_theme_changed`, each with its own tripwire tag. 18 tests, confirmed failing against HEAD's
+unguarded `theme_manager.py`. Pryme live-checked hover browsing (including during the open slide),
+snapback on leave, and dismiss with a preview showing: no regressions. The race itself can't be
+produced on demand; a `HOVER-PREVIEW-DROPPED-...` line in `TRIPWIRES.txt` will show it was caught.
+
+---
+
 ## Session Summary — 2026-10-30 Session 3 — streak and library colors for every theme; List hover; Book Detail slide-in rows; sidebar race traced
 
 Commits: `45cf2ab`, `595983e`, `e753e4e`, `259c96a`, `366fcd5`, `109714f`, `13a0a09`, `f4eec54`,
