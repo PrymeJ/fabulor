@@ -408,6 +408,7 @@ def _make_sidebar_pm(anim_running, expanded=False):
     pm._sidebar_pending_target = None
     pm.settled_calls = []
     pm.call_when_panels_settled = lambda cb: pm.settled_calls.append(cb)
+    pm.is_overlay_open_or_committed = lambda: False   # no panel took over meanwhile
     return pm
 
 

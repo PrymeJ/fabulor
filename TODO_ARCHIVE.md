@@ -5,6 +5,15 @@ list scannable. Kept, not deleted, per the project's normal practice of not thro
 that isn't fully duplicated in NOTES.md/SESSION.md/a commit message. Order is the same relative
 order these entries had in TODO.md before the split (2026-07-30).
 
+- **[2026-10-30, FIXED] Sidebar opened over an open panel after a fast double right-click.**
+  Logged the same day from the 15:56:45 trace: a click deferred during the sidebar's
+  close-for-handoff slide was replayed after the Library opened, and the replay in
+  `_toggle_sidebar` never checked for a panel. The replay now drops a deferred *open* when
+  `is_overlay_open_or_committed()` is true and logs `[SIDEBAR-TRACE] deferred open DROPPED`;
+  a deferred close is never blocked. Can't be reproduced live on demand, so
+  `tests/test_sidebar_deferred_toggle.py` drives the logged sequence (fails without the fix)
+  plus a control that a click during a slide with no panel still applies. Live evidence if it
+  recurs: the DROPPED line in the log means the fix caught it.
 - **[2026-10-30, DONE] Per-theme library color pass beyond A–S.** Logged 2026-07-07 (`ae4441c`)
   when the pass stopped at S. Pryme tuned the remaining themes' library colors on 2026-10-30
   (`595983e`, `366fcd5`); the eight with no library keys at all got a starting design

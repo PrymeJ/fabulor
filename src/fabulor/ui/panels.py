@@ -1969,6 +1969,16 @@ class PanelManager:
                 # them), or state may have changed via another path in the meantime.
                 if self.sidebar_animation.state() == QAbstractAnimation.State.Running:
                     return
+                if target and self.is_overlay_open_or_committed():
+                    # A click deferred during a close-for-handoff slide (Library chosen from
+                    # the sidebar) must not open the sidebar over the panel that slide was
+                    # handing off to. Live-traced 2026-10-30: an accidental double right-click
+                    # did exactly that, 35ms after the Library finished opening.
+                    logger.warning(
+                        f"[SIDEBAR-TRACE] deferred open DROPPED: a panel is open or "
+                        f"committed (expanded={self.sidebar_expanded})"
+                    )
+                    return
                 if target == self.sidebar_expanded:
                     # Already where the user asked for — an even number of clicks
                     # landed during the slide and cancelled out. Starting a slide here
