@@ -1,3 +1,59 @@
+## Session Summary — 2026-10-30 Session 2 — Streak grid colors reworked into six keys; tests stop writing the real config; a Settings-close hover-preview leak traced and deferred
+
+Commits: `4f448e7` (test isolation), `7df21b3` (TODO), `b1dfcab` (streak grid), plus this docs
+commit. The ship-triage artifact was updated twice (versions 33 and 34).
+
+**Streak grid colors.** The complaint: on cover-art themes the longest-run cells were a bright
+pastel, distinct but ugly; on many hand-tuned themes the longest run looked like a no-listening day.
+- First attempt failed and was replaced. It kept the old "lighten and desaturate accent" fill and
+  added a luminance-gap check against both neighbouring cells. Pryme saw no change on cover themes.
+  Printing old vs new colours showed why: the new fill was ~5% darker than the old and already
+  cleared the gap, so the correction never fired. I had reported it as an improvement from pixel-diff
+  counts without looking at the colours; retracted.
+- Measuring each theme's longest-run fill as a CIE L* position between an empty cell (0) and a
+  listened cell (1) located the real problem: almost every hand-tuned override sits at or below 0
+  (on top of empty), cover themes sit at 1.4-1.75 (brighter than listened). The good examples sat in
+  between or clearly darker than empty.
+- Three prototypes, rendered offscreen and judged by Pryme. Pryme's call: swap the roles. Empty days
+  take a subdued mid-tone; the longest run takes the deep, punchy shade framed by the outline. Dots
+  had been near-black or near-white, which Pryme disliked. 51 of the 61 hand-picked dots are lighter
+  than their accent (median +20 L*, roughly half saturation), so derived dots now follow that.
+- Shipped as six optional keys (`no_listening_cell`, `regular_streak_cell`, `longest_streak_cell`,
+  `longest_streak_outline`, `regular_streak_dot`, `longest_streak_dot`), each derived when unset in
+  `StreakGrid.apply_theme`. `streak_grid_outline` (which was the longest-run FILL since the
+  2026-06-18 role swap, despite its name) and `streak_grid_dot` were renamed across all 61 themes,
+  values unchanged. Two edge cases found by the tests: a pure green accent can't get a dot 20 L*
+  lighter at half saturation (now desaturates further), and a white accent (Anomander) has no room
+  above it (dot goes darker there).
+- Pryme then spotted the remaining problem himself: most no-listening cells were the year before
+  listening began. Days before the first listening day now use the grid's existing near-background
+  no-history state; no new key. Pryme's own per-theme values cover themes A-E so far.
+- Contact sheets of all 62 themes on Pryme's real grid pattern (read pixel-by-pixel from his
+  screenshot) are in the session scratchpad; `sheet_all.py` there re-renders them.
+
+**"The Library switches to List by itself" — it was the test suite.** A `[VIEWMODE-PROBE]` showed the
+saved mode flipping between two app starts with no change logged by the app. Running
+`test_library_list_slide_paint_suppression.py` alone reproduced it: its `setDefaultFormat` +
+`setPath` isolation does nothing because `Config` builds `QSettings("Fabulor", "Fabulor")`
+(NativeFormat). Every full-suite run wrote `library_view_mode=List` (and `blur_enabled=false`) into
+the real config. Fixed for every test with an autouse fixture in `tests/conftest.py`; the real
+config is byte-identical after a full run. Closes the 2026-08-09 TODO gap. The probe was removed;
+Pryme had only noticed the switch after test runs. Unresolved: whether his `blur_enabled=false` is
+his own setting or a leftover from a test run.
+
+**Settings-close hover-preview leak, traced and deferred (blocking).** Seen live: Anomander selected,
+the main window stayed on Yellow Wallpaper (identified by exact pixel values; Pryme first read it as
+Goldfinch) while the other panels showed Anomander. The log trace: the close flow stops the hover
+debounce once at entry, but swatches stay live during the ~400ms settle wait; the cursor crossed
+three swatches, the last debounce fired 56ms into the slide-out, was queued because a panel was
+animating, and ran after Settings had closed. I first wrote that the close flow never stops the
+debounce, then corrected that from the log before Pryme relied on it. Pryme's requirement: no
+preview may be pending when Settings starts to slide; re-applying the active theme afterwards is not
+a fix. Not fixed now, by Pryme's decision. TODO.md has the full trace; the triage page lists it as
+Blocking.
+
+---
+
 ## Session Summary — 2026-10-30 Session 1 — "Last added" library sort and an Added row in Book Detail Stats
 
 Commits: `e288a91` (sort), `9182a3a` (Stats rows), plus this docs commit. Both live-verified by Pryme.

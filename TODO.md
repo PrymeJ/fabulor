@@ -821,7 +821,7 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
 - [2026-09-17] Hide the Themes-tab interval row entirely when only one theme is selected in the
   pool (an interval is meaningless with nothing to rotate to) — feature, visual, minor, not decided.
 - [2026-09-17] If the longest streak is also the currently-active streak, remove the outline and
-  show the cells bare (today the longest run always gets a border via `streak_grid_outline`,
+  show the cells bare (today the longest run always gets a border via `longest_streak_outline`,
   computed in `StreakGrid._compute_longest_run`/rendered around `stats_panel.py:3645`, regardless of
   whether it's still ongoing) — feature, visual, minor, not decided. Would need a way to tell
   "longest run" and "currently active run" apart in that rendering path, which doesn't exist today.
