@@ -5,6 +5,17 @@ list scannable. Kept, not deleted, per the project's normal practice of not thro
 that isn't fully duplicated in NOTES.md/SESSION.md/a commit message. Order is the same relative
 order these entries had in TODO.md before the split (2026-07-30).
 
+- **[2026-10-30, FIXED] Tests wrote into the real `~/.config/Fabulor/Fabulor.conf`.** Logged
+  2026-08-09 as a latent gap; it had a visible victim all along. `Config()` builds
+  `QSettings("Fabulor", "Fabulor")`, which always uses NativeFormat, so the
+  `setDefaultFormat(IniFormat)` + `setPath` pattern isolated nothing.
+  `test_library_list_slide_paint_suppression.py` wrote `library_view_mode=List` (and
+  `blur_enabled=false`) on every full-suite run, so Pryme kept finding the Library in List view
+  "by itself". Found with a `[VIEWMODE-PROBE]`: the saved mode flipped between two app starts with
+  no change logged by the app; running that one test reproduced it. Fixed for every test at once:
+  an autouse fixture in `tests/conftest.py` swaps `fabulor.config.QSettings` for a subclass bound to
+  a `tmp_path` INI file (the workaround three tests already used locally). Verified: the real config
+  is byte-identical after a full suite run.
 - **[2026-10-28, FIXED] An empty Narrator/Year in Book Detail couldn't be clicked directly.**
   The 2026-09-17 entry described it as a Tab/arrow problem; Pryme corrected that — Tab always
   reached them, only a click on the blank row didn't. Cause: empty fields were hidden (their rows
