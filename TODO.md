@@ -9,6 +9,38 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
 
 ## Summary index
 
+### Hover preview leaks onto the main window after Settings closes (deferred by Pryme — recurring race)
+- [2026-10-30] Seen live: Anomander selected, Settings closed, and the main window/title bar stayed
+  on **Yellow Wallpaper** while Stats and the other panels showed Anomander. Reopening Settings
+  cleared it. Trace (fabulor.log, 06:04:42-44):
+  1. Anomander selected; `_close_settings_flow` (42.958) calls `_on_theme_unhovered()`, which stops
+     the hover debounce, then waits for the theme to settle and a settle gap before starting the
+     slide-out (43.341).
+  2. During that wait the cursor swept across Pink Institute, Castle Dracula and Yellow Wallpaper
+     (`ThemeItem.enterEvent PASSED` at 43.198 / 43.236 / 43.250, Settings still visible). Each enter
+     restarted the debounce; it fired for Yellow Wallpaper at 43.397, 56ms INTO the slide-out.
+     `_on_theme_changed` saw `any_panel_animating=True` and queued the `hover=True` call to run once
+     panels settle.
+  3. Slide finished (43.647); `[SWATCH-LEAVE-SUSPECT]` issued a snapback, Anomander applied.
+  4. `[settle-watch] panels settled, draining 1 waiter(s)` (43.933) ran the queued Yellow Wallpaper
+     preview with Settings already closed. `_active_display_theme_internal='Yellow Wallpaper'`,
+     `_is_hover_active=True` from then on; the swatch backstop ticked `outside=False` while hidden,
+     so nothing ended it.
+
+  **The requirement (Pryme):** Settings must not start sliding out while any preview is pending.
+  Every hover preview, including one still inside its debounce, is drained or cancelled BEFORE the
+  slide starts, so a preview can never land on the main window after the panel is gone. Applying
+  the active theme on top afterwards is NOT a fix: by then the main window has already shown the
+  previewed theme, and a second restyle makes it worse. The containment of previews inside Settings
+  took days of work on several occasions; this is the same class of bug resurfacing.
+
+  What the trace shows is missing: the close flow stops the debounce once, at entry, but swatch
+  hovers stay live for the whole settle wait, so a new enter re-arms it after that stop; and the
+  queued settle-watch waiter is not dropped by a later non-hover theme change or by Settings
+  closing. Queue path from `8c348b0` (2026-07-28); unchanged since, so a
+  latent race, not a regression. Rare: needs a debounce to expire inside the ~300ms close animation.
+  If picked up: its own session, live-verified, per CLAUDE.md's theme-hover rules.
+
 ### Move the other five panels' backdrop grab to move-aside too (deferred by Pryme — regression risk)
 - [2026-10-20] `TransportBarBlurOverlay._grab_and_blur` now excludes Book Detail from its grab by
   moving it aside (`exclude_by_move`, `06407e3`) instead of hiding it — a hide runs the panel's real
@@ -1207,9 +1239,6 @@ isolation.
 - [2026-07-11] History tab delete-session animation still pauses near the end — the viewport-
   quantization item it was blocked on shipped (`b20a1ff`, 2026-08-12); unblocked, not yet resumed
 - [2026-07-10] PageUp/PageDown jump distance in the library list — undecided
-
-### Test infrastructure
-- [2026-08-09] `QSettings.setDefaultFormat(IniFormat)` + `setPath` does NOT isolate test writes from the real `~/.config/Fabulor/Fabulor.conf` on this platform/PySide6 build — confirmed live (a test write actually leaked into the real config file during `tests/test_sidebar_hotspot.py` development, caught via `stat` mtime, cleaned up manually). `test_hover_excludes_speed_sleep.py` uses this exact pattern and may have the same latent gap (never surfaced there because it doesn't check default-value isolation against the real file). `test_sidebar_hotspot.py` works around it locally via a `QSettings` subclass monkeypatch that always resolves to an explicit `tmp_path` `.ini` file; the underlying gap in the established pattern is unaddressed for other test files
 
 ### Volume / transport UI
 - [2026-06-23] Slider→muted-icon transition is abrupt
