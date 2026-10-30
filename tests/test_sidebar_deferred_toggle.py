@@ -69,14 +69,16 @@ def _second_click_during_close_slide(panel_opens_meanwhile):
     return pm
 
 
-def test_deferred_open_is_dropped_once_a_panel_took_over():
+def test_deferred_open_is_dropped_once_a_panel_took_over(_isolated_tripwires):
     pm = _second_click_during_close_slide(panel_opens_meanwhile=True)
     assert pm.sidebar_expanded is False
     assert pm.sidebar_animation.starts == 0
+    assert "[SIDEBAR-DEFERRED-OPEN-DROPPED]" in _isolated_tripwires.read_text()
 
 
-def test_deferred_open_still_applies_with_no_panel():
+def test_deferred_open_still_applies_with_no_panel(_isolated_tripwires):
     # The 2026-07-28 behavior this must keep: a click during a slide is not lost.
     pm = _second_click_during_close_slide(panel_opens_meanwhile=False)
     assert pm.sidebar_expanded is True
     assert pm.sidebar_animation.starts == 1
+    assert not _isolated_tripwires.exists()

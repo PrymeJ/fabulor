@@ -32,3 +32,13 @@ def _isolated_qsettings(tmp_path, monkeypatch):
             super().__init__(ini_path, QSettings.IniFormat)
 
     monkeypatch.setattr(config_mod, "QSettings", _IsolatedQSettings)
+
+
+@pytest.fixture(autouse=True)
+def _isolated_tripwires(tmp_path, monkeypatch):
+    """record_tripwire() writes to a throwaway file in tests, never the real log folder:
+    a test that exercises a guard must not leave a false catch for Pryme to find."""
+    import fabulor.logger_setup as logger_setup
+    path = tmp_path / "TRIPWIRES.txt"
+    monkeypatch.setattr(logger_setup, "tripwire_path", lambda: path)
+    return path

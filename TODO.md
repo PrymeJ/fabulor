@@ -9,6 +9,19 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
 
 ## Summary index
 
+### Check `TRIPWIRES.txt` now and then (standing reminder — not a task to finish)
+- [2026-10-30] Guards that catch a rare, unreproducible race write one line to
+  `TRIPWIRES.txt` in the repo root (`logger_setup.record_tripwire`; outside a source checkout,
+  next to `fabulor.log` instead). It is untracked on purpose: it shows in `git status` and the
+  VS Code file tree. Unlike `fabulor.log` it never rotates, so **if the file exists, a catch
+  happened**; each line has a
+  date and a tag. Tests write to a temp file instead (`tests/conftest.py`), so a real file is
+  never a false alarm. Tags so far:
+  - `SIDEBAR-DEFERRED-OPEN-DROPPED`: a sidebar click deferred during a slide would have opened
+    the sidebar over a panel; the guard in `_toggle_sidebar`'s replay dropped it (fix
+    `cd88a32`, see TODO_ARCHIVE.md). A line here means the race recurred and was caught.
+  When adding a new tripwire, add its tag here.
+
 ### Hover preview leaks onto the main window after Settings closes (deferred by Pryme — recurring race)
 - [2026-10-30] Seen live: Anomander selected, Settings closed, and the main window/title bar stayed
   on **Yellow Wallpaper** while Stats and the other panels showed Anomander. Reopening Settings

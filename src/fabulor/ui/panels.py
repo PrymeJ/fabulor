@@ -12,6 +12,7 @@ from PySide6.QtGui import QCursor, QPixmap, QPainter, QColor
 from .title_bar import ThemeItem
 from .transport_bar_blur import TransportBarBlurOverlay, panel_rect_in_common_space
 from .stats_panel import StatsRowListView
+from ..logger_setup import record_tripwire
 
 if TYPE_CHECKING:
     from .book_detail_panel import BookDetailPanel
@@ -1978,6 +1979,8 @@ class PanelManager:
                         f"[SIDEBAR-TRACE] deferred open DROPPED: a panel is open or "
                         f"committed (expanded={self.sidebar_expanded})"
                     )
+                    record_tripwire("SIDEBAR-DEFERRED-OPEN-DROPPED",
+                                    "a deferred sidebar open was dropped: a panel had taken over")
                     return
                 if target == self.sidebar_expanded:
                     # Already where the user asked for — an even number of clicks

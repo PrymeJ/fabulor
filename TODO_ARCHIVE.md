@@ -13,7 +13,8 @@ order these entries had in TODO.md before the split (2026-07-30).
   a deferred close is never blocked. Can't be reproduced live on demand, so
   `tests/test_sidebar_deferred_toggle.py` drives the logged sequence (fails without the fix)
   plus a control that a click during a slide with no panel still applies. Live evidence if it
-  recurs: the DROPPED line in the log means the fix caught it.
+  recurs: a `SIDEBAR-DEFERRED-OPEN-DROPPED` line in `TRIPWIRES.txt` in the repo root, which never rotates (see the
+  standing TODO.md reminder); the regular log line rotates away within days.
 - **[2026-10-30, DONE] Per-theme library color pass beyond A–S.** Logged 2026-07-07 (`ae4441c`)
   when the pass stopped at S. Pryme tuned the remaining themes' library colors on 2026-10-30
   (`595983e`, `366fcd5`); the eight with no library keys at all got a starting design
