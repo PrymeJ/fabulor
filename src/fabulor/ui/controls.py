@@ -43,6 +43,9 @@ class ClickSlider(QWidget):
         self._minimum = 0
         self._maximum = 1000
         self._dragging = False
+        # Optional callable: while it returns True, mouse presses are swallowed (the volume
+        # slider uses it to ignore clicks during its mute/unmute transitions).
+        self.input_gate = None
         self.center_mark = False
         self._markers = []
         self.snap_to_center = False
@@ -240,6 +243,14 @@ class ClickSlider(QWidget):
             self._when_done_pending = False
             callback()
 
+    def is_flowing(self):
+        """True while an animate_to() flow is running."""
+        return self._flow_anim.state() == QPropertyAnimation.State.Running
+
+    def stop_flow(self):
+        """Stops an animate_to() flow where it is; the value stays at the last frame."""
+        self._flow_anim.stop()
+
     def animate_to(self, target, old_value=None):
         """Animate the slider from old_value (or current) to target.
 
@@ -295,6 +306,9 @@ class ClickSlider(QWidget):
         return self._minimum + int((self._maximum - self._minimum) * x / self.width())
 
     def mousePressEvent(self, event):
+        if self.input_gate is not None and self.input_gate():
+            event.accept()
+            return
         if event.button() == Qt.LeftButton:
             self._dragging = True
             self.sliderPressed.emit()
@@ -348,7 +362,9 @@ class ClickSlider(QWidget):
         return grad
 
     def mouseReleaseEvent(self, event):
-        if event.button() == Qt.LeftButton:
+        # Only a release that ends a real press: a press swallowed by input_gate never
+        # set _dragging, so its release must not set a value either.
+        if event.button() == Qt.LeftButton and self._dragging:
             self._dragging = False
             self.setValue(self._val_from_x(event.position().x()))
             self.sliderReleased.emit()

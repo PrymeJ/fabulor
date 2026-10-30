@@ -49,6 +49,59 @@ class _FakeSlider:
         self.set_calls.append(v)
         self._value = v
 
+    # The mute drain (animate_to) is recorded, not run: the fake has no animation clock.
+    flowing = False
+    animate_calls = []
+
+    def is_flowing(self):
+        return self.flowing
+
+    def stop_flow(self):
+        self.flowing = False
+
+    def animate_to(self, target):
+        self.animate_calls = self.animate_calls + [target]
+        self.flowing = True
+
+
+class _FakeStack:
+    def __init__(self, index):
+        self._index = index
+
+    def currentIndex(self):
+        return self._index
+
+
+class _FakeOpacity:
+    def __init__(self, opacity):
+        self._opacity = opacity
+
+    def opacity(self):
+        return self._opacity
+
+
+class _FakeStackW(_FakeStack):
+    def setCurrentIndex(self, i):
+        self._index = i
+
+
+class _FakeFade:
+    """Records the last fade it was started with; never runs it."""
+    def __init__(self):
+        self.started = None
+        self._start = self._end = None
+
+    def stop(self): pass
+    def setStartValue(self, v): self._start = v
+    def setEndValue(self, v): self._end = v
+
+    def start(self):
+        self.started = (self._start, self._end)
+
+
+class _FakeTimer:
+    def stop(self): pass
+
 
 class _FakeConfig:
     def __init__(self, increment=0.1, default_speed=1.0):
@@ -83,9 +136,17 @@ class _FakeOverlay:
 class _FakeMW:
     """Supplies exactly the collaborators the transport handlers read off self."""
     def __init__(self, *, current_file="book.m4b", volume=50, speed=1.0,
-                 increment=0.1, is_autorepeat=False, undo_visible=True):
+                 increment=0.1, is_autorepeat=False, undo_visible=True,
+                 volume_slider_visible=False):
         self.current_file = current_file
         self.volume_slider = _FakeSlider(volume)
+        # vol_stack page 1 at full opacity = the volume slider is on screen.
+        self.vol_stack = _FakeStackW(1 if volume_slider_visible else 2)
+        self.vol_opacity = _FakeOpacity(1.0 if volume_slider_visible else 0.0)
+        self.vol_fade_anim = _FakeFade()
+        self.vol_hide_timer = _FakeTimer()
+        self._unmute_fill_target = None
+        self.fade_out_calls = 0
         self.player = _FakePlayer(speed) if speed is not None else None
         self.config = _FakeConfig(increment=increment)
         self.shortcuts = _FakeShortcuts(is_autorepeat=is_autorepeat)
@@ -122,6 +183,14 @@ class _FakeMW:
 
     def handle_forward(self, long_skip=False):
         self.handle_forward_calls.append(long_skip)
+
+    def _fade_out_volume(self):
+        self.fade_out_calls += 1
+
+    def _finish_fade_in(self):
+        """Stand-in for the fade-in completing: full opacity, then the real handler."""
+        self.vol_opacity._opacity = 1.0
+        MainWindow._on_vol_fade_finished(self)
 
     def _restore_from_mute(self):
         # _toggle_mute's un-mute half now delegates to the real MainWindow method (shared
@@ -281,9 +350,27 @@ def test_toggle_mute_stores_and_restores():
     MainWindow._toggle_mute(mw)                  # mute
     assert mw.volume_slider.value() == 0
     assert mw._pre_mute_volume == 70
-    MainWindow._toggle_mute(mw)                  # unmute -> restore
-    assert mw.volume_slider.value() == 70
+    MainWindow._toggle_mute(mw)                  # unmute: empty bar fades in first
+    assert mw.vol_stack.currentIndex() == 1
+    assert mw.vol_fade_anim.started == (0.0, 1.0)
+    assert mw.volume_slider.value() == 0         # still silent during the fade-in
     assert mw._pre_mute_volume is None
+    mw._finish_fade_in()                         # then the fill grows back to 70
+    assert mw.volume_slider.animate_calls == [70]
+    assert mw._unmute_fill_target is None
+
+
+def test_toggle_mute_during_the_unmute_fade_in_mutes_again():
+    # The volume never left 0, so a second m fades the bar back out and keeps the level
+    # the unmute was heading for. Without this, pre_mute would be None and the next
+    # unmute would jump to 100.
+    mw = _FakeMW(volume=70)
+    MainWindow._toggle_mute(mw)                  # mute
+    MainWindow._toggle_mute(mw)                  # unmute: fade-in starts
+    MainWindow._toggle_mute(mw)                  # m again mid fade-in
+    assert mw.fade_out_calls == 1
+    assert mw._pre_mute_volume == 70
+    assert mw._unmute_fill_target is None
 
 
 def test_toggle_mute_manual_move_off_zero_counts_as_unmuted():
@@ -295,6 +382,28 @@ def test_toggle_mute_manual_move_off_zero_counts_as_unmuted():
     MainWindow._toggle_mute(mw)                  # current(20) > 0 -> treated as a fresh mute
     assert mw.volume_slider.value() == 0
     assert mw._pre_mute_volume == 20
+
+
+def test_toggle_mute_drains_the_fill_when_the_slider_is_showing():
+    # With the slider on screen, m drains the fill to the left (animate_to) instead of
+    # cutting to 0; the empty bar's fade-out follows from the value-0 overlay path.
+    mw = _FakeMW(volume=70, volume_slider_visible=True)
+    MainWindow._toggle_mute(mw)
+    assert mw.volume_slider.animate_calls == [0]
+    assert mw.volume_slider.set_calls == []
+    assert mw._pre_mute_volume == 70
+
+
+def test_toggle_mute_mid_drain_restores_the_original_volume():
+    # A second m while the drain runs is an unmute. It must restore the level from before
+    # the drain, not store the half-drained value as a fresh pre-mute volume.
+    mw = _FakeMW(volume=70, volume_slider_visible=True)
+    MainWindow._toggle_mute(mw)                  # drain starts
+    mw.volume_slider._value = 30                 # some frames in
+    MainWindow._toggle_mute(mw)
+    assert mw.volume_slider.is_flowing() is True     # flow reversed, growing back up
+    assert mw.volume_slider.animate_calls == [0, 70]  # from where the drain stopped
+    assert mw._pre_mute_volume is None
 
 
 def test_toggle_mute_inert_without_book():

@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import (
     Qt, QTimer, QPoint, QPointF, QRect, QEvent, QPropertyAnimation, QEasingCurve,
     Signal, QObject, QElapsedTimer, QSize, QVariantAnimation, QThreadPool,
-    QItemSelectionModel,
+    QItemSelectionModel, QAbstractAnimation,
 )
 from PySide6.QtGui import QPixmap, QColor, QIcon, QPainter, QKeyEvent, QCursor, QHoverEvent
 
@@ -477,6 +477,9 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # Volume before a keyboard mute (m); None = not muted. Any manual move off 0 while
         # "muted" is treated as unmuted, so the next m stores fresh (see _toggle_mute).
         self._pre_mute_volume = None
+        # Level an unmute will fill the slider to once the empty bar has faded in
+        # (_restore_from_mute -> _on_vol_fade_finished); None = no unmute in progress.
+        self._unmute_fill_target = None
         # True for a brief window right after the sleep timer is (re)armed while muted —
         # lets the sleep text show as a confirmation before reverting to the mute icon.
         # See _on_sleep_display_text_updated / _settle_vol_stack / sleep_confirm_timer.
@@ -3330,6 +3333,9 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.is_chapter_slider_dragging = False
 
     def _on_volume_changed(self, value):
+        # Any real volume change supersedes an unmute still waiting for its fade-in
+        # (the unmute's own fill frames arrive after the target has been taken).
+        self._unmute_fill_target = None
         self.panel_manager.hide_all_panels()
         if self.player:
             self.player.set_volume_from_slider(value)
@@ -3426,11 +3432,31 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         the next press stores fresh rather than restoring a stale pre-mute value."""
         if not self.current_file:  # no book loaded — matches volume inertness
             return
+        if self._unmute_fill_target is not None:
+            # A second press while an unmute's empty bar is still fading in: mute again.
+            # The volume never left 0, so fade the bar back out (the fade-out settles
+            # onto the muted icon) and keep the level the unmute was heading for.
+            self._pre_mute_volume = self._unmute_fill_target
+            self._unmute_fill_target = None
+            self._fade_out_volume()
+            return
+        if self.volume_slider.is_flowing():
+            # A second press while the mute drain (below) is still running: unmute.
+            # Reading value() here would store a half-drained level as the pre-mute one.
+            self.volume_slider.stop_flow()
+            self._restore_from_mute()
+            return
         current = self.volume_slider.value()
         if current > 0:
             # Store then mute. (current > 0 also covers the "moved off 0 while muted" case.)
             self._pre_mute_volume = current
-            self.volume_slider.setValue(0)  # -> _on_volume_changed + overlay
+            if self.vol_stack.currentIndex() == 1 and self.vol_opacity.opacity() > 0:
+                # Slider on screen: drain the fill to the left, then the empty bar fades
+                # (_show_volume_overlay's value-0 branch). Every frame goes through
+                # valueChanged -> _on_volume_changed, so the audio ramps down with it.
+                self.volume_slider.animate_to(0)
+            else:
+                self.volume_slider.setValue(0)  # -> _on_volume_changed + overlay
         else:
             self._restore_from_mute()
 
@@ -3442,7 +3468,19 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         `_pre_mute_volume`-or-100 fallback."""
         restore = self._pre_mute_volume if self._pre_mute_volume else 100
         self._pre_mute_volume = None
-        self.volume_slider.setValue(restore)  # -> _on_volume_changed + overlay
+        if self.vol_stack.currentIndex() == 1 and self.vol_opacity.opacity() >= 1.0:
+            # Bar fully on screen (e.g. m again mid-drain): grow the fill from where it is.
+            self.volume_slider.animate_to(restore)  # each frame -> _on_volume_changed
+            return
+        # The reverse of the mute drain: fade the empty bar in, then grow the fill
+        # (_on_vol_fade_finished). The volume stays 0 until the fill starts.
+        self._unmute_fill_target = restore
+        self.vol_hide_timer.stop()
+        self.vol_stack.setCurrentIndex(1)
+        self.vol_fade_anim.stop()
+        self.vol_fade_anim.setStartValue(self.vol_opacity.opacity())
+        self.vol_fade_anim.setEndValue(1.0)
+        self.vol_fade_anim.start()
 
     @staticmethod
     def _muted_icon_rect(lbl):
@@ -3472,7 +3510,21 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             return
         if not self._muted_icon_rect(self.muted_icon_label).contains(event.position().toPoint()):
             return
+        if self._volume_mute_transition_running():
+            return
         self._restore_from_mute()
+
+    def _volume_mute_transition_running(self):
+        """True while a mute or unmute transition is animating: the fill draining or
+        growing (volume_slider flow), or the bar fading at volume 0 (after a drain) or
+        ahead of an unmute's fill. Clicks on the slider and the muted icon are ignored
+        meanwhile; each one would restart a fade and the bar would blink. An ordinary
+        auto-hide fade (volume above 0) is not a transition and still takes clicks."""
+        if self.volume_slider.is_flowing():
+            return True
+        fading = self.vol_fade_anim.state() == QAbstractAnimation.State.Running
+        return fading and (self.volume_slider.value() == 0
+                           or self._unmute_fill_target is not None)
 
     def _on_muted_icon_hover(self, event):
         """Hand cursor only over the icon's own small rect, not the whole label —
@@ -4446,14 +4498,19 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
     def _show_volume_overlay(self):
         """Triggers the volume slider fade-in and starts the auto-hide timer.
-        Skipped when volume just hit 0 — that case jumps straight to whatever
+        When volume just hit 0, the slider fades out instead (the mirror of the
+        unmute fade-in), and _on_vol_fade_finished settles onto whatever
         _settle_vol_stack() resolves to (mute icon, or a sleep-just-armed
-        confirmation) instead of previewing an empty slider first."""
+        confirmation). If the slider isn't showing, there is nothing to fade, so
+        it settles at once."""
         if self.volume_slider.value() == 0:
             self.vol_hide_timer.stop()
-            self.vol_fade_anim.stop()
-            self.vol_opacity.setOpacity(0.0)
-            self._settle_vol_stack()
+            if self.vol_stack.currentIndex() == 1 and self.vol_opacity.opacity() > 0:
+                self._fade_out_volume()
+            else:
+                self.vol_fade_anim.stop()
+                self.vol_opacity.setOpacity(0.0)
+                self._settle_vol_stack()
             return
         self.vol_hide_timer.stop()
         self.vol_stack.setCurrentIndex(1)
@@ -4474,6 +4531,9 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
     def _on_vol_fade_finished(self):
         if self.vol_opacity.opacity() == 0:
             self._settle_vol_stack()
+        elif self._unmute_fill_target is not None:
+            target, self._unmute_fill_target = self._unmute_fill_target, None
+            self.volume_slider.animate_to(target)  # each frame -> _on_volume_changed
 
     def _settle_vol_stack(self):
         """Picks the vol_stack page to rest on: the muted icon if volume is 0,

@@ -535,6 +535,8 @@ def build_secondary_controls(mw):
     mw.vol_fade_anim.setDuration(500) # Slow fade
     mw.vol_fade_anim.setEasingCurve(QEasingCurve.InOutCubic)
     mw.vol_fade_anim.finished.connect(mw._on_vol_fade_finished)
+    # No clicks on the slider during a mute/unmute transition (see the method).
+    mw.volume_slider.input_gate = mw._volume_mute_transition_running
 
     mw.vol_hide_timer = QTimer(mw)
     mw.vol_hide_timer.setSingleShot(True)
