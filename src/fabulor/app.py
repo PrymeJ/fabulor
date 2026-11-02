@@ -3440,12 +3440,9 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             # a solid bar instead of a new half-faded shade on every press.
             self._pre_mute_volume = self._unmute_fill_target
             self._unmute_fill_target = None
-            if self._theme_fading():
-                self._cut_volume_bar_to_muted()
-            else:
-                self.vol_fade_anim.stop()
-                self.vol_opacity.setOpacity(1.0)
-                self._fade_out_volume()
+            self.vol_fade_anim.stop()
+            self.vol_opacity.setOpacity(1.0)
+            self._fade_out_volume()
             return
         flow_target = self.volume_slider.flow_target()
         if flow_target is not None:
@@ -3462,8 +3459,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         if current > 0:
             # Store then mute. (current > 0 also covers the "moved off 0 while muted" case.)
             self._pre_mute_volume = current
-            if (self.vol_stack.currentIndex() == 1 and self.vol_opacity.opacity() > 0
-                    and not self._theme_fading()):
+            if self.vol_stack.currentIndex() == 1 and self.vol_opacity.opacity() > 0:
                 # Slider on screen: drain the fill to the left, then the empty bar fades
                 # (_show_volume_overlay's value-0 branch). Every frame goes through
                 # valueChanged -> _on_volume_changed, so the audio ramps down with it.
@@ -3481,15 +3477,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         `_pre_mute_volume`-or-100 fallback."""
         restore = self._pre_mute_volume if self._pre_mute_volume else 100
         self._pre_mute_volume = None
-        if self._theme_fading():
-            # A theme fade is running: cut straight to the bar at the restored level, no
-            # fade-in or fill. It auto-hides as usual (_show_volume_overlay's timer).
-            self._unmute_fill_target = None
-            self.vol_fade_anim.stop()
-            self.vol_opacity.setOpacity(1.0)
-            self.vol_stack.setCurrentIndex(1)
-            self.volume_slider.setValue(restore)  # -> _on_volume_changed + overlay
-            return
         if self.vol_stack.currentIndex() == 1 and self.vol_opacity.opacity() > 0:
             # Bar on screen, even part-faded (m again mid-drain, or during the empty bar's
             # fade-out): snap it to full and grow the fill from where it is. Fading back in
@@ -3541,20 +3528,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         if self._volume_mute_transition_running():
             return
         self._restore_from_mute()
-
-    def _theme_fading(self):
-        """A theme change is mid-fade. Mute/unmute then cut to their final look instead of
-        animating: the volume bar's flow and fades ghost under the theme overlay, and a
-        mute can't wait for the theme. (Theme rotations wait for a volume transition
-        instead; see ThemeManager._rotate_theme.)"""
-        tm = getattr(self, "theme_manager", None)
-        return tm is not None and tm.is_theme_fading()
-
-    def _cut_volume_bar_to_muted(self):
-        """Muted look at once: bar gone, then whatever _settle_vol_stack resolves to."""
-        self.vol_fade_anim.stop()
-        self.vol_opacity.setOpacity(0.0)
-        self._settle_vol_stack()
 
     def _volume_mute_transition_running(self):
         """True while a mute or unmute transition is animating: the fill draining or
@@ -4547,11 +4520,12 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         it settles at once."""
         if self.volume_slider.value() == 0:
             self.vol_hide_timer.stop()
-            if (self.vol_stack.currentIndex() == 1 and self.vol_opacity.opacity() > 0
-                    and not self._theme_fading()):
+            if self.vol_stack.currentIndex() == 1 and self.vol_opacity.opacity() > 0:
                 self._fade_out_volume()
             else:
-                self._cut_volume_bar_to_muted()
+                self.vol_fade_anim.stop()
+                self.vol_opacity.setOpacity(0.0)
+                self._settle_vol_stack()
             return
         self.vol_hide_timer.stop()
         self.vol_stack.setCurrentIndex(1)

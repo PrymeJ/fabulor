@@ -143,7 +143,7 @@ class _FakeMW:
     """Supplies exactly the collaborators the transport handlers read off self."""
     def __init__(self, *, current_file="book.m4b", volume=50, speed=1.0,
                  increment=0.1, is_autorepeat=False, undo_visible=True,
-                 volume_slider_visible=False, theme_fading=False):
+                 volume_slider_visible=False):
         self.current_file = current_file
         self.volume_slider = _FakeSlider(volume)
         # vol_stack page 1 at full opacity = the volume slider is on screen.
@@ -153,8 +153,7 @@ class _FakeMW:
         self.vol_hide_timer = _FakeTimer()
         self._unmute_fill_target = None
         self.fade_out_calls = 0
-        self.theme_fading = theme_fading
-        self.cut_to_muted_calls = 0
+
         self.player = _FakePlayer(speed) if speed is not None else None
         self.config = _FakeConfig(increment=increment)
         self.shortcuts = _FakeShortcuts(is_autorepeat=is_autorepeat)
@@ -194,12 +193,6 @@ class _FakeMW:
 
     def _fade_out_volume(self):
         self.fade_out_calls += 1
-
-    def _theme_fading(self):
-        return self.theme_fading
-
-    def _cut_volume_bar_to_muted(self):
-        self.cut_to_muted_calls += 1
 
     def _finish_fade_in(self):
         """Stand-in for the fade-in completing: full opacity, then the real handler."""
@@ -449,29 +442,6 @@ def test_unmute_during_the_empty_bar_fade_out_snaps_the_bar_to_full():
     assert mw.vol_opacity.opacity() == 1.0
     assert mw.vol_fade_anim.started is None      # no fade-in
     assert mw.volume_slider.animate_calls == [0, 70]
-    assert mw._unmute_fill_target is None
-
-
-def test_toggle_mute_during_a_theme_fade_cuts_instead_of_draining():
-    # The drain would ghost under the theme overlay; mute can't wait, so it cuts.
-    mw = _FakeMW(volume=70, volume_slider_visible=True, theme_fading=True)
-    MainWindow._toggle_mute(mw)
-    assert mw.volume_slider.animate_calls == []
-    assert mw.volume_slider.set_calls == [0]
-    assert mw._pre_mute_volume == 70
-
-
-def test_unmute_during_a_theme_fade_shows_the_restored_level_at_once():
-    # No fade-in, no fill: the bar appears at the restored level and auto-hides later.
-    mw = _FakeMW(volume=70)
-    MainWindow._toggle_mute(mw)                  # mute (bar hidden: plain setValue)
-    mw.theme_fading = True
-    MainWindow._toggle_mute(mw)
-    assert mw.vol_stack.currentIndex() == 1
-    assert mw.vol_opacity.opacity() == 1.0
-    assert mw.vol_fade_anim.started is None
-    assert mw.volume_slider.value() == 70
-    assert mw.volume_slider.animate_calls == []
     assert mw._unmute_fill_target is None
 
 

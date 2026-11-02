@@ -2,9 +2,9 @@ import logging
 import random
 import time
 import warnings
-from PySide6.QtWidgets import QLabel, QGraphicsOpacityEffect, QComboBox
-from PySide6.QtCore import Qt, QPropertyAnimation, QTimer, Signal, QObject, QEasingCurve
-from PySide6.QtGui import QFont, QFontMetrics, QColor, QCursor
+from PySide6.QtWidgets import QLabel, QGraphicsOpacityEffect, QComboBox, QWidget
+from PySide6.QtCore import Qt, QPropertyAnimation, QTimer, Signal, QObject, QEasingCurve, QRect
+from PySide6.QtGui import QFont, QFontMetrics, QColor, QCursor, QPainter
 from ..themes import (
     get_base_stylesheet, get_title_bar_stylesheet, get_player_stylesheet,
     get_library_stylesheet, get_settings_stylesheet, get_speed_stylesheet,
@@ -114,6 +114,25 @@ class ThemeComboBox(QComboBox):
     def hidePopup(self):
         super().hidePopup()
         self.aboutToHidePopup.emit()
+
+class _CrossfadeBacking(QWidget):
+    """Old background image with the new one drawn over it at (1 - opacity): the same mix
+    the theme-fade overlay produces around it. See ThemeManager._grab_vol_backing_old."""
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.old = self.new = None
+        self.opacity = 1.0
+        self.hide()
+
+    def paintEvent(self, event):
+        if self.old is None or self.new is None:
+            return
+        p = QPainter(self)
+        p.drawPixmap(self.rect(), self.old)
+        p.setOpacity(1.0 - self.opacity)
+        p.drawPixmap(self.rect(), self.new)
+
 
 class ThemeManager(QObject):
     """Manages theme application, previews, and multi-selection pool."""
@@ -465,6 +484,14 @@ class ThemeManager(QObject):
         self._fade_anim.setStartValue(1.0)
         self._fade_anim.setEndValue(0.0)
         self._fade_anim.finished.connect(self._on_fade_finished)
+        # The vol_stack backing (see _grab_vol_backing_old) follows the overlay frame by frame
+        # and goes away with it, however the fade ends (stop() emits stateChanged, not
+        # finished).
+        self._vol_backing = None
+        self._fade_anim.valueChanged.connect(self._update_vol_backing)
+        self._fade_anim.stateChanged.connect(
+            lambda new, _old: new != QPropertyAnimation.State.Running
+            and self._hide_vol_backing())
 
     def abort_theme_fade(self):
         if hasattr(self, '_fade_anim') and self._fade_anim.state() == QPropertyAnimation.Running:
@@ -552,13 +579,6 @@ class ThemeManager(QObject):
                 self._on_theme_changed(*pending)
         else:
             logger.warning("[FADE-FINISHED-TRACE] _on_fade_finished: nothing pending, no drain")
-
-    def is_theme_fading(self):
-        """True while a theme change is still transitioning (the overlay fade)."""
-        if getattr(self, '_fade_in_flight', False):
-            return True
-        return (hasattr(self, '_fade_anim')
-                and self._fade_anim.state() == QPropertyAnimation.Running)
 
     def snap_theme_forward(self):
         if not hasattr(self, '_fade_anim'):
@@ -1619,6 +1639,60 @@ class ThemeManager(QObject):
                             if chaps[i].get('time', 0) <= pos + 0.35), 0)
                 mw._update_chapter_label_from_index(idx)
 
+    def _grab_vol_backing_old(self, vol_stack, top_left):
+        """Backing behind the vol_stack punch-out, so the hole doesn't show the new theme's
+        background while everything around it is still fading. Around it, the overlay (old
+        snapshot at opacity o) sits over the live new theme: o*old + (1-o)*new. The backing
+        paints exactly that from two real grabs of the background under vol_stack (old now,
+        new after the restyle, _grab_vol_backing_new) on the same animation's valueChanged,
+        so gradients and images match too, frame for frame. vol_stack is hidden for each
+        grab so its icon/slider aren't baked in; hide/show inside one call stack never
+        paints (see CLAUDE.md, the emit()/.show() same-call-stack rule)."""
+        mw = self.main_window
+        rect = QRect(top_left, vol_stack.size())
+        vol_stack.hide()
+        old = mw.grab(rect)
+        vol_stack.show()
+        parent = vol_stack.parentWidget()
+        if self._vol_backing is None or self._vol_backing.parentWidget() is not parent:
+            self._vol_backing = _CrossfadeBacking(parent)
+        b = self._vol_backing
+        b.old, b.new, b.opacity = old, None, 1.0
+        b.setGeometry(vol_stack.geometry())
+        b.stackUnder(vol_stack)
+        self._vol_backing_rect = rect
+        self._vol_backing_stack = vol_stack
+
+    def _grab_vol_backing_new(self):
+        b = self._vol_backing
+        if b is None or b.old is None or getattr(self, '_vol_backing_stack', None) is None:
+            return
+        vol_stack = self._vol_backing_stack
+        self._vol_backing_stack = None
+        mw = self.main_window
+        overlay_shown = self._fade_overlay.isVisible()
+        self._fade_overlay.hide()
+        vol_stack.hide()
+        b.new = mw.grab(self._vol_backing_rect)
+        vol_stack.show()
+        if overlay_shown:
+            self._fade_overlay.show()
+            self._fade_overlay.raise_()
+        b.show()
+
+    def _update_vol_backing(self, value):
+        b = self._vol_backing
+        if b is None or not b.isVisible():
+            return
+        b.opacity = float(value)
+        b.update()
+
+    def _hide_vol_backing(self):
+        b = self._vol_backing
+        if b is not None:
+            b.hide()
+            b.old = b.new = None
+
     def _do_fade_with_slider_animation(self, theme_name, hover, save, fade_ms):
         """Auto-rotation fade: exclude sliders from the overlay via mask and animate their
         colors. Labels are frozen (text pinned) for the fade so their text cannot change
@@ -1631,7 +1705,9 @@ class ThemeManager(QObject):
         # Read start colors before anything changes
         sliders = []
         start_colors = {}
-        for attr in ('progress_slider', 'chapter_progress_slider'):
+        # volume_slider joined 2026-11-02 (with the vol_stack punch-out below): mute/unmute
+        # can't wait for a theme fade, and any change under the overlay ghosts.
+        for attr in ('progress_slider', 'chapter_progress_slider', 'volume_slider'):
             s = getattr(mw, attr, None)
             if s is not None and s.isVisible():
                 if attr == 'chapter_progress_slider' and not mw._chapter_ui_active:
@@ -1672,6 +1748,14 @@ class ThemeManager(QObject):
         for s in sliders:
             top_left = s.mapTo(mw, QPoint(0, 0))
             mask -= QRegion(top_left.x(), top_left.y(), s.width(), s.height())
+        # The whole volume stack too, whichever page is up (slider, muted icon, sleep/sprint
+        # label): m during the fade drains/fills/fades or swaps pages, and that must render
+        # live. The icon and label snap to the new theme's colors instead of crossfading.
+        vol_stack = getattr(mw, 'vol_stack', None)
+        if vol_stack is not None and vol_stack.isVisible():
+            top_left = vol_stack.mapTo(mw, QPoint(0, 0))
+            mask -= QRegion(top_left.x(), top_left.y(), vol_stack.width(), vol_stack.height())
+            self._grab_vol_backing_old(vol_stack, top_left)
         self._fade_overlay.setMask(mask)
         logger.debug(f"t={time.perf_counter():.6f} [mask-build slider-animation path] mask set")
 
@@ -1687,6 +1771,8 @@ class ThemeManager(QObject):
         # Apply new stylesheet — qproperty colors land on next event loop tick
         self._apply_stylesheets(theme_name, hover=hover)
         self._mark_theme_applied(theme_name, hover)
+        # New background under vol_stack, now that the new stylesheet is in place.
+        self._grab_vol_backing_new()
 
         # Track the in-flight fade so it can be completed cleanly if a panel
         # opens before it finishes (see complete_main_fade). _fade_in_flight
@@ -2185,9 +2271,25 @@ class ThemeManager(QObject):
             logger.debug(f"[STUTTER-TRACE] t={time.perf_counter():.6f} _run_deferred_restyle: "
                          f"DEFERRED (fade still in flight)")
             return  # fade still running — stay armed; _on_fade_finished re-fires us
+        # And while a volume mute/unmute transition runs (2026-11-02, fabulor.log 09:50:27):
+        # T then m, the fade finished mid-fill and this ~155ms flush froze the fill for
+        # 173ms. No signal marks the end of a transition, so re-check every 50ms, same as
+        # _rotate_theme's volume deferral. Coalesced: one retry timer at a time.
+        volume_busy = getattr(mw, "_volume_mute_transition_running", None)
+        if volume_busy is not None and volume_busy():
+            logger.debug(f"[STUTTER-TRACE] t={time.perf_counter():.6f} _run_deferred_restyle: "
+                         f"DEFERRED (volume transition)")
+            if not getattr(self, "_restyle_waiting_for_volume", False):
+                self._restyle_waiting_for_volume = True
+                QTimer.singleShot(50, self._retry_restyle_after_volume)
+            return
         logger.debug(f"[STUTTER-TRACE] t={time.perf_counter():.6f} _run_deferred_restyle: "
                      f"proceeding via NATURAL path (flow_anim.finished or no-anim turn)")
         self._flush_deferred_restyle_now()
+
+    def _retry_restyle_after_volume(self):
+        self._restyle_waiting_for_volume = False
+        self._run_deferred_restyle()
 
     def apply_pending_panel_sheet(self, panel):
         """Catch `panel` up on any settings/speed/sleep/sprint stylesheet it missed

@@ -116,3 +116,39 @@ def test_rotation_runs_at_once_with_no_volume_transition():
     tm = _theme_manager([False])
     tm._rotate_theme()
     assert tm.rotations == 1
+
+
+# ── The deferred panel restyle waits for a volume transition ────────────────────
+# Live 2026-11-02 09:50:27: T then m; the theme fade finished mid-fill and the ~155ms
+# restyle flush froze the volume fill for 173ms.
+
+def _restyle_tm(volume_busy):
+    from fabulor.ui.theme_manager import ThemeManager
+    tm = ThemeManager.__new__(ThemeManager)
+    tm._deferred_restyle_pending = True
+    tm._fade_in_flight = False
+    tm.main_window = type("MW", (), {})()
+    tm.main_window._volume_mute_transition_running = lambda: volume_busy[0]
+    tm.flushes = 0
+    tm._flush_deferred_restyle_now = lambda: setattr(tm, "flushes", tm.flushes + 1)
+    return tm
+
+
+def test_deferred_restyle_waits_for_the_volume_transition(monkeypatch):
+    import fabulor.ui.theme_manager as tm_mod
+    scheduled = []
+    monkeypatch.setattr(tm_mod.QTimer, "singleShot", lambda ms, fn: scheduled.append(fn))
+    busy = [True]
+    tm = _restyle_tm(busy)
+    tm._run_deferred_restyle()            # fade just finished, fill still running
+    tm._run_deferred_restyle()            # a second trigger in the same window
+    assert tm.flushes == 0 and len(scheduled) == 1
+    busy[0] = False
+    scheduled.pop()()
+    assert tm.flushes == 1
+
+
+def test_deferred_restyle_runs_at_once_with_no_volume_transition():
+    tm = _restyle_tm([False])
+    tm._run_deferred_restyle()
+    assert tm.flushes == 1
