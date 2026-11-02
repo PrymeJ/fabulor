@@ -247,6 +247,10 @@ class ClickSlider(QWidget):
         """True while an animate_to() flow is running."""
         return self._flow_anim.state() == QPropertyAnimation.State.Running
 
+    def flow_target(self):
+        """End value of the running animate_to() flow, or None when no flow runs."""
+        return self._flow_anim.endValue() if self.is_flowing() else None
+
     def stop_flow(self):
         """Stops an animate_to() flow where it is; the value stays at the last frame."""
         self._flow_anim.stop()

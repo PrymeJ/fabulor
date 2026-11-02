@@ -79,3 +79,40 @@ def test_transition_predicate(value, flowing, fading, target, expected):
     mw.vol_fade_anim = _Anim(fading)
     mw._unmute_fill_target = target
     assert MainWindow._volume_mute_transition_running(mw) is expected
+
+
+# ── Theme rotation (T / timer) waits for a volume transition ────────────────────
+
+def _theme_manager(volume_busy):
+    from fabulor.ui.theme_manager import ThemeManager
+    tm = ThemeManager.__new__(ThemeManager)
+    tm.config = type("Cfg", (), {"get_cover_art_theme_mode": lambda self: "off"})()
+    tm._cover_theme = None
+    tm._rotation_waiting_for_volume = False
+    tm._pending_rotation = False
+    tm.main_window = type("MW", (), {})()
+    tm.main_window._volume_mute_transition_running = lambda: volume_busy[0]
+    tm.main_window.panel_manager = None
+    tm.rotations = 0
+    tm._do_rotate = lambda *a, **k: setattr(tm, "rotations", tm.rotations + 1)
+    return tm
+
+
+def test_rotation_waits_for_the_volume_transition_and_coalesces(monkeypatch):
+    import fabulor.ui.theme_manager as tm_mod
+    scheduled = []
+    monkeypatch.setattr(tm_mod.QTimer, "singleShot", lambda ms, fn: scheduled.append(fn))
+    busy = [True]
+    tm = _theme_manager(busy)
+    tm._rotate_theme()                    # T during a mute drain
+    tm._rotate_theme()                    # T again / the timer fires in the same window
+    assert tm.rotations == 0 and len(scheduled) == 1
+    busy[0] = False                       # transition over
+    scheduled.pop()()
+    assert tm.rotations == 1 and tm._rotation_waiting_for_volume is False
+
+
+def test_rotation_runs_at_once_with_no_volume_transition():
+    tm = _theme_manager([False])
+    tm._rotate_theme()
+    assert tm.rotations == 1

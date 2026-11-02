@@ -3434,23 +3434,36 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             return
         if self._unmute_fill_target is not None:
             # A second press while an unmute's empty bar is still fading in: mute again.
-            # The volume never left 0, so fade the bar back out (the fade-out settles
-            # onto the muted icon) and keep the level the unmute was heading for.
+            # The volume never left 0, so the bar fades back out (settling onto the muted
+            # icon) and keeps the level the unmute was heading for. It snaps to full
+            # first, like every reversal (see _restore_from_mute): spamming m then shows
+            # a solid bar instead of a new half-faded shade on every press.
             self._pre_mute_volume = self._unmute_fill_target
             self._unmute_fill_target = None
-            self._fade_out_volume()
+            if self._theme_fading():
+                self._cut_volume_bar_to_muted()
+            else:
+                self.vol_fade_anim.stop()
+                self.vol_opacity.setOpacity(1.0)
+                self._fade_out_volume()
             return
-        if self.volume_slider.is_flowing():
-            # A second press while the mute drain (below) is still running: unmute.
-            # Reading value() here would store a half-drained level as the pre-mute one.
+        flow_target = self.volume_slider.flow_target()
+        if flow_target is not None:
+            # A press while the fill is moving reverses it. Never read value() here: it is
+            # a half-way level, not one to store or restore.
             self.volume_slider.stop_flow()
-            self._restore_from_mute()
+            if flow_target == 0:
+                self._restore_from_mute()          # draining (muting) -> unmute
+            else:
+                self._pre_mute_volume = flow_target  # growing (unmuting) -> mute again
+                self.volume_slider.animate_to(0)
             return
         current = self.volume_slider.value()
         if current > 0:
             # Store then mute. (current > 0 also covers the "moved off 0 while muted" case.)
             self._pre_mute_volume = current
-            if self.vol_stack.currentIndex() == 1 and self.vol_opacity.opacity() > 0:
+            if (self.vol_stack.currentIndex() == 1 and self.vol_opacity.opacity() > 0
+                    and not self._theme_fading()):
                 # Slider on screen: drain the fill to the left, then the empty bar fades
                 # (_show_volume_overlay's value-0 branch). Every frame goes through
                 # valueChanged -> _on_volume_changed, so the audio ramps down with it.
@@ -3468,8 +3481,23 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         `_pre_mute_volume`-or-100 fallback."""
         restore = self._pre_mute_volume if self._pre_mute_volume else 100
         self._pre_mute_volume = None
-        if self.vol_stack.currentIndex() == 1 and self.vol_opacity.opacity() >= 1.0:
-            # Bar fully on screen (e.g. m again mid-drain): grow the fill from where it is.
+        if self._theme_fading():
+            # A theme fade is running: cut straight to the bar at the restored level, no
+            # fade-in or fill. It auto-hides as usual (_show_volume_overlay's timer).
+            self._unmute_fill_target = None
+            self.vol_fade_anim.stop()
+            self.vol_opacity.setOpacity(1.0)
+            self.vol_stack.setCurrentIndex(1)
+            self.volume_slider.setValue(restore)  # -> _on_volume_changed + overlay
+            return
+        if self.vol_stack.currentIndex() == 1 and self.vol_opacity.opacity() > 0:
+            # Bar on screen, even part-faded (m again mid-drain, or during the empty bar's
+            # fade-out): snap it to full and grow the fill from where it is. Fading back in
+            # from a part-faded bar would leave a different shade on every spammed press;
+            # this way the bar stays solid while the keys come and only fades once they stop.
+            self.vol_fade_anim.stop()
+            self.vol_opacity.setOpacity(1.0)
+            self.vol_hide_timer.stop()
             self.volume_slider.animate_to(restore)  # each frame -> _on_volume_changed
             return
         # The reverse of the mute drain: fade the empty bar in, then grow the fill
@@ -3513,6 +3541,20 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         if self._volume_mute_transition_running():
             return
         self._restore_from_mute()
+
+    def _theme_fading(self):
+        """A theme change is mid-fade. Mute/unmute then cut to their final look instead of
+        animating: the volume bar's flow and fades ghost under the theme overlay, and a
+        mute can't wait for the theme. (Theme rotations wait for a volume transition
+        instead; see ThemeManager._rotate_theme.)"""
+        tm = getattr(self, "theme_manager", None)
+        return tm is not None and tm.is_theme_fading()
+
+    def _cut_volume_bar_to_muted(self):
+        """Muted look at once: bar gone, then whatever _settle_vol_stack resolves to."""
+        self.vol_fade_anim.stop()
+        self.vol_opacity.setOpacity(0.0)
+        self._settle_vol_stack()
 
     def _volume_mute_transition_running(self):
         """True while a mute or unmute transition is animating: the fill draining or
@@ -4505,12 +4547,11 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         it settles at once."""
         if self.volume_slider.value() == 0:
             self.vol_hide_timer.stop()
-            if self.vol_stack.currentIndex() == 1 and self.vol_opacity.opacity() > 0:
+            if (self.vol_stack.currentIndex() == 1 and self.vol_opacity.opacity() > 0
+                    and not self._theme_fading()):
                 self._fade_out_volume()
             else:
-                self.vol_fade_anim.stop()
-                self.vol_opacity.setOpacity(0.0)
-                self._settle_vol_stack()
+                self._cut_volume_bar_to_muted()
             return
         self.vol_hide_timer.stop()
         self.vol_stack.setCurrentIndex(1)

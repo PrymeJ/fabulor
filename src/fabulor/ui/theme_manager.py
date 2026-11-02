@@ -176,6 +176,9 @@ class ThemeManager(QObject):
 
         # Rotation Timer
         self._pending_rotation = False
+        # True while a rotation waits for a volume mute/unmute transition to end
+        # (_rotate_theme); repeated T presses / timer fires in that window coalesce.
+        self._rotation_waiting_for_volume = False
         self._pending_clear_cover_theme = False  # set by request_clear_cover_theme while a panel is open
         # Stashed _on_theme_changed call, set only by the _fade_in_flight guard branch
         # (never by the _any_animating branch, which uses _panel_guard_timer instead).
@@ -550,6 +553,13 @@ class ThemeManager(QObject):
         else:
             logger.warning("[FADE-FINISHED-TRACE] _on_fade_finished: nothing pending, no drain")
 
+    def is_theme_fading(self):
+        """True while a theme change is still transitioning (the overlay fade)."""
+        if getattr(self, '_fade_in_flight', False):
+            return True
+        return (hasattr(self, '_fade_anim')
+                and self._fade_anim.state() == QPropertyAnimation.Running)
+
     def snap_theme_forward(self):
         if not hasattr(self, '_fade_anim'):
             return
@@ -764,6 +774,16 @@ class ThemeManager(QObject):
         if mode == "exclusive" and self._cover_theme:
             logger.warning("[T-KEY-TRACE] _rotate_theme EARLY-RETURN reason=exclusive_cover_theme")
             return
+        # A volume mute/unmute transition (fill drain/grow plus the bar fade) would ghost
+        # under the theme overlay, so the rotation waits it out. It lasts about a second;
+        # re-check rather than wait on a signal (see call_when_panels_settled's notes).
+        volume_busy = getattr(self.main_window, "_volume_mute_transition_running", None)
+        if volume_busy is not None and volume_busy():
+            if not self._rotation_waiting_for_volume:
+                self._rotation_waiting_for_volume = True
+                logger.warning("[T-KEY-TRACE] _rotate_theme DEFERRED (volume transition)")
+                QTimer.singleShot(50, self._retry_rotation_after_volume)
+            return
         if self.main_window.panel_manager and self.main_window.panel_manager.is_any_panel_visible():
             self._pending_rotation = True
             logger.warning(
@@ -772,6 +792,10 @@ class ThemeManager(QObject):
             )
             return
         self._do_rotate()
+
+    def _retry_rotation_after_volume(self):
+        self._rotation_waiting_for_volume = False
+        self._rotate_theme()
 
     def _do_rotate(self, user_initiated=False):
         self._pending_rotation = False
