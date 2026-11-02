@@ -302,6 +302,14 @@ The real library used for day-to-day testing has been ~400 books. That is not re
   (`< 0` = sliding out; `settings_accepts_hover_preview` does this). Found 2026-10-30 while
   reviewing the Settings-close hover guard: the first draft used `_is_closing` and would have
   dropped legitimate hovers during Settings' open slide.
+- **A punch-out from the theme-fade overlay shows the LIVE new theme inside the hole, so its
+  background must be backed.** The overlay is an old-theme snapshot fading over the live window;
+  wherever the punched widget goes empty (a bar fading, an icon page), the hole shows bare new
+  background next to old-theme surroundings: a visible box. A flat color mixed at the overlay's
+  opacity fails on gradient themes. What works (2026-11-02, `vol_stack`): grab the real old and
+  new backgrounds with the widget hidden, and paint `old` then `new` at `1 - opacity` from the
+  overlay animation's own `valueChanged` (`ThemeManager._grab_vol_backing_old`,
+  `_CrossfadeBacking`). The progress sliders never needed this because they never go empty.
 - **Qt font facts that cost time on the no-cover placeholder (2026-10-27)** — each checked, not
   assumed: (1) `QRawFont.supportsCharacter(str)` returns False for EVERY non-ASCII character in
   PySide6; pass `ord(ch)`. (2) `QFont.setPointSizeF`/fractional sizes snap to whole pixels — 14.2
@@ -1929,7 +1937,13 @@ Any `QWidget` subclass (not `QFrame`, not `QLabel`) that owns a background-color
 
 *Reorganization note (2026-07-13): the "Critical Architecture Rules" section was restructured to remove repetition — it previously existed as two passes (a full-prose section and a later condensed second pass covering many of the same rules). The two were merged: rules that appeared in both now appear once, under whichever fact they share, with no information dropped. Rules unique to either pass are unchanged. See the note directly under the "Critical Architecture Rules" heading for detail.*
 
-*Last updated: 2026-10-30 Session 4 — the Settings-close hover-preview leak fixed
+*Last updated: 2026-11-02 Session 1 — mute/unmute animate (drain/fill + bar fade), survive
+spamming `m`, and stay clean during a theme fade: `vol_stack` is punched out of the fade overlay
+with `_CrossfadeBacking` behind it, and theme rotation and the deferred panel restyle wait for a
+volume transition. New Debugging-discipline bullet on backing a punch-out. 2026-10-30 Session 5:
+the SQLite 3.51.0 startup deadlock, the Excluded Books box restyle. See SESSION.md.*
+
+*Previously: 2026-10-30 Session 4 — the Settings-close hover-preview leak fixed
 (`settings_accepts_hover_preview` gates `_fire_pending_hover` and hover calls in
 `_on_theme_changed`); new Debugging-discipline bullet on `_is_closing` being True during an open
 slide; the sidebar-over-panel race fixed; caught races recorded in an untracked `TRIPWIRES.txt`.

@@ -1,3 +1,55 @@
+## Session Summary — 2026-11-02 Session 1 — mute/unmute under spam and during a theme fade
+
+Commits: `501e3d0`, `4b89acf`, `997eef6`, plus this docs commit. Continues 2026-10-30 Session 5.
+Triage page version 38 (Worth fixing 12 → 11).
+
+**Spamming `m`.** A press while the fill moved was read as "mid-drain, so unmute" even during an
+unmute's own fill, and with the pre-mute level already cleared it restarted the fill toward 100.
+`_toggle_mute` now reverses by direction (`ClickSlider.flow_target()`). Pryme then pointed at the
+remaining ugliness: presses during the empty bar's fade left a new half-faded shade each time.
+Every reversal now snaps the bar to full first, so spamming shows a solid bar with the fill moving,
+and the fade plays once the presses stop. `T` (or the rotation timer) during a transition waits for
+it (`_rotate_theme`, 50ms re-check, coalesced).
+
+**`m` during a theme fade.** Everything drawn under the fade overlay ghosts, in every direction
+(Pryme: bar to icon, icon to bar, icon to nothing). Rejected along the way: snapping the theme
+forward, holding the visual change until the fade ends, and my "cut to the final look" (still
+drawn under the overlay, so it ghosts too; I first asked Pryme to choose a cut variant without
+seeing that). What worked: punch `vol_stack` out of the overlay, as the progress sliders already
+are. The bare punch showed a box (the live new background inside the hole). A flat backing color
+mixed at the overlay's opacity fixed flat themes but not gradients, since I had assumed a flat
+background; the shipped `_CrossfadeBacking` paints real grabs of the old and new backgrounds
+(`vol_stack` hidden for each grab) at the overlay's own opacity on its `valueChanged`, so timing
+matches by construction. Accepted: the icon and sleep/sprint text snap colors.
+
+**Flow jump traced from the log, not guessed.** `[STUTTER-PROBE]` showed one 173ms gap in an unmute
+fill, ending exactly when `_flush_deferred_restyle_now` finished (155ms) at the end of the theme
+fade. `_run_deferred_restyle` now also waits for a volume transition. The next run: 34 flows,
+worst gap 17.8ms.
+
+---
+
+## Session Summary — 2026-10-30 Session 5 — SQLite deadlock diagnosed; Excluded Books box; mute animation
+
+Commits: `b3fe828`, `2ef32d2`, `595a7d9`, `47b5036`, `8295de7`. Triage page version 37.
+
+**Startup hang.** The app froze in `_load_cover_art` at launch. With root, py-spy showed the main
+thread opening a connection (`findReusableFd`) and the playlist resolver closing one
+(`sqlite3WalClose`), each waiting on the other's lock: a known lock-order bug in SQLite
+3.51.0-3.51.1, fixed in 3.51.2. The app loads conda's 3.51.0 (the system has 3.54.1). Dev-only;
+recorded in CLAUDE.md's TEMPORARY conda section, with a pre-release version check in TODO.md.
+
+**Excluded Books box.** Now on `bg_dropdown` like the folder list, rounded except under the toggle
+arrow, scrollbar handle rounded at the bottom (Pryme chose 4px over 3px from side-by-side
+screenshots). Six themes then had a scrollbar too close to the background; I ranked all 62 by
+CIE76 distance, and Pryme adjusted five `bg_dropdown` values and one `excluded_scrollbar`.
+
+**Mute animation.** Mute drains the fill, then fades the empty bar out before the icon; unmute is
+the reverse. The audio follows the fill. Clicks during a transition are ignored
+(`ClickSlider.input_gate`), and a release now only sets a value if it ends a real press.
+
+---
+
 ## Session Summary — 2026-10-30 Session 4 — sidebar-over-panel race fixed; tripwire file; Settings-close hover-preview leak fixed
 
 Commits: `5c7223c`, `cd88a32`, `bcfa3f7`, `4e1b400`, plus this docs commit. Triage page version 36

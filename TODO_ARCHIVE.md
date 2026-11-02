@@ -5,6 +5,20 @@ list scannable. Kept, not deleted, per the project's normal practice of not thro
 that isn't fully duplicated in NOTES.md/SESSION.md/a commit message. Order is the same relative
 order these entries had in TODO.md before the split (2026-07-30).
 
+- **[2026-11-02, FIXED] Mute/unmute: abrupt cut, spam, and ghosting during a theme fade.** Closes
+  two entries. (1) 2026-06-23 "Slider→muted-icon transition is abrupt": `8295de7` animates both
+  ways (mute drains the fill then fades the empty bar out before the icon; unmute fades the empty
+  bar in then grows the fill), the audio follows the fill, and clicks are ignored mid-transition
+  (`ClickSlider.input_gate`). Pryme chose the drain over the floated two-sided wipe. (2) 2026-10-30
+  "Mute/unmute during a theme fade ghosts": `501e3d0` reverses a moving fill by direction and snaps
+  the bar to full on every reversal (spamming `m` shows a solid bar), and defers theme rotation past
+  a transition; `997eef6` punches `vol_stack` out of the fade overlay with `_CrossfadeBacking`
+  behind it (real old/new background grabs mixed at the overlay's opacity, so no box on gradient
+  themes), and makes the deferred panel restyle wait for a transition (it froze a fill for 173ms).
+  The cut-to-final-look branches and a flat-color backing were tried and replaced on the way.
+  Accepted: the muted icon and sleep/sprint text snap to the new theme's colors ("barely
+  noticeable"). Live-checked by Pryme; log clean (34 flows, worst gap 17.8ms).
+
 - **[2026-10-30, FIXED] Excluded Books popup didn't match the folder list above it.** Logged
   2026-06-27 as a corner-radius mismatch (the selection-color half became moot once the popup
   disabled selection; the bg_deep/bg_dropdown half had been closed as not worth chasing). Done
