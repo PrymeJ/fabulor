@@ -1,18 +1,16 @@
 # Fabulor
 
-A modern audiobook player designed for focused listening.
-
-Most desktop players treat audiobooks like music. Fabulor does not.
+A desktop audiobook player that treats books as books.
 
 ---
 
 ## Philosophy
 
 Audiobooks are not music.
-The screen is not the primary interface.
 
-Fabulor is built for people who listen while doing something else.
-The UI stays out of the way. Controls remain accessible at all times.
+A book isn't a playlist of tracks. It has chapters, a place you left off, and a history of how you listened to it. Fabulor is built around the book: one at a time, with everything about it a click or a key away.
+
+And a player should be worth looking at. Each named theme is tuned by hand, the cover art takes center stage, and nothing moves without reason.
 
 ---
 
@@ -36,8 +34,16 @@ The UI stays out of the way. Controls remain accessible at all times.
 
 * **Five views**, from large covers to a compact list, with sorting by title, author, duration, year,
   progress, date added, recently played and finished.
-* **Search with operators**: `#tag`, `@author`, `=1984`, `>1950`, `<1990`, year ranges, and title
-  prefixes. Click an author, narrator or year to filter by it.
+* **Search with operators.** Plain text searches titles, authors and narrators at once. To narrow
+  it down:
+  * `_dune`: titles starting with "dune"
+  * `@le guin`: authors only
+  * `#sci`: books with a tag starting with "sci"
+  * `=1984`: published in 1984
+  * `>1950`, `<1990`, or year ranges like `>1950<1990`: from, up to, or between years (a leading
+    minus means BCE)
+
+  Click an author, narrator or year in the library to filter by it.
 * **Tags with colors**, managed in their own panel.
 * **Editable metadata.** Title, author, narrator and year can be edited and locked, so a rescan never
   overwrites your corrections.
@@ -100,8 +106,7 @@ In active development. Linux only for now, with a Windows release to follow.
 
 * Instant startup after initial scan
 * Reliable high-speed playback
-* Clean, distraction-free interface
-* Full control without relying on the mouse
+* Every panel can be driven from the keyboard
 
 ---
 
