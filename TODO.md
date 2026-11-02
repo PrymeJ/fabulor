@@ -1229,6 +1229,7 @@ isolation.
 - [2026-06-23] Slider→muted-icon transition is abrupt
 
 ### Misc UI polish
+- [2026-10-30] Mute/unmute (`m`) during a theme fade ghosts; lead: punch the volume area out of the fade overlay
 - [2026-07-30] In-app help section — the home for all reference material, incl. search operators
 - [2026-07-03] Excluding the currently-playing book behaves differently for M4B vs VT — design decision
 
@@ -1241,6 +1242,24 @@ isolation.
 - [2026-07-14] App-start flow-animation baseline roughness (Regime A) — standalone ~70ms hitch
 
 ## Pending
+
+- **[2026-10-30] Mute/unmute during a theme fade ghosts — pick up first.** The mute/unmute
+  animation shipped in `8295de7`; spam handling and the theme-rotation deferral in `501e3d0`, both
+  live-checked by Pryme (spamming `m` shows a solid bar with the fill moving; `m` then `T` waits
+  cleanly). **Still WIP in `501e3d0`:** `m` during a theme fade cuts to the final look
+  (`_theme_fading` / `_cut_volume_bar_to_muted` / the cut in `_restore_from_mute`). It ghosts:
+  everything drawn while the theme fades sits under the fade overlay. Snapping the theme forward on
+  `m`, or holding the visual change until the fade ends, were both judged weird by Pryme.
+  **Finding (2026-11-02, Pryme):** every visual change in the volume area ghosts during a theme
+  fade, in both directions: bar to icon, icon to bar, and icon to nothing. So "mute shows the icon
+  right away, unmute just removes it" ghosts too; no choice of what to draw avoids it.
+  **Lead (unverified, from reading the code only):** take the volume area out from under the
+  overlay. The progress and chapter sliders already are: `_do_fade_with_slider_animation` punches
+  them out of the overlay mask and animates their colors live (`theme_manager.py`, the loop over
+  `('progress_slider', 'chapter_progress_slider')`). `vol_stack` is not in that list. Unchecked:
+  whether the mask can take `vol_stack`'s rect the same way, and how the muted icon's color behaves
+  mid-fade (likely snaps to the new theme). If it works, the cut branches can go and the normal
+  drain/fill/fades run live during a theme fade.
 
 - **[2026-08-02] Theme-apply ordering/deferral for book-switch flow stutter (cover-theme on).**
   Confirmed directional: Book A (80% progress) → Book B (11.5%) stutters during the flow animation;
