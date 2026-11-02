@@ -1229,6 +1229,7 @@ isolation.
 
 ### Misc UI polish
 - [2026-07-30] In-app help section — the home for all reference material, incl. search operators
+- [2026-11-02] README screenshots from a legal demo library (LibriVox / public-domain covers)
 - [2026-07-03] Excluding the currently-playing book behaves differently for M4B vs VT — design decision
 
 ### Cleanup / process
@@ -1240,6 +1241,21 @@ isolation.
 - [2026-07-14] App-start flow-animation baseline roughness (Regime A) — standalone ~70ms hitch
 
 ## Pending
+
+- **[2026-11-02] README screenshots from a legal demo library.** The README (`72106c5`) has no
+  screenshots. Pryme won't publish them with his real library, even self-made audiobooks: real
+  titles and covers could read as promoting piracy. Plan:
+  - **Audio:** LibriVox recordings (free, public domain, openly distributed), so there's no piracy
+    question. They include multi-file folders and M4B versions, so they show the app properly.
+  - **Covers:** LibriVox's own art (believed public domain like the recordings; verify on their
+    site before publishing), original pre-1930 first-edition covers (public domain in the US; scans
+    on Project Gutenberg / the Internet Archive), Fabulor's generated no-cover placeholders (own
+    design, and a feature worth showing), or custom covers made for the purpose.
+  - **Setup:** keep the demo apart from the real library. Fabulor uses one database in its data
+    folder, so move that folder aside (or use a separate user account), add only the demo folder,
+    take the shots, restore. Stats start empty for the demo, so listen to the demo books for a
+    while first if the Stats screens should have data.
+  - **Shots:** a theme or two, the library, stats. Then add the image markup to the README.
 
 - **[2026-08-02] Theme-apply ordering/deferral for book-switch flow stutter (cover-theme on).**
   Confirmed directional: Book A (80% progress) → Book B (11.5%) stutters during the flow animation;
