@@ -8,8 +8,8 @@ from PySide6.QtWidgets import (
     QPushButton, QScrollArea, QGridLayout, QLineEdit, QCompleter, QToolButton,
     QStackedLayout
 )
-from PySide6.QtCore import Qt, Signal, QStringListModel, QTimer, QEvent, Property, QSize, QRect, QPropertyAnimation, QEasingCurve
-from PySide6.QtGui import QColor, QPainter, QFontMetrics, QPixmap, QIcon, QRegularExpressionValidator, QKeyEvent
+from PySide6.QtCore import Qt, Signal, QStringListModel, QTimer, QEvent, Property, QSize, QRect, QRectF, QPointF, QPropertyAnimation, QEasingCurve
+from PySide6.QtGui import QColor, QPainter, QFontMetrics, QPixmap, QIcon, QRegularExpressionValidator, QKeyEvent, QPolygonF
 from PySide6.QtCore import QRegularExpression
 from PySide6.QtWidgets import QApplication
 
@@ -168,6 +168,95 @@ class _TagChip(QWidget):
         self.style().polish(self)
 
 
+class _CoverPlayOverlay(QWidget):
+    """Play button over Book Detail's header cover, shown on hover. Offered only in the
+    Stats/Tags context for a book that isn't loaded or archived (see set_offered). Disc and
+    triangle are painted; only the disc is clickable and shows the hand cursor."""
+
+    clicked = Signal()
+    _DISC = 32
+
+    def __init__(self, parent: QWidget):
+        super().__init__(parent)
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.setMouseTracking(True)
+        self._offered = False
+        self._hovered = False
+        self._disc_color = QColor(0, 0, 0, 170)
+        self._icon_color = QColor("#ffffff")
+        self.set_offered(False)
+
+    def set_offered(self, offered: bool) -> None:
+        self._offered = offered
+        self._hovered = False
+        # Not offered: invisible to the mouse, so the cover behaves as before.
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, not offered)
+        self.unsetCursor()
+        self.update()
+
+    def set_colors(self, disc: QColor, icon: QColor) -> None:
+        self._disc_color = disc
+        self._icon_color = icon
+        self.update()
+
+    def _disc_rect(self) -> QRectF:
+        d = self._DISC
+        return QRectF((self.width() - d) / 2, (self.height() - d) / 2, d, d)
+
+    def _in_disc(self, pos) -> bool:
+        r = self._disc_rect()
+        c = r.center()
+        dx, dy = pos.x() - c.x(), pos.y() - c.y()
+        return dx * dx + dy * dy <= (r.width() / 2) ** 2
+
+    def enterEvent(self, event):
+        self._hovered = True
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._hovered = False
+        self.unsetCursor()
+        self.update()
+        super().leaveEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self._in_disc(event.position()):
+            self.setCursor(Qt.CursorShape.PointingHandCursor)
+        else:
+            self.unsetCursor()
+        super().mouseMoveEvent(event)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton and self._in_disc(event.position()):
+            event.accept()
+            self.clicked.emit()
+            return
+        event.ignore()
+
+    def paintEvent(self, event):
+        if not (self._offered and self._hovered):
+            return
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        r = self._disc_rect()
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(self._disc_color)
+        p.drawEllipse(r)
+        # A triangle's visual centre sits right of its bounding box's, so nudge it right.
+        c = r.center()
+        h = r.height() * 0.40
+        w = h * 0.87
+        x0 = c.x() - w / 2 + w * 0.12
+        p.setBrush(self._icon_color)
+        p.drawPolygon(QPolygonF([
+            QPointF(x0, c.y() - h / 2),
+            QPointF(x0, c.y() + h / 2),
+            QPointF(x0 + w, c.y()),
+        ]))
+        p.end()
+
+
 class BookDetailPanel(QWidget):
     close_requested = Signal()
     history_deleted = Signal()
@@ -179,6 +268,7 @@ class BookDetailPanel(QWidget):
     open_tag_manager_requested = Signal()
     cover_error = Signal(str)  # a cover-add failed (too large, unreadable, save/DB failure)
     audio_settings_changed = Signal()  # this book's EQ/balance mode or values changed (EQ tab)
+    play_requested = Signal(str)  # play overlay clicked — book_path
 
     def __init__(self, db, config, parent=None):
         super().__init__(parent)
@@ -277,6 +367,9 @@ class BookDetailPanel(QWidget):
         # unconditionally, removing the redistribution Qt would otherwise do on ANY later pass —
         # this is the general fix, not a one-off nudge for this specific book's aspect ratio.
         header_layout.addWidget(self._cover_label, 0, Qt.AlignmentFlag.AlignTop)
+        self._play_overlay = _CoverPlayOverlay(self._cover_label)
+        self._play_overlay.clicked.connect(self._on_play_clicked)
+        self._play_offered = False
 
         meta_block = QVBoxLayout()
         meta_block.setSpacing(2)
@@ -1469,6 +1562,9 @@ class BookDetailPanel(QWidget):
         # a tag chip inert when it's already the active filter, so re-clicking it can't happen.
         self._active_search_text = active_search_text
         self._tag_manager_btn.setVisible(context != 'tags')
+        # Off until the caller offers it (PanelManager.open_book_detail, after this load).
+        self._play_offered = False
+        self._play_overlay.set_offered(False)
         self._book_path = book_data.get('path') or book_data.get('book_path')
         self._book_data = book_data
         if 'duration' not in book_data:
@@ -1556,6 +1652,19 @@ class BookDetailPanel(QWidget):
         else:
             self._set_meta_state(_MetaActionState.HIDDEN)
 
+    def set_play_offered(self, offered: bool) -> None:
+        """Whether the cover offers a play button. The caller decides context and whether
+        the book is already loaded; an archived book never offers it."""
+        self._play_offered = offered
+        self._sync_play_overlay()
+
+    def _sync_play_overlay(self) -> None:
+        self._play_overlay.set_offered(self._play_offered and not self._is_archived)
+
+    def _on_play_clicked(self) -> None:
+        if self._book_path and self._play_offered and not self._is_archived:
+            self.play_requested.emit(self._book_path)
+
     def _on_cover_panel_changed(self, cover_path: str):
         self.active_cover_changed.emit(self._book_path or "", cover_path)
 
@@ -1569,6 +1678,7 @@ class BookDetailPanel(QWidget):
         )
         self._cover_label.setPixmap(scaled)
         self._cover_label.setFixedHeight(scaled.height())
+        self._play_overlay.setGeometry(0, 0, self._cover_label.width(), scaled.height())
 
     def _refresh_header_cover(self, file_path: str):
         pixmap = QPixmap()
@@ -2848,6 +2958,7 @@ class BookDetailPanel(QWidget):
             _book_dict.get('is_missing') or _book_dict.get('is_deleted')
         ))
         self._remove_btn.setVisible(not self._is_archived)
+        self._sync_play_overlay()
         self._ghost_label.setVisible(self._is_excluded)
         if self._is_excluded:
             pixmap = load_themed_icon("ghost.svg", self._theme.get("accent", "#888888"), 16, 0.7)
@@ -2881,6 +2992,9 @@ class BookDetailPanel(QWidget):
 
     def on_theme_changed(self, theme: dict):
         self._theme = theme
+        disc = QColor(theme.get('bg_main', '#000000'))
+        disc.setAlphaF(0.75)
+        self._play_overlay.set_colors(disc, QColor(theme.get('text', '#ffffff')))
         self._apply_bar_colors()
         self._style_completer_popup()
         self._update_remove_btn_icon()

@@ -2255,6 +2255,31 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.panel_manager._open_library_flow()
         self.library_panel.set_search(f"#{tag}")
 
+    def _on_book_play_requested(self, path: str) -> None:
+        """Book Detail's play button (Stats/Tags context). Same switch as a Library click,
+        but no Library slide-out will end the deadzone and ungate playback, so that work
+        waits for every panel (Book Detail plus Stats or Tags) to finish sliding out."""
+        switching = path != self.current_file and os.path.exists(path)
+        self._on_book_selected_from_library(path)
+        if not switching:
+            return
+        self._switch.wait_for_panels()
+        # Queued behind _on_book_selected_from_library's own singleShot(0), so
+        # player.load_book (which gates play) always runs before ungate_play can.
+        QTimer.singleShot(0, lambda: self.panel_manager.call_when_panels_settled(
+            self._on_panels_cleared_for_switch))
+
+    def _on_panels_cleared_for_switch(self) -> None:
+        """The Library-free counterpart of PanelManager._on_library_hidden's switch
+        duties: end the deadzone, start playback, then drain the deferred file-ready and
+        chapter calls or apply the pending cover theme."""
+        self._switch.library_revealed()
+        self.player.ungate_play()
+        if self._switch.file_ready_deferred or self._switch.chaps_deferred:
+            QTimer.singleShot(50, self._drain_deferred_file_ready)
+        else:
+            self._apply_pending_cover_theme()
+
     def _on_library_detail_requested(self, path: str) -> None:
         self.panel_manager.open_book_detail({"path": path}, tab="stats", context='library')
 
@@ -2388,8 +2413,9 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         """Called when mpv confirms the file is loaded and ready."""
         logger.debug(f"[BOOKSWITCH-TRACE] _on_file_ready: entry current_file={self.current_file!r} "
                      f"library_is_animating={getattr(self.library_panel, '_is_animating', False)}")
-        if getattr(self.library_panel, '_is_animating', False):
-            logger.debug("[BOOKSWITCH-TRACE] _on_file_ready: DEFERRED (library still animating)")
+        if getattr(self.library_panel, '_is_animating', False) or self._switch.waits_for_panels:
+            logger.debug("[BOOKSWITCH-TRACE] _on_file_ready: DEFERRED (library animating or "
+                         f"waiting for panels={self._switch.waits_for_panels})")
             self._switch.mark_file_ready_deferred()
             return
         self._switch.clear_file_ready_deferred()
@@ -2469,7 +2495,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         anim.start()
 
     def _on_file_loaded_populate_chapters(self):
-        if getattr(self.library_panel, '_is_animating', False):
+        if getattr(self.library_panel, '_is_animating', False) or self._switch.waits_for_panels:
             self._switch.mark_chaps_deferred()
             return
         self._switch.clear_chaps_deferred()

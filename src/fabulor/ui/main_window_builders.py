@@ -781,6 +781,7 @@ def build_book_detail_panel(mw):
     mw.book_detail_panel.tag_filter_requested.connect(mw._on_tag_filter_requested)
     mw.book_detail_panel.open_tag_manager_requested.connect(mw._on_open_tag_manager_from_detail)
     mw.book_detail_panel.cover_error.connect(mw._on_cover_error)
+    mw.book_detail_panel.play_requested.connect(mw._on_book_play_requested)
     mw.theme_manager.theme_applied.connect(mw.book_detail_panel.on_theme_changed)
     mw.book_detail_panel.on_theme_changed(mw.theme_manager.get_current_theme())
 

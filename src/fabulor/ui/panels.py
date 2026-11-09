@@ -3090,6 +3090,12 @@ class PanelManager:
         active_search_text = self.library_panel.search_field.text()
         panel.load_book(
             book_data, tab=tab, context=context, active_search_text=active_search_text)
+        # Play from Book Detail only where the Library isn't one click away (Stats passes
+        # context '', Tags 'tags'), and never for the book already loaded. The panel itself
+        # withholds it from archived books.
+        panel.set_play_offered(
+            context != 'library'
+            and panel._book_path != getattr(self.main_window, 'current_file', None))
         self._start_book_detail_entry()
 
     def _start_book_detail_entry(self):

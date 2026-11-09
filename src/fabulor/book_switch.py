@@ -45,6 +45,10 @@ class BookSwitchState:
         self._chaps_dur_retried: bool = False
         self._file_ready_deferred: bool = False
         self._chaps_deferred: bool = False
+        # True when the switch came from Book Detail's play button (Stats/Tags context):
+        # no Library slide-out will end the deadzone, so file-ready/chapters defer until
+        # MainWindow._on_panels_cleared_for_switch runs once every panel has settled.
+        self._waits_for_panels: bool = False
 
     # ----- derived phase -----
 
@@ -98,6 +102,13 @@ class BookSwitchState:
     def chaps_deferred(self) -> bool:
         return self._chaps_deferred
 
+    @property
+    def waits_for_panels(self) -> bool:
+        return self._waits_for_panels
+
+    def wait_for_panels(self) -> None:
+        self._waits_for_panels = True
+
     def mark_file_ready_deferred(self) -> None:
         self._file_ready_deferred = True
 
@@ -129,10 +140,13 @@ class BookSwitchState:
         self._chaps_dur_retried = False
         self._file_ready_deferred = False
         self._chaps_deferred = False
+        self._waits_for_panels = False
 
     def library_revealed(self) -> None:
-        """LOADING → RESTORING. Called when the library slide-out animation finishes."""
+        """LOADING → RESTORING. Called when the library slide-out animation finishes, or
+        (a Book Detail play) when every panel has settled."""
         self._in_deadzone = False
+        self._waits_for_panels = False
 
     # take_*_target() are CONSUMING reads: each captured value can be read exactly
     # once, after which the corresponding flow_pending_* predicate flips to False and
