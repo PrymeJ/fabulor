@@ -5,6 +5,31 @@ list scannable. Kept, not deleted, per the project's normal practice of not thro
 that isn't fully duplicated in NOTES.md/SESSION.md/a commit message. Order is the same relative
 order these entries had in TODO.md before the split (2026-07-30).
 
+- **[2026-09-17, SETTLED 2026-11-09] Bare cells for an active longest streak.** Settled by
+  Pryme and removed from the open list; no change was made to `StreakGrid`. Entry as it stood:
+  [2026-09-17] If the longest streak is also the currently-active streak, remove the outline and
+    show the cells bare (today the longest run always gets a border via `longest_streak_outline`,
+    computed in `StreakGrid._compute_longest_run`/rendered around `stats_panel.py:3645`, regardless of
+    whether it's still ongoing) — feature, visual, minor, not decided. Would need a way to tell
+    "longest run" and "currently active run" apart in that rendering path, which doesn't exist today.
+
+- **[2026-07-01, CLOSED 2026-11-09] Book Detail panel slide-in feels less smooth from Library than
+  from Stats.** Closed by Pryme: superseded by the better-evidenced "Book Detail slide
+  paint-suppression" thread and the 2026-09-25 occlusion-guard fix. Entry as it stood:
+  User observation, unconfirmed and not yet investigated: right-clicking a book row in the Library
+  panel to open Book Detail feels janky compared to clicking a book row in the Stats panel to open
+  the same panel — same target panel (`open_book_detail` → `_start_book_detail_entry`,
+  `panels.py:578`), so if real, the difference is in what's already on-screen underneath, not the
+  panel itself. One structural note found while checking: `_start_book_detail_entry` does NOT touch
+  `blur_animation` at all (every other `_start_*_entry` — library/settings/speed/stats/sleep/tags —
+  starts/stops it), so whatever blur state the currently-open panel left in place just carries over
+  unchanged; unclear if that's relevant. User also flagged this may just be "noticing now because
+  I'm paying attention" rather than a real regression — needs a clean side-by-side comparison
+  before concluding anything. Do not conflate with the sidebar-bleed-through investigation
+  (NOTES.md, same date) — confirmed structurally unrelated: Book Detail never routes through
+  `_on_sidebar_closed_for_panel` (no sidebar trigger button opens it; it's reached only from
+  library rows, stats rows, and tag chips), so that fix does not touch this path at all.
+
 - **[2026-07-28, CLOSED 2026-11-09] Three-state panel background — click lag.** Pryme confirms
   the lag is fixed; the ~140ms skip-hidden-panels residual below was not pursued. Entry as it
   stood: SHIPPED and confirmed working (`3132be7`): three-state panel background —

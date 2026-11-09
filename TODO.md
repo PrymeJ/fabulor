@@ -803,11 +803,6 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
   visual, minor, not decided.
 - [2026-09-17] Hide the Themes-tab interval row entirely when only one theme is selected in the
   pool (an interval is meaningless with nothing to rotate to) — feature, visual, minor, not decided.
-- [2026-09-17] If the longest streak is also the currently-active streak, remove the outline and
-  show the cells bare (today the longest run always gets a border via `longest_streak_outline`,
-  computed in `StreakGrid._compute_longest_run`/rendered around `stats_panel.py:3645`, regardless of
-  whether it's still ongoing) — feature, visual, minor, not decided. Would need a way to tell
-  "longest run" and "currently active run" apart in that rendering path, which doesn't exist today.
 - [2026-09-17] Volume slider color steps based on the current volume level (e.g. color shifts as
   volume increases) — feature, visual, minor, not decided.
 - [2026-09-17] Series information in Book Detail, after the Year field — feature, QOL, not decided.
@@ -1646,21 +1641,6 @@ isolation.
   already loaded, so it's been left as-is. Decide later whether to (a) make both formats keep
   playing, (b) make both drop to no-book, or (c) formally document the split as intended. No action
   until then; captured so it isn't rediscovered as a "bug" and reflexively "fixed."
-
-- **[2026-07-01] Book Detail panel slide-in feels less smooth from Library than from Stats.**
-  User observation, unconfirmed and not yet investigated: right-clicking a book row in the Library
-  panel to open Book Detail feels janky compared to clicking a book row in the Stats panel to open
-  the same panel — same target panel (`open_book_detail` → `_start_book_detail_entry`,
-  `panels.py:578`), so if real, the difference is in what's already on-screen underneath, not the
-  panel itself. One structural note found while checking: `_start_book_detail_entry` does NOT touch
-  `blur_animation` at all (every other `_start_*_entry` — library/settings/speed/stats/sleep/tags —
-  starts/stops it), so whatever blur state the currently-open panel left in place just carries over
-  unchanged; unclear if that's relevant. User also flagged this may just be "noticing now because
-  I'm paying attention" rather than a real regression — needs a clean side-by-side comparison
-  before concluding anything. Do not conflate with the sidebar-bleed-through investigation
-  (NOTES.md, same date) — confirmed structurally unrelated: Book Detail never routes through
-  `_on_sidebar_closed_for_panel` (no sidebar trigger button opens it; it's reached only from
-  library rows, stats rows, and tag chips), so that fix does not touch this path at all.
 
 - **[2026-07-30] In-app help section.** The intended home for all in-app reference material.
   Raised while looking for somewhere to document the library search operators (`#tag`, `_prefix`,
