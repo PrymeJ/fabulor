@@ -1,3 +1,47 @@
+## Session Summary — 2026-11-09 Session 1 — Book Detail play button, TODO staleness pass, restart icon
+
+Commits: `963aa0f`, `07e537f`, `040b340`, `e045456` (merged to `main` and pushed), `52a78ba`,
+`0c50eb3`, `49134c8`, `26aa86e`, plus this docs commit. Triage page versions 39-42 (Worth fixing
+11 -> 7, Later 15 -> 16).
+
+**Play from Book Detail (Stats/Tags context).** Loading a book used to be Library-only, and the
+switch pipeline assumed it: only `_on_library_hidden` ended the deadzone, ungated playback and
+drained the deferred file-ready/chapter calls. Reusing that path from Stats or Tags would have left
+playback gated and position saving off for the session. `BookSwitchState.waits_for_panels` now
+holds `_on_file_ready`/`_on_file_loaded_populate_chapters` back, and `_on_panels_cleared_for_switch`
+does the Library-hidden duties once every panel settles (queued behind `load_book`'s own
+`singleShot(0)` so ungate can't precede the gate). The button is a hover disc over the header cover
+(only the disc clicks), withheld in Library context, for the loaded book and for archived books, and
+one-shot. `P` is its key; Space was rejected because it reaches the top level only when nothing
+claims it, so a confirm that timed out just before the press would switch books. The dual slide
+(Book Detail right, Stats/Tags left) was already smooth via the title-bar click; Pryme confirmed.
+The cover-theme switch stutter stays deferred to the very end of the queue, on Pryme's call, so
+nothing adjacent breaks it again.
+
+**TODO and triage-page staleness.** My first recommendation, the hover-tracker filter leak, was
+already fixed (`4fecc29`, the day it was logged); I recommended it from the stale TODO entry without
+checking the code. Audit of the other app-wide filters: all paired with show/hide or permanent by
+design. Closed by Pryme: the panel-background click lag (fixed), the "Book Detail slide-in less
+smooth from Library" note (superseded by the 2026-09-25 occlusion guard), bare cells for an active
+longest streak. On that last one my archive note said no change was made; Pryme corrected it: it
+was settled in the 2026-10-30 streak grid rework (`b1dfcab`, `45cf2ab`), which the page had missed.
+The History delete animation became a test-first item; the chapter-list flicker was de-escalated
+after six more quiet weeks. The triage page caught up on the play button, the SQLite pre-release
+check and all of the above.
+
+**Restart icon.** `restart.svg` is a traced path with an outline stroke over the fill (8.1 in a
+715-unit viewBox, ~0.54px at button size); every other transport icon is a plain fill on the 48x33
+grid. Tried live: no stroke (cleaner but thin beside pause), 16 (wrong direction), 4 (chosen), a
+hand-drawn arc redraw (rejected: the ring was cut too early). Pryme noticed it looks off only with a
+black icon; nothing in the code differs by color, and the likely cause is sRGB edge blending on the
+only curved icon at maximum contrast (offscreen render, not verified on screen). A restart-only
+gamma correction of the edge alpha was tried live and dropped as needless complexity. Two of my
+statements needed correcting along the way: a stroke of 4 adds ~0.13px per side, not a quarter
+pixel; and I first claimed a gamma pass would have to touch every icon, then said in the same breath
+it could be restart-only. The restart-only version was the real option all along.
+
+---
+
 ## Session Summary — 2026-11-02 Session 1 — mute/unmute under spam and during a theme fade
 
 Commits: `501e3d0`, `4b89acf`, `997eef6`, plus this docs commit. Continues 2026-10-30 Session 5.

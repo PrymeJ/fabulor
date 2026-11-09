@@ -656,9 +656,6 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
   functional block. Small enough to fold into whatever next touches this file's keyboard
   handling, rather than warranting its own dedicated pass.
 
-### Small visual/cosmetic bugs (batch logged 2026-09-17, mostly not yet reproduced in detail)
-- [2026-09-17] Restart button has jagged edges — visual, minor. Not yet investigated.
-
 ### Cover/metadata scan gaps (batch logged 2026-09-17, need reproduction)
 - [2026-09-17, SEQUENCED behind the ID refactor 2026-09-18] POSSIBLE BUG, needs repro: changing a
   book's cover image file outside the app is not reflected in the library after a rescan — only

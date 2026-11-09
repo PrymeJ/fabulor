@@ -5,6 +5,17 @@ list scannable. Kept, not deleted, per the project's normal practice of not thro
 that isn't fully duplicated in NOTES.md/SESSION.md/a commit message. Order is the same relative
 order these entries had in TODO.md before the split (2026-07-30).
 
+- **[2026-09-17, FIXED 2026-11-09] Restart button has jagged edges.** Pryme: it looked off next to
+  the other transport buttons, worst with a black icon. Cause: `restart.svg` is an auto-traced path
+  (715-unit viewBox) with an outline stroke over its fill (8.1 units, about 0.54px at button size),
+  which softened and unevenly thickened the edge; the other icons are plain fills on the 48x33 grid.
+  Fixed (`26aa86e`) by halving the stroke to 4: removing it left the ring too thin beside pause, and
+  thicker strokes (12-32) went the wrong way. A hand-drawn arc-and-triangle redraw was rejected (the
+  ring had to shrink to fit the head). Remaining roughness in black is very likely Qt's sRGB edge
+  blending on the only curved transport icon at maximum contrast. A restart-only gamma correction
+  of the edge alpha (`1 - (1 - a)^(1/2.2)` for dark colors) was tried live with strokes 4, 8.1 and
+  12 and dropped as needless complexity.
+
 - **[2026-09-17, SETTLED 2026-10-30] Bare cells for an active longest streak.** Settled in the
   2026-10-30 streak grid rework (`b1dfcab`, `45cf2ab`), archived here 2026-11-09 by Pryme. The
   rework kept a single longest-run look: every longest-run cell gets the deep
