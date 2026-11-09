@@ -5,8 +5,11 @@ list scannable. Kept, not deleted, per the project's normal practice of not thro
 that isn't fully duplicated in NOTES.md/SESSION.md/a commit message. Order is the same relative
 order these entries had in TODO.md before the split (2026-07-30).
 
-- **[2026-09-17, SETTLED 2026-11-09] Bare cells for an active longest streak.** Settled by
-  Pryme and removed from the open list; no change was made to `StreakGrid`. Entry as it stood:
+- **[2026-09-17, SETTLED 2026-10-30] Bare cells for an active longest streak.** Settled in the
+  2026-10-30 streak grid rework (`b1dfcab`, `45cf2ab`), archived here 2026-11-09 by Pryme. The
+  rework kept a single longest-run look: every longest-run cell gets the deep
+  `longest_streak_cell` fill and the `longest_streak_outline` border whether or not the run is
+  ongoing (`StreakGrid.paintEvent`). Entry as it stood:
   [2026-09-17] If the longest streak is also the currently-active streak, remove the outline and
     show the cells bare (today the longest run always gets a border via `longest_streak_outline`,
     computed in `StreakGrid._compute_longest_run`/rendered around `stats_panel.py:3645`, regardless of

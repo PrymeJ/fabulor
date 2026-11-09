@@ -1044,9 +1044,9 @@ correctly — the contrast is what made these visible, so they are not regressio
 - [2026-06-19] Remove theme inheritance from "The Color Purple"
 
 ### Chapter list / library click
-- [2026-07-21, not reproduced in a long time as of 2026-09-17] Chapter list highlight fluctuates
-  and scrolls to bottom on click — likely already fixed by `787bfaa`, per Pryme's own report; not
-  formally re-verified under instrumentation
+- [2026-07-21, de-escalated 2026-11-09] Chapter list highlight fluctuates and scrolls to bottom
+  on click — not seen since well before 2026-09-17 and not in the six weeks after; likely fixed by
+  `787bfaa`. Low priority: close outright if it stays quiet
 - [2026-07-21] `SUSPECT_MASKED_STASH` diagnostic marker has a false-positive gap (diagnostic-only)
 
 ### VT / seek / progress tracking
