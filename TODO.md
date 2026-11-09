@@ -1043,7 +1043,6 @@ correctly — the contrast is what made these visible, so they are not regressio
 - Acceptable target per Pryme: does not have to be fully live, just not visibly stuck.
 
 ### Theme color/data
-- [2026-07-28] Three-state panel background shipped and working; clicking an option has perceptible lag
 - [2026-07-21] "Cover art based theme": hover should preview the cover-derived theme regardless
   of the current Off/With pool/Exclusive mode (right-click-to-activate-from-Off half fixed
   2026-09-17 — see TODO_ARCHIVE.md; not yet live-verified by Pryme)
@@ -1197,8 +1196,12 @@ isolation.
   panel, same conditions, `FABULOR_PANEL_TIMING=1` wall-clock numbers on both sides) is still the
   way to actually settle the blur/frost question, whenever someone picks this up.
 
-  **Two concrete follow-ups Pryme named, not yet started, sequenced for a future session:**
-  1. **Fix the tracker leak (small, low-risk, ready to implement).** Give `ScrollHoverTracker`/
+  **Two concrete follow-ups Pryme named (1 done, 2 not started):**
+  1. **DONE (`4fecc29`, 2026-09-22, the same day this was logged): fix the tracker leak.** Both
+     trackers now install on `TagManagerWidget.showEvent` (only the visible sub-view's) and are
+     removed on `hideEvent` and on list/detail switches. Audited 2026-11-09: every other app-wide
+     filter is paired with show/hide or permanent by design (`MainWindow`, `scrollbar_jump`).
+     Original text: Give `ScrollHoverTracker`/
      `GridHoverTracker` the same `showEvent`/`hideEvent` install/remove pattern every other
      panel-specific filter already uses correctly (Sprint/Sleep/Stats/BookDetail all do this) —
      mechanical, well-precedented, should shrink the filter-stack depth for every panel's open/close,
@@ -1218,8 +1221,9 @@ isolation.
   — worth confirming the shipped Stats/Tags hover-pickup mechanism (`_pickup_cursor_anchor`/
   `GridHoverTracker`, 2026-09-15) actually routes through `suspend()` as this entry predicted,
   or used a different mechanism instead.
-- [2026-07-11] History tab delete-session animation still pauses near the end — the viewport-
-  quantization item it was blocked on shipped (`b20a1ff`, 2026-08-12); unblocked, not yet resumed
+- [2026-07-11] History tab delete-session animation — TEST FIRST, not a fix item. Worked on after
+  `b20a1ff` (2026-08-12) unblocked it; not perfectly smooth, but Pryme judged it acceptable
+  (2026-11-09). Re-check live when touching History; act only if it has regressed
 - [2026-07-10] PageUp/PageDown jump distance in the library list — undecided
 
 ### Volume / transport UI
@@ -1327,38 +1331,6 @@ isolation.
   measure it at some point to determine if it is responsive enough" — this needs a live-profiling
   pass to actually quantify current responsiveness before deciding whether it's a real regression
   worth chasing or was never as bad as the original report suggested; not scheduled yet.
-
-- **[2026-07-28] SHIPPED and confirmed working (`3132be7`): three-state panel background —
-  Transparent | Frosty glass | Opaque.** Design notes below are kept as reference, not as an
-  unstarted plan — the feature is live and the user has confirmed it works.
-  **Perceptible lag when clicking an option — investigated and partially fixed.** `149c647`
-  (2026-08-02, "perf: scope the backdrop-mode restyle to the surfaces that read the panel alpha")
-  measured the lag directly (~1040ms) and cut it to ~555ms by scoping the restyle to only the
-  surfaces that actually read `panel_opacity_hover`/the backdrop mode, rather than a full restyle
-  pass. A further residual (~140ms, achievable by also skipping hidden panels) was deliberately
-  not bundled into that fix — that residual is the only part of this item still open.
-
-  **Original design notes, kept for reference:** smaller than it first looks, because the opacity
-  machinery already exists. **What was already there** (found 2026-07-28 after the user pointed at
-  `tab_hover_opacity`, renamed 2026-09-09 from `settings_tab_hover_opacity`): `panel_opacity_hover`
-  is a per-theme float (0.88-0.95 across the
-  theme set, every theme sets one) and the panel background is ALREADY painted as
-  `rgba(bg_main, panel_opacity_hover)` — `themes.py:3458` in `get_settings_stylesheet`, with a
-  second consumer around `:3724`. So the three states are mostly a matter of choosing the alpha and
-  whether the blur runs:
-    Opaque        -> force alpha 1.0 (probably a one-line override at the stylesheet site)
-    Frosty glass  -> today's blur + the theme's own `panel_opacity_hover`
-    Transparent   -> no blur + the theme's own `panel_opacity_hover`
-  The per-theme values stay as the Transparent/Frosty look; only Opaque overrides them.
-  Open questions noted at the time, status against the shipped implementation not rechecked:
-  (a) whether stats/tags/book-detail panels use this same rule or paint their own backgrounds —
-  only the settings/speed/sleep group was traced; (b) whether Opaque should skip the blur work
-  entirely. If the panel is fully opaque the blur behind it cannot be seen, which is exactly what
-  `_panel_hides_everything` (`transport_bar_blur.py`) already exploits for the Timeline tab —
-  reusing it would make Opaque CHEAPER than the other two rather than equal cost.
-  **The widening that remains:** confirmed in `config.py` — `blur_enabled` has been fully migrated
-  to the three-state `panel_backdrop` key; the old boolean is kept only as a one-time
-  backward-compatibility read on upgrade, not as the live setting.
 
 - **[2026-06-19] Remove theme inheritance from "The Color Purple."** Every theme currently resolves
   via `_resolve_theme()` as `THEMES["The Color Purple"].copy()` overlaid with the requested theme's

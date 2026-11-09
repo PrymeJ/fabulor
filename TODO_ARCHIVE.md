@@ -5,6 +5,40 @@ list scannable. Kept, not deleted, per the project's normal practice of not thro
 that isn't fully duplicated in NOTES.md/SESSION.md/a commit message. Order is the same relative
 order these entries had in TODO.md before the split (2026-07-30).
 
+- **[2026-07-28, CLOSED 2026-11-09] Three-state panel background — click lag.** Pryme confirms
+  the lag is fixed; the ~140ms skip-hidden-panels residual below was not pursued. Entry as it
+  stood: SHIPPED and confirmed working (`3132be7`): three-state panel background —
+  Transparent | Frosty glass | Opaque.** Design notes below are kept as reference, not as an
+  unstarted plan — the feature is live and the user has confirmed it works.
+  **Perceptible lag when clicking an option — investigated and partially fixed.** `149c647`
+  (2026-08-02, "perf: scope the backdrop-mode restyle to the surfaces that read the panel alpha")
+  measured the lag directly (~1040ms) and cut it to ~555ms by scoping the restyle to only the
+  surfaces that actually read `panel_opacity_hover`/the backdrop mode, rather than a full restyle
+  pass. A further residual (~140ms, achievable by also skipping hidden panels) was deliberately
+  not bundled into that fix — that residual is the only part of this item still open.
+
+  **Original design notes, kept for reference:** smaller than it first looks, because the opacity
+  machinery already exists. **What was already there** (found 2026-07-28 after the user pointed at
+  `tab_hover_opacity`, renamed 2026-09-09 from `settings_tab_hover_opacity`): `panel_opacity_hover`
+  is a per-theme float (0.88-0.95 across the
+  theme set, every theme sets one) and the panel background is ALREADY painted as
+  `rgba(bg_main, panel_opacity_hover)` — `themes.py:3458` in `get_settings_stylesheet`, with a
+  second consumer around `:3724`. So the three states are mostly a matter of choosing the alpha and
+  whether the blur runs:
+    Opaque        -> force alpha 1.0 (probably a one-line override at the stylesheet site)
+    Frosty glass  -> today's blur + the theme's own `panel_opacity_hover`
+    Transparent   -> no blur + the theme's own `panel_opacity_hover`
+  The per-theme values stay as the Transparent/Frosty look; only Opaque overrides them.
+  Open questions noted at the time, status against the shipped implementation not rechecked:
+  (a) whether stats/tags/book-detail panels use this same rule or paint their own backgrounds —
+  only the settings/speed/sleep group was traced; (b) whether Opaque should skip the blur work
+  entirely. If the panel is fully opaque the blur behind it cannot be seen, which is exactly what
+  `_panel_hides_everything` (`transport_bar_blur.py`) already exploits for the Timeline tab —
+  reusing it would make Opaque CHEAPER than the other two rather than equal cost.
+  **The widening that remains:** confirmed in `config.py` — `blur_enabled` has been fully migrated
+  to the three-state `panel_backdrop` key; the old boolean is kept only as a one-time
+  backward-compatibility read on upgrade, not as the live setting.
+
 - **[2026-11-09, DONE] Load a book from Book Detail in Stats/Tags (play button).** Built as a
   hover-revealed disc over the header cover (`963aa0f`), following the fix shape below
   (`BookSwitchState.waits_for_panels`, `MainWindow._on_panels_cleared_for_switch`); live-checked
