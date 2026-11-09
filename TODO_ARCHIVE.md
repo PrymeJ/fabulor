@@ -5,6 +5,38 @@ list scannable. Kept, not deleted, per the project's normal practice of not thro
 that isn't fully duplicated in NOTES.md/SESSION.md/a commit message. Order is the same relative
 order these entries had in TODO.md before the split (2026-07-30).
 
+- **[2026-11-09, DONE] Load a book from Book Detail in Stats/Tags (play button).** Built as a
+  hover-revealed disc over the header cover (`963aa0f`), following the fix shape below
+  (`BookSwitchState.waits_for_panels`, `MainWindow._on_panels_cleared_for_switch`); live-checked
+  by Pryme. The analysis as logged 2026-11-02: Today the
+  only way to load a book is clicking it in the Library. Useful from Stats and Tags (browsing a tag,
+  wanting to load a book means going back to the Library); not worth it in the Library context,
+  where the row itself is right there. Pryme is undecided; this records the cost so it isn't
+  re-derived.
+  - **Why it isn't free:** the book-switch pipeline assumes Library's slide-out.
+    `_on_book_selected_from_library` arms the deadzone (`_switch.begin`) and calls
+    `hide_all_panels()`; only `PanelManager._on_library_hidden` then calls
+    `_switch.library_revealed()`, `player.ungate_play()`, drains `file_ready_deferred` /
+    `chaps_deferred`, or runs `_apply_pending_cover_theme()`. `_on_file_ready` and
+    `_on_file_loaded_populate_chapters` defer on `library_panel._is_animating` alone.
+  - **Reusing it as-is from Stats/Tags would:** never start playback (play held in `_held_play`);
+    never end the deadzone (position saving off for the session, silent progress loss); run
+    `_on_file_ready` and the flow animation during the Stats/Tags slide (jank); skip the pending
+    cover theme.
+  - **Fix shape:** move those duties into one "player uncovered" hook, fired when the last covering
+    panel finishes sliding out (predicate re-check, the `call_when_panels_settled` shape, not a
+    `finished` signal), and make the defer check "any covering panel animating". Roughly 50-100
+    lines plus tests on the state machine. Book-switch state is the CLAUDE.md fragile zone: verify
+    VT, VT cross-file seeks and Undo first, then a switch from each context. The dual slide (Book
+    Detail right, the other panel left) already exists via the title-bar click; just confirm the
+    hook fires after the later of the two.
+  - **Side questions:** hide the button for archived books (Stats shows excluded/deleted/missing
+    ones; `_ghost_label` already marks them); the currently playing book (existing early return
+    just closes panels, or hide the button); focus release from both panels; the Stats refresh
+    racing the outgoing `session_recorder.close()` write (probably harmless, unchecked).
+  - **Side benefit:** any later load path (e.g. from Stats' Recently finished) gets the same
+    handling for free.
+
 - **[2026-11-02, FIXED] Mute/unmute: abrupt cut, spam, and ghosting during a theme fade.** Closes
   two entries. (1) 2026-06-23 "Slider→muted-icon transition is abrupt": `8295de7` animates both
   ways (mute drains the fill then fades the empty bar out before the icon; unmute fades the empty

@@ -796,9 +796,6 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
   source of truth for this feature.
 
 ### Not-yet-decided small features (batch logged 2026-09-17)
-- [2026-09-17] Play button on the Book Detail panel — feature, minor, not decided whether/how to add
-  it. No design yet (where it goes, what it does that the main transport doesn't already cover from
-  outside the panel).
 - [2026-09-17] Custom mouse pointers — feature, visual, minor. No design yet.
 - [2026-09-17] A fourth theme-shuffle mode that updates the theme pool based on the current book's
   cover colors (distinct from the existing "Cover art based theme" Off/With pool/Exclusive modes,
