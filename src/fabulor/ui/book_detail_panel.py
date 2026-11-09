@@ -1663,6 +1663,9 @@ class BookDetailPanel(QWidget):
 
     def _on_play_clicked(self) -> None:
         if self._book_path and self._play_offered and not self._is_archived:
+            # One-shot: the panel is closing, so a second click or P during the slide-out
+            # must not request the same switch again.
+            self.set_play_offered(False)
             self.play_requested.emit(self._book_path)
 
     def _on_cover_panel_changed(self, cover_path: str):
@@ -1940,6 +1943,16 @@ class BookDetailPanel(QWidget):
                 self._cycle_metadata_field(backward=(key == Qt.Key.Key_Up))
                 return
             super().keyPressEvent(event)
+            return
+
+        # P = the cover's play button, on every tab: no tab-local handler claims P, and the
+        # armed-confirm dismiss above runs first, so a confirm can never turn into a book
+        # switch. Space was rejected for this (2026-11-09): it falls through to here only when
+        # nothing claims it, so a confirm that timed out a moment before the press would load
+        # the book instead of no-op, and its meaning would depend on the tab and selection.
+        if key == Qt.Key.Key_P:
+            if not event.isAutoRepeat():
+                self._on_play_clicked()
             return
 
         # Tags is checked BEFORE the top-level Left/Right tab-cycle below — it is the only

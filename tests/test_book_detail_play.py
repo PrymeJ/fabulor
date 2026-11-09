@@ -187,3 +187,47 @@ def test_panel_withholds_play_from_archived_books(offered, archived, expected):
     assert calls == [expected]
     BookDetailPanel._on_play_clicked(panel)
     assert emitted == (["/b.m4b"] if expected else [])
+
+
+# ── P key ───────────────────────────────────────────────────────────────────────
+
+def _key(k, repeat=False):
+    from PySide6.QtGui import QKeyEvent
+    return QKeyEvent(QEvent.Type.KeyPress, k, Qt.NoModifier, "", repeat)
+
+
+def _keyed_panel(offered=True, confirming_remove=False):
+    panel = BookDetailPanel.__new__(BookDetailPanel)
+    panel._play_overlay = type("O", (), {"set_offered": lambda self, v: None})()
+    panel._is_archived = False
+    panel._book_path = "/b.m4b"
+    panel._play_offered = offered
+    panel._editing = False
+    panel._confirming_finished = False
+    panel._confirming_remove = confirming_remove
+    panel.cancelled = []
+    panel._cancel_remove = lambda: panel.cancelled.append(1)
+    emitted = []
+    panel.play_requested = type("S", (), {"emit": lambda self, p: emitted.append(p)})()
+    return panel, emitted
+
+
+def test_p_plays_once_and_is_one_shot():
+    panel, emitted = _keyed_panel()
+    BookDetailPanel.keyPressEvent(panel, _key(Qt.Key.Key_P))
+    BookDetailPanel.keyPressEvent(panel, _key(Qt.Key.Key_P))
+    assert emitted == ["/b.m4b"]
+
+
+def test_p_autorepeat_and_not_offered_do_nothing():
+    panel, emitted = _keyed_panel()
+    BookDetailPanel.keyPressEvent(panel, _key(Qt.Key.Key_P, repeat=True))
+    panel2, emitted2 = _keyed_panel(offered=False)
+    BookDetailPanel.keyPressEvent(panel2, _key(Qt.Key.Key_P))
+    assert emitted == [] and emitted2 == []
+
+
+def test_p_with_a_confirm_armed_only_cancels_it():
+    panel, emitted = _keyed_panel(confirming_remove=True)
+    BookDetailPanel.keyPressEvent(panel, _key(Qt.Key.Key_P))
+    assert emitted == [] and panel.cancelled == [1]
