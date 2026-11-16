@@ -2055,11 +2055,17 @@ class HourlyHeatmap(QWidget):
             if truncated_count > 0:
                 rows_html += f"<tr><td colspan='2' style='font-style: italic; color: {more_color}; padding-top: 2px;'>… and {truncated_count} more</td></tr>"
 
+            # padding-right:1px on the rule's cell only: the tooltip label's
+            # own indent puts 1px more on the left than the right, which left
+            # the rule closer to the right border (2026-11-16). The text cells
+            # don't get it: the last glyph's advance already leaves blank
+            # space after the ink, and padding them too pushed "14 min"/"14m"
+            # visibly left of centre.
             html = (
                 f"<html><body style='font-size:12px'>"
                 f"<table border='0' cellspacing='0' cellpadding='0'>"
                 f"<tr><td colspan='2' align='center'><b>{header}</b></td></tr>"
-                f"<tr><td colspan='2'><hr style='margin:3px 0'/></td></tr>"
+                f"<tr><td colspan='2' style='padding-right:1px'><hr style='margin:3px 0'/></td></tr>"
                 f"{rows_html}</table>"
                 f"</body></html>"
             )
