@@ -1594,6 +1594,42 @@ in the window" need; only reach for real `MouseMove` events for a hover mechanis
 widget that can set its own tracking (the pattern every other hover feature in this app already
 uses).
 
+### DO NOT show a tooltip in the main window with `QToolTip` — route it through `ui/app_tooltip.py`
+Tooltips are an in-window `QLabel` (`AppTooltip`, `#app_tooltip`) since 2026-11-16, not Qt's popup
+window. Widgets keep calling `setToolTip()`; an app-wide filter picks the text up (an item view's
+hovered item's `ToolTipRole` included). Code that shows one by hand calls
+`app_tooltip.show_text()`/`hide_text()`, as the Heatmap does. Three facts, each measured live, make
+`QToolTip` unusable here:
+
+- **Qt only keeps its tooltip on the screen, and on native Wayland it cannot be moved back into the
+  window after creation.** A probe correcting the position on Show/Move saw Qt accept every move,
+  then a Move event put the tooltip back at its original spot within milliseconds; nothing in our
+  code moved it. A child widget of the main window can't be drawn outside it, so containment holds
+  by construction. Do not retry a reposition-after-show clamp.
+- **Qt never asks for a tooltip while the blur grab runs.** Its ~700ms wake-up never completes when
+  `transport_bar_blur._grab_and_blur` hides and re-shows the panel every ~64ms: zero `ToolTip`
+  events across a 4s hover with grabs running, events arriving only once grabs went idle. So
+  native tooltips were already dead inside panels with the blur on and a book playing, before this
+  change. `_TooltipFilter` runs its own hover delay instead (Enter/Hover/MouseMove arm it, 700ms, or
+  100ms within 2s of a tooltip being up); Qt's own `ToolTip` event is still honoured when it comes.
+- **The blur grab photographs the main window.** `_grab_and_blur` wraps its whole hide → grab →
+  show span in `app_tooltip.suppress_for_grab()`: the tooltip is hidden for the photograph, and the
+  filter ignores the Hide/Leave/Enter the panel's hide/show sends to its children (all synchronous,
+  so they land inside the span). Without the second half a tooltip shown from inside a panel closes
+  within a fraction of a second, and the grab's synthetic Enter re-arms the hover delay. Any new
+  code that hides and re-shows a panel while tooltips may be up needs the same guard.
+
+Placement (`place_tip`): below the cursor, above it if it doesn't fit, sliding left as far as needed
+so a tooltip stays on one line; only text wider than the window wraps. Spacing is
+`QLabel#app_tooltip` in `get_base_stylesheet`; the `context` property (`_CONTEXT_BY_CLASS`, by the
+source's class or an ancestor's) selects a variant, currently only `heatmap`. The `QToolTip` rule
+stays for other windows (dialogs keep Qt's tooltips). Gotcha if it's ever tuned again: on Qt's own
+tooltip label a stylesheet `padding-left` is added to the label's margin on **every** side, so it
+grows the whole box; `qproperty-margin`/`qproperty-indent` are the per-side levers there. Known
+open item: the below-cursor gap is a constant sized for a default arrow, and a large pointer
+overlaps the tooltip — parked under the custom-pointers TODO item. Pinned by
+`tests/test_app_tooltip.py`.
+
 ---
 
 ## Tech Stack
@@ -1774,6 +1810,7 @@ All mode detection happens in `_resolve_playlist()` (run async on a `QThreadPool
 - **`CoverCarousel`** — decorative scrolling strip, fixed 300px wide; static when ≤ 3 covers, else gapless looping scroll (`_TICK_MS = 33`, time-delta based); staggered reveal (first at 375 ms, then every 75 ms) with a fade-in; 1px top/bottom stripe lines; `set_stripe_color` / `stop` / `start`.
 - **`icon_utils`** — `render_logo_placeholder` (themed `fabulor.svg`), `render_logo_placeholder_bordered`, `load_themed_icon` (LRU 64; swaps `#000000` fills/strokes — for black-paint icons), `load_currentcolor_icon` (LRU 64; regex-replaces all non-`none` fills/strokes — for `currentColor` SVGs like clock/calendar).
 - **`ContextIconMenu`** — single shared frameless popup with Cut/Copy/Paste/Delete (each enabled by selection/clipboard/read-only state), themed, clamped within the window.
+- **`AppTooltip`** (`app_tooltip.py`) — the app's tooltip: an in-window label fed by an app-wide filter from `setToolTip()` text (and item `ToolTipRole`), placed below/above the cursor and kept inside the window, one line unless wider than the window. See the "DO NOT show a tooltip in the main window with `QToolTip`" rule.
 
 ### Settings Panel
 
@@ -1904,6 +1941,7 @@ src/fabulor/
     ├── line_edit_dragfix.py  # DragSafeLineEdit — QLineEdit base for ALL text inputs; suppresses Qt's stray-move drag-select
     ├── scrollbar_jump.py     # ScrollBarJumpFilter — app-wide right-click-gutter-to-jump; suppresses the native scrollbar context menu
     ├── sidebar_hotspot.py    # SidebarHotspot — invisible 15x15 hover-intent zone, second sidebar-open method alongside right-click
+    ├── app_tooltip.py        # AppTooltip — every main-window tooltip, drawn in-window (not a QToolTip popup); own hover delay, blur-grab guard
     └── text_context_menu.py  # Right-click Cut/Copy/Paste/Delete context menu for metadata and tag fields
 ```
 
@@ -1937,7 +1975,13 @@ Any `QWidget` subclass (not `QFrame`, not `QLabel`) that owns a background-color
 
 *Reorganization note (2026-07-13): the "Critical Architecture Rules" section was restructured to remove repetition — it previously existed as two passes (a full-prose section and a later condensed second pass covering many of the same rules). The two were merged: rules that appeared in both now appear once, under whichever fact they share, with no information dropped. Rules unique to either pass are unchanged. See the note directly under the "Critical Architecture Rules" heading for detail.*
 
-*Last updated: 2026-11-09 Session 1 — Book Detail's play button and `P` key (Stats/Tags
+*Last updated: 2026-11-16 Session 1 — Tooltips moved in-window (`ui/app_tooltip.py`): Qt's popup
+spilled past the window and can't be moved back on Wayland, and never appeared inside panels with
+the blur grab running. New rule "DO NOT show a tooltip in the main window with `QToolTip`". Tag
+list hover dead after reopening Tags with a tag open: fixed in `refresh()`. Audio-server-restart
+silent play logged in TODO. See SESSION.md.*
+
+*Previously: 2026-11-09 Session 1 — Book Detail's play button and `P` key (Stats/Tags
 context): `BookSwitchState.waits_for_panels` and `_on_panels_cleared_for_switch` let a load end the
 switch deadzone without a Library slide (see the book-switch state machine rule). TODO and triage
 page staleness pass; restart icon outline halved. See SESSION.md.*

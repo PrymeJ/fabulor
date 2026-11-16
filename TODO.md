@@ -794,6 +794,13 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
 
 ### Not-yet-decided small features (batch logged 2026-09-17)
 - [2026-09-17] Custom mouse pointers — feature, visual, minor. No design yet.
+  - [2026-11-16] Tooltip clearance must follow the pointer's size. The in-window tooltip
+    (`ui/app_tooltip.py`) sits a fixed `_BELOW_CURSOR = 20` px below the cursor hotspot (or
+    `_ABOVE_CURSOR = 6` above it), sized for a default arrow. Pryme's large system pointer
+    overlaps the tooltip's top edge (screenshots 2026-11-16, Heatmap). When custom pointers
+    land, derive these two offsets from the app's own pointer image (its height below the
+    hotspot) instead of the constants. Deferred until then on purpose: the right numbers
+    depend on the pointer design.
 - [2026-09-17] A fourth theme-shuffle mode that updates the theme pool based on the current book's
   cover colors (distinct from the existing "Cover art based theme" Off/With pool/Exclusive modes,
   which apply the cover's colors directly rather than using them to pick pool members) — feature,

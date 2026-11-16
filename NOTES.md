@@ -1,3 +1,31 @@
+## 2026-11-16 — Tooltips: why `QToolTip` was replaced, and the tag list hover filter
+
+**Wayland ignores a tooltip moved after creation.** A filter on the tooltip label's Show/Move
+clamped it into the window. `[TOOLTIP-CLAMP-PROBE]` at 11:48:12: tip at x=176, width 166 (ends at
+342 in a 300px window), filter moved it to 0, Qt reported `after=(0, …)`, then a Move event put it
+back at 176 within the same millisecond, repeating while the cursor moved. Nothing in our code
+moves it to 176. Inference, not verified in Qt source: the compositor keeps the position from the
+popup's creation.
+
+**Qt's tooltip wake-up never completes under the blur grab.** `[APP-TOOLTIP-PROBE]`: at 12:43:20
+and 12:44:39 `ToolTip` events arrived and tooltips showed; the grab had gone idle at 12:44:33. At
+12:46:49-53 (Sleep panel open, book playing) the grab logged every ~64ms and zero `ToolTip` events
+arrived. The restart of Qt's 700ms timer on each panel hide/show is inferred from that correlation.
+Fix: `_TooltipFilter`'s own hover delay, ignoring events inside `suppress_for_grab()`.
+
+**Spacing quirks met on the way.** On Qt's tooltip label a stylesheet `padding-left` is added to
+the label's margin on every side (each try grew the whole box); `qproperty-margin`/`-indent` worked
+per side. A 1px right shift of a one-line title helped titles starting with T and broke the rest:
+the left gap is each first glyph's side bearing. Trailing space on the right is the last glyph's
+advance. On the Heatmap only the rule's cell needed right padding.
+
+**Tag list hover dead after reopening.** `[TAG-HOVER-PROBE]` 12:07:19-27: list visible, cursor
+over rows, `installed=False`, installs 2 / removes 4, event count frozen at 10702. Sequence: open
+tag 2021 (`_open_tag` removes the row tracker), close the panel with the detail open (`hideEvent`
+removes), reopen: `_start_tags_entry` calls `show()` then `refresh()`, so `showEvent` saw the detail
+view and installed only `_thumb_hover`, and `refresh()` showed the list without `_row_hover`. Fixed
+in `refresh()` (`7ba2db3`). Probe in `90e6dcc`, reverted in `c8f0ce1`.
+
 ## 2026-10-28 — TESTING.md trimmed to headings and checks; one background note moved here
 
 TESTING.md is Pryme's pre-release manual checklist, so section backgrounds, fix stories, commit

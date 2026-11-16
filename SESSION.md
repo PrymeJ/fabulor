@@ -1,3 +1,34 @@
+## Session Summary — 2026-11-16 Session 1 — In-window tooltips, tag list hover, audio-server note
+
+Commits: `bbd5ce0`, `bdaad9d`, `6314e58`, `30dda20`, `8e1cf9c`, `c40ad27` (tooltip work, branch
+`feature/in-window-tooltips` merged to `main` by fast-forward and deleted), `90e6dcc`, `7ba2db3`,
+`c8f0ce1` (tag hover probe, fix, probe reverted), plus this docs commit. Not pushed.
+
+**Silent play after an audio server restart.** Play did nothing and Next/Prev left the chapter
+slider full. The log showed WirePlumber killed and restarted at 02:42:03; mpv stayed connected
+but lost its stream node, so its clock stalled. Restarting Fabulor is the workaround. Logged in TODO
+(green on the triage page): detect it (empty `current-ao`, or position frozen while unpaused) and
+warn or `ao-reload`; mpv-init rule applies.
+
+**Tooltips.** Started as a 1px centring nudge on the Tags title tooltip and turned into a rewrite.
+A global `QToolTip` padding change broke the Heatmap's HTML tooltip, so it was scoped to Tags, then
+the Heatmap's own rule got 1px of right padding on its cell only (text cells already carry the last
+glyph's trailing advance). Pryme then asked to keep tooltips inside the window. A reposition clamp
+did nothing on native Wayland: a probe showed Qt accepting each move and the tooltip snapping back.
+Tooltips are now an in-window label (`ui/app_tooltip.py`) fed by one app-wide filter, placed
+below/above the cursor and sliding left to stay on one line. With the blur on they then never
+appeared: a second probe showed Qt sends no `ToolTip` event while the grab hides/shows the panel
+every 64ms, so the filter runs its own hover delay. That was already true of native tooltips
+inside panels. Every tooltip but the Heatmap's has 1px less top padding; the naming-pattern
+tooltips read "For folders named like …" (Pryme's point: "Folders are named like" could read as
+renaming them). Large pointer overlapping the tooltip: parked under the custom-pointers TODO.
+
+**Tag list hover stuck.** `[TAG-HOVER-PROBE]` caught it: installs 2, removes 4, event counter
+frozen. Tags opens with `show()` before `refresh()`; closing it with a tag's detail open and
+reopening installed only the thumbnail tracker, and `refresh()` switched to the list without the
+row tracker. `refresh()` now swaps them. The probe is committed and reverted so it can be
+cherry-picked back if the bug returns. Pryme hasn't seen it again, still watching.
+
 ## Session Summary — 2026-11-09 Session 1 — Book Detail play button, TODO staleness pass, restart icon
 
 Commits: `963aa0f`, `07e537f`, `040b340`, `e045456` (merged to `main` and pushed), `52a78ba`,

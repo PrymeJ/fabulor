@@ -1,3 +1,18 @@
+## In-window tooltips and tag list hover — 2026-11-16 Session 1
+
+### Tooltips
+- [ ] Heatmap cell near the right edge: tooltip stays inside the window, long titles on one line.
+- [ ] Heatmap rule centred; header and rows look centred.
+- [ ] With the blur on and a book playing: Sleep fade buttons, Settings folder list, Tags book
+      covers each show a tooltip after ~0.7s that stays up while hovered.
+- [ ] Long folder path in Settings > Library wraps inside the window.
+- [ ] Naming-pattern buttons read "For folders named like …".
+- [ ] One-line tooltips (Tags, Sleep, folders) look vertically centred.
+- [ ] Tooltip never appears in the frosted transport-bar backdrop.
+
+### Tag list hover
+- [ ] Open a tag, close Tags with the tag still open, reopen: hover follows the mouse at once.
+
 ## Library List hover and Book Detail slide-in rows — 2026-10-30 Session 3
 
 ### List view hover
