@@ -4706,6 +4706,25 @@ def get_base_stylesheet(theme_name="default"):
             color: {t['text']};
             border: 1px solid {t['accent']};
             font-size: 11px;
+            /* The default placement leaves the text toward the bottom-left
+               (reported 2026-11-16 on the Tags panel's thumbnail tooltips).
+               Avoid padding-left: Qt's tooltip label adds the LEFT padding
+               to its margin on every side, so any left padding grows the
+               whole box. Lift the text with bottom padding instead.
+               The margin (2 by default, all four sides) is set to 0, and
+               the sides are rebuilt individually:
+                 top    0                     (trimmed 2px)
+                 bottom 0 + 2px padding       (trimmed 1px, net of the lift)
+                 left   0 + indent 3          (Qt default: 2 + indent 1)
+                 right  0 + 1px padding       (trimmed 1px: the label's width
+                        counts the last glyph's full advance, which already
+                        leaves blank space after the ink)
+               A 1px right shift of the text was tried and dropped: it helped
+               titles starting with T but threw off the rest, since the left
+               gap depends on each first letter's bearing. */
+            padding: 0px 1px 2px 0px;
+            qproperty-margin: 0;
+            qproperty-indent: 3;
         }}
         QWidget#status_banner {{
             background: {status_banner_bg};
