@@ -1004,6 +1004,19 @@ class TagManagerWidget(QWidget):
         self._current_tag = None
         self._panel_widget.hide()
         self._list_widget.show()
+        # Switch the hover trackers to the list, same as _show_list does.
+        # Needed because panels._start_tags_entry calls show() BEFORE this:
+        # if the panel was closed with a tag's detail view open, showEvent
+        # sees the detail view, installs only _thumb_hover, and this swap to
+        # the list then left _row_hover uninstalled — mouse hover dead on the
+        # list (keys still worked) until the panel was closed and reopened.
+        # Found 2026-11-16 with [TAG-HOVER-PROBE]: installs=2, removes=4,
+        # event count frozen. Guarded on isVisible() because refresh() is also
+        # called while the panel is closed (scan finished, etc.), where an
+        # install would leave an app-wide filter running for nothing.
+        if self.isVisible():
+            self._thumb_hover.remove_filter()
+            self._row_hover.install_filter()
         # Any keyboard cursor belongs to the OLD rows, about to be deleted —
         # clearing here (not re-deriving after rebuild) matches every other
         # region's "no memory across a rebuild/exit" convention this branch
