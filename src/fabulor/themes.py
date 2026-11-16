@@ -4707,6 +4707,28 @@ def get_base_stylesheet(theme_name="default"):
             border: 1px solid {t['accent']};
             font-size: 11px;
         }}
+        /* The in-window tooltip (ui/app_tooltip.py) that replaces QToolTip
+           for the main window; the QToolTip rule above stays for the
+           fallback path (other windows). Same look. Padding reproduces Qt's
+           tooltip spacing: margin 2 on every side plus a 1px indent on the
+           left. */
+        QLabel#app_tooltip {{
+            background-color: {t['bg_deep']};
+            color: {t['text']};
+            border: 1px solid {t['accent']};
+            font-size: 11px;
+            padding: 2px 2px 2px 3px;
+        }}
+        /* Tags panel book-title tooltips, tuned 2026-11-16 (one plain line;
+           the default sat toward the bottom-left): top trimmed 2px, bottom
+           1px, right 1px (the label's width counts the last glyph's full
+           advance, which already leaves blank space after the ink). A 1px
+           right shift was tried and dropped: it helped titles starting with
+           T but threw off the rest, since the left gap depends on each
+           first letter's bearing. */
+        QLabel#app_tooltip[context="tags"] {{
+            padding: 0px 1px 2px 3px;
+        }}
         QWidget#status_banner {{
             background: {status_banner_bg};
             border-radius: 0px;
@@ -6549,36 +6571,6 @@ def get_tags_stylesheet(theme_name="default"):
             background-color: rgba({_hex_to_rgb(t['bg_main'])}, {t['panel_opacity_hover']});
             border-right: 1px solid {t['accent']};
             border-radius: 0px;
-        }}
-        /* Tags-panel tooltips only (the thumbnail title tooltips). Qt styles a
-           tooltip from the stylesheet of the widget that shows it, so this
-           rule reaches no other panel. It was briefly global (2026-11-16) and
-           broke the Heatmap's rich-text tooltips (horizontal rule cut short
-           on the right, uneven line spacing), so it stays scoped here. The
-           base colours are repeated from get_base_stylesheet's rule.
-
-           The default placement leaves a plain one-line tooltip's text
-           toward the bottom-left. Avoid padding-left: Qt's tooltip label
-           adds the LEFT padding to its margin on every side, so any left
-           padding grows the whole box. The margin (2 by default, all four
-           sides) is set to 0 and the sides are rebuilt individually:
-             top    0                     (trimmed 2px)
-             bottom 0 + 2px padding       (trimmed 1px, net of the lift)
-             left   0 + indent 3          (Qt default: 2 + indent 1)
-             right  0 + 1px padding       (trimmed 1px: the label's width
-                    counts the last glyph's full advance, which already
-                    leaves blank space after the ink)
-           A 1px right shift of the text was tried and dropped: it helped
-           titles starting with T but threw off the rest, since the left gap
-           depends on each first letter's bearing. */
-        QToolTip {{
-            background-color: {t['bg_deep']};
-            color: {t['text']};
-            border: 1px solid {t['accent']};
-            font-size: 11px;
-            padding: 0px 1px 2px 0px;
-            qproperty-margin: 0;
-            qproperty-indent: 3;
         }}
         QWidget#tag_manager_list,
         QWidget#tag_manager_panel,

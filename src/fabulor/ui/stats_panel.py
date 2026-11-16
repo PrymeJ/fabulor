@@ -21,6 +21,7 @@ from .library import _cover_cache
 from .icon_utils import render_logo_placeholder_bordered as _render_svg_placeholder_bordered
 from .icon_utils import load_currentcolor_icon
 from . import scrollbar_jump
+from . import app_tooltip
 
 # Fixed neutral grey used for SVG placeholders on archived (deleted/excluded) books.
 # to_grayscale() on a raster cover looks right; applying it to a themed SVG placeholder
@@ -2055,8 +2056,9 @@ class HourlyHeatmap(QWidget):
             if truncated_count > 0:
                 rows_html += f"<tr><td colspan='2' style='font-style: italic; color: {more_color}; padding-top: 2px;'>… and {truncated_count} more</td></tr>"
 
-            # padding-right:1px on the rule's cell only: the tooltip label's
-            # own indent puts 1px more on the left than the right, which left
+            # padding-right:1px on the rule's cell only: the tooltip's left
+            # padding is 1px more than its right (3 vs 2, matching Qt's old
+            # margin + indent; see QLabel#app_tooltip in themes.py), which left
             # the rule closer to the right border (2026-11-16). The text cells
             # don't get it: the last glyph's advance already leaves blank
             # space after the ink, and padding them too pushed "14 min"/"14m"
@@ -2070,36 +2072,12 @@ class HourlyHeatmap(QWidget):
                 f"</body></html>"
             )
 
-            # Determine tooltip position
-            global_pos = event.globalPosition().toPoint()
-            win = self.window()
-            # local_pos is relative to the main window (300px wide)
-            local_pos = win.mapFromGlobal(global_pos)
-
-            # Estimate dimensions to handle flipping logic
-            # We use a 160px width budget to fit comfortably in the 300px window
-            tt_w = 160
-            tt_h = 40 + (len(display_books) * 18) + (18 if truncated_count > 0 else 0)
-            
-            # Horizontal flip: if on the right side, show to the left of the cursor
-            if local_pos.x() > win.width() * 0.6:
-                off_x = -(tt_w + 10)
-            else:
-                off_x = 15
-
-            # Vertical flip: if in the bottom half (near the footer labels), show above
-            if local_pos.y() > win.height() * 0.6:
-                off_y = -(tt_h + 10)
-            else:
-                off_y = 15
-
-            show_pos = global_pos + QPoint(off_x, off_y)
-
-            from PySide6.QtWidgets import QToolTip
-            QToolTip.showText(show_pos, html, self)
+            # In-window tooltip (ui/app_tooltip.py): it places itself clear
+            # of the cursor and inside the window, so no flip logic here.
+            # Called on every mouse move; an unchanged tooltip stays put.
+            app_tooltip.show_text(html, self, event.globalPosition().toPoint())
         else:
-            from PySide6.QtWidgets import QToolTip
-            QToolTip.hideText()
+            app_tooltip.hide_text()
 
     def leaveEvent(self, event):
         self._hovered = None

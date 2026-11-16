@@ -32,6 +32,7 @@ from .ui.controls import ClickSlider # arrow-key adjustment of a focused setting
 from .ui.panels import PanelManager, install_panel_timing_probe # New import for PanelManager
 from .ui.visual_area_blur import ClippedBlurEffect
 from .ui import scrollbar_jump
+from .ui import app_tooltip
 from .ui.carousel import CoverCarousel, CAROUSEL_STRIPE_W
 from .ui.sidebar_hotspot import SidebarHotspot
 from .ui import main_window_builders as builders
@@ -632,6 +633,11 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # QListView/QComboBox popups, several created internally by Qt with no
         # construction site to patch. See ui/scrollbar_jump.py.
         scrollbar_jump.install(QApplication.instance())
+
+        # Tooltips are drawn inside this window rather than as Qt popup
+        # windows, which spilled past the window edge (and can't be moved
+        # back on Wayland). See ui/app_tooltip.py.
+        self._app_tooltip = app_tooltip.install(QApplication.instance(), self)
 
         # Restore last played book if it exists
         last_book = self.config.get_last_book()

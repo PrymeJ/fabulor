@@ -52,6 +52,8 @@ from PySide6.QtWidgets import (
     QPushButton, QWidget,
 )
 
+from . import app_tooltip
+
 logger = logging.getLogger(__name__)
 
 # GRAB-LOOP PROBE (2026-08-14). Instruments the self-sustaining hide/show
@@ -2363,6 +2365,10 @@ class TransportBarBlurOverlay:
         # Restored in the finally too, so a raising grab can never strand Book Detail
         # off-screen.
         _moved_from = None
+        # In-window tooltip (ui/app_tooltip.py): hidden for the photograph and
+        # deaf to the panel hide/show below. Exited in the finally.
+        _tip_guard = app_tooltip.suppress_for_grab()
+        _tip_guard.__enter__()
         try:
             self._grab_suppress_until = time.perf_counter() + _GRAB_FEEDBACK_SUPPRESS_S
             overlay_was_visible = self._overlay.isVisible()
@@ -2445,6 +2451,7 @@ class TransportBarBlurOverlay:
                 _w.setAttribute(Qt.WA_TransparentForMouseEvents, False)
             if _cursor_override_pushed:
                 QApplication.restoreOverrideCursor()
+            _tip_guard.__exit__(None, None, None)
             self._grab_suppress_until = time.perf_counter() + _GRAB_FEEDBACK_SUPPRESS_S
         t1 = time.perf_counter()
 
