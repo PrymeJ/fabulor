@@ -1219,6 +1219,7 @@ isolation.
 - [2026-07-10] PageUp/PageDown jump distance in the library list — undecided
 
 ### Volume / transport UI
+- [2026-11-16] Play silently does nothing after the audio server restarts (lost audio stream, no warning)
 
 ### Misc UI polish
 - [2026-07-30] In-app help section — the home for all reference material, incl. search operators
@@ -1234,6 +1235,23 @@ isolation.
 - [2026-07-14] App-start flow-animation baseline roughness (Regime A) — standalone ~70ms hitch
 
 ## Pending
+
+- **[2026-11-16] Play silently does nothing after the audio server restarts.** Seen live: the book
+  wouldn't play, and Next/Prev left the chapter slider pinned at full. The log showed mpv
+  accepting every seek and reporting `paused=False`, but `time_pos` never advanced past each seek
+  target. Cause, from the system journal and `pw-dump`: WirePlumber was SIGKILLed and restarted at
+  02:42:03 while Fabulor sat paused. Afterwards Fabulor's PipeWire client (pid 5179, `fabulor`)
+  still existed but had no audio stream node, so mpv's audio output had nothing to write to and
+  its clock stopped. A restart of Fabulor is the workaround. No exception, warning or `load_failed`
+  was logged. Not reproduced on purpose yet; the chapter-slider-at-full display and the
+  `_sync_chapter_ui ... prev_ui_row=1` line repeating every tick were not traced and are assumed
+  to follow from the stalled position.
+  **Idea, not designed:** detect it and tell the listener instead of failing silently. Candidate
+  signals: mpv's `current-ao` property going empty, or the position not moving for a few seconds
+  while unpaused. Possible recovery: re-create the audio output (an mpv `ao-reload` command), or
+  at least show a banner saying to restart. Note that anything touching mpv's setup falls under
+  CLAUDE.md's MPV-initialization rule: say what would change and wait for confirmation.
+  Not blocking: needs the audio server to restart mid-session.
 
 - **[2026-11-02] README screenshots from a legal demo library.** The README (`72106c5`) has no
   screenshots. Pryme won't publish them with his real library, even self-made audiobooks: real
