@@ -672,14 +672,6 @@ class TagManagerWidget(QWidget):
             self._tag_scroll, self._tag_list_rows, self,
             on_mouse_reclaim=self._on_mouse_reclaimed_tag_list,
         )
-        # [TAG-HOVER-PROBE] 1s heartbeat while the tag list is showing.
-        # Temporary, for the "hover stuck on one tag" bug. Logs stationary
-        # state, not just transitions, so a dead filter shows up as frozen
-        # event counters rather than as silence.
-        self._probe_timer = QTimer(self)
-        self._probe_timer.setInterval(1000)
-        self._probe_timer.timeout.connect(self._probe_tag_hover_heartbeat)
-        self._probe_invisible_ticks = 0
         # Horizontal Ignored, not Preferred: with Preferred the container claims
         # its own sizeHint and came out 245px wide inside a 242px viewport
         # (measured), overhanging by 3px — so a right margin measured from the
@@ -943,8 +935,6 @@ class TagManagerWidget(QWidget):
         # keys for exactly this reason — every other list-view key still goes
         # through the unaffected `_tag_scroll`-scoped path.
         super().showEvent(event)
-        if not self._probe_timer.isActive():  # [TAG-HOVER-PROBE]
-            self._probe_timer.start()
         if self._panel_widget.isVisible() or self._list_widget.isVisible():
             QApplication.instance().installEventFilter(self)
         # _row_hover/_thumb_hover (ScrollHoverTracker/GridHoverTracker) each own a
@@ -1057,28 +1047,6 @@ class TagManagerWidget(QWidget):
         # row[0] unhighlightable on hover until some other row was hovered
         # first — found live 2026-09-13.
         self._row_hover.resync()
-
-    def _probe_tag_hover_heartbeat(self) -> None:
-        """[TAG-HOVER-PROBE] One line per second while the tag list is showing.
-        Stops itself once the panel is really closed (a blur-grab hide is
-        momentary, so one invisible tick is skipped rather than a stop)."""
-        if not self.isVisible():
-            self._probe_invisible_ticks += 1
-            if self._probe_invisible_ticks >= 3:
-                self._probe_invisible_ticks = 0
-                self._probe_timer.stop()
-            return
-        self._probe_invisible_ticks = 0
-        if not self._list_widget.isVisible():
-            return
-        lit = [r.property("probe_tag") for r in self._tag_list_rows()
-               if r.property("hovered") == "true"]
-        snap = self._row_hover.probe_snapshot()
-        bd = getattr(self.window(), 'book_detail_panel', None)
-        logger.warning(
-            "[TAG-HOVER-PROBE] beat lit=%s kbd_idx=%s bd_visible=%s %s",
-            lit, self._kbdnav_row_index,
-            bd is not None and bd.isVisible(), snap)
 
     def _tag_list_rows(self) -> list:
         """Tag-list row widgets in visual order, live off the layout — shared by
@@ -1621,7 +1589,6 @@ class TagManagerWidget(QWidget):
     def _build_tag_row(self, tag_data: dict) -> QWidget:
         row = QWidget()
         row.setObjectName("tag_list_row")
-        row.setProperty("probe_tag", tag_data.get('tag'))  # [TAG-HOVER-PROBE]
         row.setAttribute(Qt.WA_StyledBackground, True)
         # Puts the row into Qt's hover tracking (underMouse/style machinery) —
         # same reasoning as BookDayRow in stats_panel.py; see the note there,

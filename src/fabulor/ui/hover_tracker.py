@@ -28,22 +28,8 @@ fighting a second, invisible one. `suspend()` exists for exactly that: while
 keyboard navigation owns the selection, mouse hover can be switched off without
 tearing the tracker down, so the two never render two highlights at once.
 """
-import logging
-
 from PySide6.QtCore import QObject, QPoint, Qt
 from PySide6.QtGui import QCursor
-
-logger = logging.getLogger(__name__)
-
-
-def _probe_row_name(row):
-    """[TAG-HOVER-PROBE] A readable name for a row in probe lines."""
-    if row is None:
-        return None
-    try:
-        return row.property("probe_tag") or row.objectName() or repr(row)
-    except RuntimeError:
-        return "<deleted>"
 
 # Minimum real cursor displacement, in pixels, required to reclaim from a
 # suspended (keyboard-owned) state — same role as the traveling marker's own
@@ -82,16 +68,6 @@ class ScrollHoverTracker(QObject):
         # clear its own state in response, instead of this generic tracker
         # reaching into caller-specific concepts it shouldn't know about.
         self._on_mouse_reclaim = on_mouse_reclaim
-        # [TAG-HOVER-PROBE] counters, read by probe_snapshot(). Temporary,
-        # for the "hover stuck on one tag until the panel is reopened" bug.
-        self._probe_installed = False
-        self._probe_installs = 0
-        self._probe_removes = 0
-        self._probe_events = 0         # every event the filter saw
-        self._probe_occluded = 0       # declined by the Book Detail guard
-        self._probe_in_scroll = 0      # tracked events inside the scroll area
-        self._probe_reclaim_rejects = 0
-        self._probe_last_reject = None
         scroll.verticalScrollBar().valueChanged.connect(self._resync)
         # Mouse movement is the OTHER half: valueChanged alone would only track
         # while scrolling, so plain hovering would never highlight anything.
@@ -161,8 +137,6 @@ class ScrollHoverTracker(QObject):
         ever opened."""
         from PySide6.QtWidgets import QApplication
         QApplication.instance().installEventFilter(self)
-        self._probe_installed = True
-        self._probe_installs += 1
 
     def remove_filter(self) -> None:
         """See install_filter(). Safe to call when not installed (or already
@@ -170,34 +144,8 @@ class ScrollHoverTracker(QObject):
         documented no-op, not an error."""
         from PySide6.QtWidgets import QApplication
         QApplication.instance().removeEventFilter(self)
-        self._probe_installed = False
-        self._probe_removes += 1
-
-    def probe_snapshot(self) -> dict:
-        """[TAG-HOVER-PROBE] Current tracker state for the owner's heartbeat."""
-        viewport = self._scroll.viewport()
-        pos = viewport.mapFromGlobal(QCursor.pos())
-        anchor = self._suspend_anchor
-        return {
-            "installed": self._probe_installed,
-            "installs": self._probe_installs,
-            "removes": self._probe_removes,
-            "events": self._probe_events,
-            "occluded": self._probe_occluded,
-            "in_scroll": self._probe_in_scroll,
-            "suspended": self._suspended,
-            "anchor": None if anchor is None else (anchor.x(), anchor.y()),
-            "hovered": _probe_row_name(self._hovered),
-            "viewport_visible": viewport.isVisible(),
-            "cursor_vp": (pos.x(), pos.y()),
-            "cursor_in_vp": viewport.rect().contains(pos),
-            "row_at_cursor": _probe_row_name(self._row_at(pos)),
-            "reclaim_rejects": self._probe_reclaim_rejects,
-            "last_reject": self._probe_last_reject,
-        }
 
     def eventFilter(self, obj, event):
-        self._probe_events += 1
         # OCCLUSION GUARD (2026-09-25) — same shape as TagManagerWidget.eventFilter's own
         # occlusion guard and StatsPanel.eventFilter's (see either for the reference case).
         # This filter is app-wide and only paired to the OWNER's showEvent/hideEvent (see
@@ -214,7 +162,6 @@ class ScrollHoverTracker(QObject):
         except (RuntimeError, AttributeError):
             book_detail_panel = None
         if book_detail_panel is not None and book_detail_panel.isVisible():
-            self._probe_occluded += 1
             return False
         from PySide6.QtCore import QEvent
         if ScrollHoverTracker._TRACKED_EVENTS is None:
@@ -226,7 +173,6 @@ class ScrollHoverTracker(QObject):
         if event.type() in ScrollHoverTracker._TRACKED_EVENTS:
             try:
                 if self._scroll.isAncestorOf(obj):
-                    self._probe_in_scroll += 1
                     if self._suspended:
                         self._maybe_reclaim_from_mouse()
                     else:
@@ -270,11 +216,6 @@ class ScrollHoverTracker(QObject):
         must not paint a second highlight. Suspending clears the current one.
         Records the cursor's position AT THE MOMENT of suspending as the
         reclaim anchor — see _maybe_reclaim_from_mouse."""
-        if suspended != self._suspended:
-            p = QCursor.pos()
-            logger.warning(
-                "[TAG-HOVER-PROBE] suspend %s -> %s cursor=(%d,%d)",
-                self._suspended, suspended, p.x(), p.y())
         self._suspended = suspended
         if suspended:
             self._suspend_anchor = QCursor.pos()
@@ -300,12 +241,7 @@ class ScrollHoverTracker(QObject):
         pos = QCursor.pos()
         if (abs(pos.x() - anchor.x()) < _MOUSE_RECLAIM_JITTER_PX
                 and abs(pos.y() - anchor.y()) < _MOUSE_RECLAIM_JITTER_PX):
-            self._probe_reclaim_rejects += 1
-            self._probe_last_reject = ((pos.x(), pos.y()), (anchor.x(), anchor.y()))
             return
-        logger.warning(
-            "[TAG-HOVER-PROBE] mouse reclaim cursor=(%d,%d) anchor=(%d,%d)",
-            pos.x(), pos.y(), anchor.x(), anchor.y())
         self._suspended = False
         self._suspend_anchor = None
         if self._on_mouse_reclaim is not None:
@@ -370,9 +306,6 @@ class ScrollHoverTracker(QObject):
     def _set_hovered(self, row):
         if row is self._hovered:
             return
-        logger.warning(
-            "[TAG-HOVER-PROBE] hovered %s -> %s",
-            _probe_row_name(self._hovered), _probe_row_name(row))
         previous, self._hovered = self._hovered, row
         # Drive the QSS :hover rule through a dynamic property rather than
         # relying on Qt's own hover state, which is what fails to update here.
