@@ -4709,25 +4709,21 @@ def get_base_stylesheet(theme_name="default"):
         }}
         /* The in-window tooltip (ui/app_tooltip.py) that replaces QToolTip
            for the main window; the QToolTip rule above stays for the
-           fallback path (other windows). Same look. Padding reproduces Qt's
-           tooltip spacing: margin 2 on every side plus a 1px indent on the
-           left. */
+           fallback path (other windows). Same look.
+           Padding starts from Qt's own tooltip spacing (margin 2 on every
+           side plus a 1px indent on the left: 2 2 2 3) with 1px trimmed from
+           the top: a plain one-line tooltip sat low (2026-11-16). */
         QLabel#app_tooltip {{
             background-color: {t['bg_deep']};
             color: {t['text']};
             border: 1px solid {t['accent']};
             font-size: 11px;
-            padding: 2px 2px 2px 3px;
+            padding: 1px 2px 2px 3px;
         }}
-        /* Tags panel book-title tooltips, tuned 2026-11-16 (one plain line;
-           the default sat toward the bottom-left): top trimmed 2px, bottom
-           1px, right 1px (the label's width counts the last glyph's full
-           advance, which already leaves blank space after the ink). A 1px
-           right shift was tried and dropped: it helped titles starting with
-           T but threw off the rest, since the left gap depends on each
-           first letter's bearing. */
-        QLabel#app_tooltip[context="tags"] {{
-            padding: 0px 1px 2px 3px;
+        /* The Heatmap's HTML tooltip (header, rule, rows) already looks
+           centred with Qt's original spacing; it keeps the full 2px top. */
+        QLabel#app_tooltip[context="heatmap"] {{
+            padding: 2px 2px 2px 3px;
         }}
         QWidget#status_banner {{
             background: {status_banner_bg};

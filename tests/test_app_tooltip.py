@@ -88,3 +88,34 @@ def test_grab_guard_ignores_panel_hide(window):
     assert tip.isVisible()                  # and not closed by the grab's Hide
     panel.hide()                            # a real hide does close it
     assert not tip.isVisible()
+
+
+def test_own_wake_shows_without_qt_tooltip_event(window):
+    """With the blur grab running, Qt never sends ToolTip; our own hover
+    delay must show the tooltip from an Enter alone."""
+    from PySide6.QtCore import QPointF
+    from PySide6.QtGui import QEnterEvent, QCursor
+    win, tip = window
+    btn = QPushButton("x", win)
+    btn.setGeometry(100, 100, 40, 20)
+    btn.setToolTip("Right-click to set as default")
+    btn.show()
+    QCursor.setPos(btn.mapToGlobal(QPoint(10, 10)))
+    local = QPointF(10, 10)
+    QApplication.sendEvent(btn, QEnterEvent(local, local, QPointF(btn.mapToGlobal(QPoint(10, 10)))))
+    tip._filter._wake.timeout.emit()   # fire the delay without waiting
+    assert tip.isVisible()
+    assert tip.text() == "Right-click to set as default"
+
+
+def test_grab_enter_does_not_arm_wake(window):
+    from PySide6.QtCore import QPointF
+    from PySide6.QtGui import QEnterEvent
+    win, tip = window
+    btn = QPushButton("x", win)
+    btn.setToolTip("t")
+    btn.show()
+    local = QPointF(5, 5)
+    with app_tooltip.suppress_for_grab():
+        QApplication.sendEvent(btn, QEnterEvent(local, local, local))
+    assert tip._filter._pending is None

@@ -23,9 +23,9 @@ window, so it uses the full window width and stays on one line. Only text
 wider than the whole window (minus a margin) wraps.
 
 **Styling.** `QLabel#app_tooltip` in get_base_stylesheet (themes.py). A
-`context` property selects per-panel spacing (`tags` for the Tags panel's
-book-title tooltips), derived from the source widget's ancestors in
-`_CONTEXT_BY_ANCESTOR`.
+`context` property selects per-source spacing (`heatmap` for the Heatmap's
+multi-line HTML tooltip), derived from the source widget's class or an
+ancestor's in `_CONTEXT_BY_CLASS`.
 
 **The blur grab.** `transport_bar_blur` photographs the main window several
 times a second; a visible tooltip would be baked into the frosted backdrop.
@@ -45,10 +45,17 @@ _ABOVE_CURSOR = 6
 _RIGHT_OF_CURSOR = 2
 # Qt hides its own tooltips after 10s; match it.
 _HIDE_AFTER_MS = 10_000
+# Our own hover delay, matching Qt's (SH_ToolTip_WakeUpDelay 700ms). Shorter
+# when a tooltip was just showing, like Qt's "fall asleep" window, so moving
+# between tooltipped widgets doesn't wait the full delay each time.
+_WAKE_DELAY_MS = 700
+_WAKE_DELAY_AWAKE_MS = 100
+_AWAKE_WINDOW_S = 2.0
 
-# objectName of an ancestor -> value of the tooltip's `context` property.
-_CONTEXT_BY_ANCESTOR = {
-    "tags_panel": "tags",
+# Class name of the source widget or an ancestor -> value of the tooltip's
+# `context` property, which selects per-context spacing in themes.py.
+_CONTEXT_BY_CLASS = {
+    "HourlyHeatmap": "heatmap",
 }
 
 _instance = None  # the AppTooltip, set by install()
@@ -77,14 +84,14 @@ class AppTooltip(QLabel):
         self._context = None
         self._hide_timer = QTimer(self)
         self._hide_timer.setSingleShot(True)
-        self._hide_timer.timeout.connect(self.hide_tip)
+        self._hide_timer.timeout.connect(lambda: self.hide_tip("timeout"))
         self._grab_hidden = False
 
     # -- public -----------------------------------------------------------
 
     def show_tip(self, text: str, source: QWidget, global_pos: QPoint, index=None):
         if not text:
-            self.hide_tip()
+            self.hide_tip("empty text")
             return
         same = (self.isVisible() and source is self._source
                 and text == self._text and index == self._source_index)
@@ -101,7 +108,9 @@ class AppTooltip(QLabel):
         self.show()
         self.raise_()
 
-    def hide_tip(self):
+    def hide_tip(self, reason="unspecified"):
+        if self.isVisible() and getattr(self, "_filter", None) is not None:
+            self._filter.note_visible()
         self._hide_timer.stop()
         self._source = None
         self._source_index = None
@@ -122,7 +131,7 @@ class AppTooltip(QLabel):
         context = None
         w = source
         while w is not None and w is not self._window:
-            context = _CONTEXT_BY_ANCESTOR.get(w.objectName())
+            context = _CONTEXT_BY_CLASS.get(type(w).__name__)
             if context:
                 break
             w = w.parentWidget()
@@ -172,10 +181,25 @@ class _TooltipFilter(QObject):
 
     _tip = None  # class default: events can arrive before __init__ finishes
 
+    _HOVER_EVENTS = (QEvent.Type.Enter, QEvent.Type.HoverEnter,
+                     QEvent.Type.HoverMove, QEvent.Type.MouseMove)
+    _INPUT_EVENTS = (QEvent.Type.MouseButtonPress, QEvent.Type.Wheel,
+                     QEvent.Type.KeyPress)
+
     def __init__(self, tip: AppTooltip, window: QWidget):
         super().__init__(tip)
         self._tip = tip
         self._window = window
+        # Our own hover delay. Qt's never completes while the blur grab runs:
+        # its 700ms wait restarts on every panel hide/show (~64ms apart), so
+        # Qt sent no ToolTip event at all with the blur on and a book playing
+        # (measured 2026-11-16: zero ToolTip events across a 4s hover while
+        # grabs logged every 64ms; events arrived only while grabs were idle).
+        self._pending = None          # (source widget, item index or None)
+        self._last_visible_at = 0.0   # time.monotonic() when a tip was last up
+        self._wake = QTimer(self)
+        self._wake.setSingleShot(True)
+        self._wake.timeout.connect(self._on_wake)
 
     def eventFilter(self, obj, event):
         if self._tip is None:
@@ -183,24 +207,114 @@ class _TooltipFilter(QObject):
         t = event.type()
         if t == QEvent.Type.ToolTip:
             return self._on_tooltip_event(obj, event)
+        if _grab_depth == 0:
+            if t in self._HOVER_EVENTS:
+                self._on_hover(obj, event)
+            elif t == QEvent.Type.Leave and self._pending and obj is self._pending[0]:
+                self._cancel_pending()
+            elif t in self._INPUT_EVENTS:
+                self._cancel_pending()
         tip = self._tip
         if not tip.isVisible():
             return False
-        if t in (QEvent.Type.MouseButtonPress, QEvent.Type.Wheel,
-                 QEvent.Type.KeyPress):
-            tip.hide_tip()
+        if t in self._INPUT_EVENTS:
+            tip.hide_tip(f"input {t.name}")
         elif (obj is tip.source and t in (QEvent.Type.Leave, QEvent.Type.Hide)
               and _grab_depth == 0):
             # During a blur grab the panel is hidden and re-shown, which sends
             # Hide and Leave to every widget in it; those are not the user.
-            tip.hide_tip()
+            tip.hide_tip(f"source {t.name}")
         elif (obj is tip.source and tip.source_index is not None
               and t in (QEvent.Type.MouseMove, QEvent.Type.HoverMove)):
             view = obj.parentWidget()
             if isinstance(view, QAbstractItemView):
                 if view.indexAt(event.position().toPoint()) != tip.source_index:
-                    tip.hide_tip()
+                    tip.hide_tip("item changed")
         return False
+
+    # -- our own hover delay ---------------------------------------------
+
+    def _candidate(self, obj, event):
+        """(source, index, text) for what is under the cursor, or None.
+        Mirrors _on_tooltip_event: an item view's viewport uses the hovered
+        item's ToolTipRole; any other widget uses its own toolTip() or the
+        nearest ancestor's (Qt propagates ToolTip events to parents)."""
+        if not isinstance(obj, QWidget):
+            return None
+        try:
+            if obj.window() is not self._window:
+                return None
+        except RuntimeError:
+            return None
+        view = obj.parentWidget()
+        if isinstance(view, QAbstractItemView) and obj is view.viewport():
+            pos_fn = getattr(event, "position", None)
+            if pos_fn is None:
+                return None
+            index = view.indexAt(pos_fn().toPoint())
+            text = index.data(Qt.ItemDataRole.ToolTipRole) if index.isValid() else None
+            return (obj, index, str(text)) if text else None
+        w = obj
+        while w is not None and w is not self._window:
+            if w is self._tip:
+                return None
+            text = w.toolTip()
+            if text:
+                return (w, None, text)
+            w = w.parentWidget()
+        return None
+
+    def _on_hover(self, obj, event):
+        cand = self._candidate(obj, event)
+        if cand is None:
+            # Only an event on the pending source itself (or inside it) can
+            # mean the cursor left that source's tooltip area.
+            if self._pending and (obj is self._pending[0]
+                                  or self._pending[0].isAncestorOf(obj)):
+                self._cancel_pending()
+            return
+        source, index, _text = cand
+        key = (source, index)
+        tip = self._tip
+        if tip.isVisible() and tip.source is source and tip.source_index == index:
+            return
+        if self._pending == key:
+            return
+        self._pending = key
+        import time
+        awake = tip.isVisible() or (time.monotonic() - self._last_visible_at) < _AWAKE_WINDOW_S
+        self._wake.start(_WAKE_DELAY_AWAKE_MS if awake else _WAKE_DELAY_MS)
+
+    def _cancel_pending(self):
+        self._pending = None
+        self._wake.stop()
+
+    def _on_wake(self):
+        pending, self._pending = self._pending, None
+        if pending is None:
+            return
+        source, index = pending
+        try:
+            if not source.isVisible():
+                return
+            local = source.mapFromGlobal(QCursor.pos())
+        except RuntimeError:
+            return
+        if not source.rect().contains(local):
+            return
+        if index is not None:
+            view = source.parentWidget()
+            if view.indexAt(local) != index:
+                return
+            text = index.data(Qt.ItemDataRole.ToolTipRole)
+        else:
+            text = source.toolTip()
+        if text:
+            self._tip.show_tip(str(text), source, QCursor.pos(), index)
+
+    def note_visible(self):
+        import time
+        self._last_visible_at = time.monotonic()
 
     def _on_tooltip_event(self, obj, event) -> bool:
         if not isinstance(obj, QWidget) or obj.window() is not self._window:
@@ -214,7 +328,7 @@ class _TooltipFilter(QObject):
             if text:
                 self._tip.show_tip(str(text), obj, event.globalPos(), index)
             else:
-                self._tip.hide_tip()
+                self._tip.hide_tip("item has no tooltip")
             return True
         text = obj.toolTip()
         if not text:
@@ -252,7 +366,7 @@ def hide_text():
         from PySide6.QtWidgets import QToolTip
         QToolTip.hideText()
         return
-    _instance.hide_tip()
+    _instance.hide_tip("hide_text()")
 
 
 class suppress_for_grab:
