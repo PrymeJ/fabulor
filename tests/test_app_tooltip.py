@@ -119,3 +119,21 @@ def test_grab_enter_does_not_arm_wake(window):
     with app_tooltip.suppress_for_grab():
         QApplication.sendEvent(btn, QEnterEvent(local, local, local))
     assert tip._filter._pending is None
+
+
+def test_hover_event_on_a_qwindow_does_not_raise(window):
+    """Enter/Hover events also reach QWindow objects (not QWidgets); with a
+    hover delay pending, that used to make isAncestorOf() raise."""
+    from PySide6.QtCore import QPointF
+    from PySide6.QtGui import QEnterEvent
+    win, tip = window
+    btn = QPushButton("x", win)
+    btn.setToolTip("t")
+    btn.show()
+    local = QPointF(5, 5)
+    QApplication.sendEvent(btn, QEnterEvent(local, local, local))
+    assert tip._filter._pending is not None
+    qwin = win.windowHandle()
+    assert qwin is not None
+    tip._filter._on_hover(qwin, QEnterEvent(local, local, local))  # must not raise
+    assert tip._filter._pending is not None

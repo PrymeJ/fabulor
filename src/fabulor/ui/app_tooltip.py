@@ -268,7 +268,11 @@ class _TooltipFilter(QObject):
         cand = self._candidate(obj, event)
         if cand is None:
             # Only an event on the pending source itself (or inside it) can
-            # mean the cursor left that source's tooltip area.
+            # mean the cursor left that source's tooltip area. Hover/Enter
+            # events also reach QWindow objects, which are not QWidgets and
+            # make isAncestorOf() raise (seen 2026-11-17), so skip them.
+            if not isinstance(obj, QWidget):
+                return
             if self._pending and (obj is self._pending[0]
                                   or self._pending[0].isAncestorOf(obj)):
                 self._cancel_pending()
