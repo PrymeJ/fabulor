@@ -1,3 +1,13 @@
+## Session Summary — 2026-11-17 Session 1 — Tooltip filter TypeError on QWindow hover events
+
+Commits: `9b5cb86`, plus this docs commit (written 2026-11-18). Not pushed.
+
+**`TypeError` from the tooltip filter.** Enter/Hover events reach `QWindow` objects too, not only
+widgets, and an app-wide event filter sees them. With a hover delay pending, `_on_hover` passed one
+to `isAncestorOf()`, which only accepts a `QWidget`, and the filter raised. `_on_hover` now ignores
+non-`QWidget` objects before the pending-source check. Pinned by
+`test_hover_event_on_a_qwindow_does_not_raise`.
+
 ## Session Summary — 2026-11-16 Session 1 — In-window tooltips, tag list hover, audio-server note
 
 Commits: `bbd5ce0`, `bdaad9d`, `6314e58`, `30dda20`, `8e1cf9c`, `c40ad27` (tooltip work, branch

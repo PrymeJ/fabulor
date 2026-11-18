@@ -1627,7 +1627,10 @@ stays for other windows (dialogs keep Qt's tooltips). Gotcha if it's ever tuned 
 tooltip label a stylesheet `padding-left` is added to the label's margin on **every** side, so it
 grows the whole box; `qproperty-margin`/`qproperty-indent` are the per-side levers there. Known
 open item: the below-cursor gap is a constant sized for a default arrow, and a large pointer
-overlaps the tooltip — parked under the custom-pointers TODO item. Pinned by
+overlaps the tooltip — parked under the custom-pointers TODO item. An app-wide filter also
+receives Enter/Hover events for `QWindow` objects, which are not `QWidget`s: guard with
+`isinstance(obj, QWidget)` before calling widget methods such as `isAncestorOf()` on the event's
+object (a `TypeError` from the filter, 2026-11-17, `9b5cb86`). Pinned by
 `tests/test_app_tooltip.py`.
 
 ---
